@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Enter your BEYOND: The Light access code to unlock the website.">
+  <title>BEYOND: The Light Access</title>
+  <style>
+    :root {
+      --bg: #070810;
+      --panel: #121526;
+      --border: #2a2f4f;
+      --gold: #e1b85e;
+      --text: #efe8d4;
+      --muted: #b9b4a5;
+      --danger: #ff6b6b;
+      --ok: #7ee39b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Crimson Pro", Georgia, serif;
+      background:
+        radial-gradient(circle at 80% 10%, rgba(225, 184, 94, 0.1), transparent 42%),
+        radial-gradient(circle at 10% 90%, rgba(108, 169, 255, 0.12), transparent 40%),
+        var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+    }
+
+    .card {
+      width: min(100%, 560px);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.2rem;
+      box-shadow: 0 24px 54px rgba(0, 0, 0, 0.45);
+    }
+
+    h1 {
+      margin: 0 0 0.6rem;
+      font-size: 1.45rem;
+      letter-spacing: 0.06em;
+      color: var(--gold);
+      text-transform: uppercase;
+      font-family: "Cinzel", serif;
+    }
+
+    p {
+      margin: 0 0 0.9rem;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+
+    .pricing {
+      margin: 0 0 1rem;
+      padding: 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.015);
+      color: var(--text);
+      line-height: 1.45;
+    }
+
+    form {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    label {
+      display: grid;
+      gap: 0.35rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0d1020;
+      color: var(--text);
+      padding: 0.62rem 0.7rem;
+      font-size: 1rem;
+    }
+
+    input:focus {
+      outline: 2px solid rgba(225, 184, 94, 0.45);
+      outline-offset: 1px;
+      border-color: var(--gold);
+    }
+
+    button {
+      border: 1px solid rgba(225, 184, 94, 0.8);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(225, 184, 94, 0.22), rgba(225, 184, 94, 0.07));
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      padding: 0.72rem 0.9rem;
+      cursor: pointer;
+    }
+
+    button:hover {
+      filter: brightness(1.08);
+    }
+
+    .status {
+      margin-top: 0.65rem;
+      min-height: 1.2rem;
+      font-size: 0.94rem;
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .status.ok {
+      color: var(--ok);
+    }
+
+    .buy-help {
+      margin-top: 0.95rem;
+      padding: 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.015);
+      line-height: 1.5;
+      color: var(--muted);
+    }
+
+    .buy-help strong {
+      color: var(--text);
+    }
+
+    .buy-link {
+      display: inline-block;
+      margin-top: 0.4rem;
+      color: var(--gold);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(225, 184, 94, 0.5);
+    }
+
+    .buy-link:hover {
+      color: #f3d38e;
+      border-bottom-color: rgba(243, 211, 142, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <section class="card" aria-live="polite">
+    <h1>Access Required</h1>
+    <p>Enter the email and unique code you purchased for BEYOND: The Light.</p>
+    <div class="pricing">
+      Pricing: 1 code for $10 or 4 codes for $25.<br>
+      Each code is bound to its purchase email.
+    </div>
+
+    <form id="paywall-form">
+      <label>
+        Purchase Email
+        <input id="email" type="email" name="email" autocomplete="email" required>
+      </label>
+      <label>
+        Access Code
+        <input id="code" type="text" name="code" autocomplete="one-time-code" required>
+      </label>
+      <button type="submit">Unlock Website</button>
+    </form>
+
+    <div id="status" class="status" role="status"></div>
+
+    <div class="buy-help">
+      <strong>Need a code?</strong><br>
+      Pay via PayPal to <strong>@madbookz</strong> (Maxwell Durbin-Tan).<br>
+      Price: 1 code for $10, or 4 codes for $25.<br>
+      Include this in payment note: <strong>BTL | your-email@example.com | qty 1 or 4</strong><br>
+      After payment, your code(s) are issued by the admin panel.
+      <br>
+      <a class="buy-link" href="https://paypal.me/madbookz" target="_blank" rel="noopener noreferrer">Open PayPal (paypal.me/madbookz)</a>
+    </div>
+  </section>
+
+  <script src="./paywall-gate.js" defer></script>
+</body>
+</html>

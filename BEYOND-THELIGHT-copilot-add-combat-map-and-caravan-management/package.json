@@ -1,0 +1,106 @@
+{
+  "name": "beyond-the-light",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BEYOND-THELIGHT multiplayer campaign server",
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "desktop:dev": "electron .",
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:linux": "electron-builder --linux AppImage tar.gz",
+    "dist:all": "electron-builder -mwl",
+    "smoke:clicks": "node smoke-tests/click-paths.smoke.mjs",
+    "smoke:combat-sync": "node smoke-tests/campaign-combat-sync.smoke.mjs",
+    "smoke:combat-turns": "node smoke-tests/campaign-combat-turns.smoke.mjs",
+    "smoke:token-target-damage": "node smoke-tests/token-action-target-enemy-damage.smoke.mjs",
+    "smoke:enemy-loot-drop": "node smoke-tests/enemy-loot-drop-format.smoke.mjs",
+    "smoke:enemy-loot-drop-items": "node smoke-tests/enemy-loot-drop-items-only.smoke.mjs",
+    "smoke:enemy-loot": "npm run smoke:enemy-loot-drop && npm run smoke:enemy-loot-drop-items",
+    "smoke:vtt-ui": "node smoke-tests/vtt-combat-ui.smoke.mjs",
+    "smoke:vtt-controls-audit": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=gm",
+    "smoke:vtt-controls-audit:gm": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=gm",
+    "smoke:vtt-controls-audit:player": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=player",
+    "smoke:vtt-controls-audit:all": "npm run smoke:vtt-controls-audit:gm && npm run smoke:vtt-controls-audit:player",
+    "smoke:scenario": "node smoke-tests/campaign-scenario.e2e.mjs",
+    "smoke:legacy-raid": "node smoke-tests/legacy-raid.smoke.mjs",
+    "smoke:raid-combat-return": "node smoke-tests/raid-combat-return.smoke.mjs",
+    "smoke:quick-panel-raid-ui": "node smoke-tests/quick-panel-raid-ui.smoke.mjs",
+    "smoke:raid-teleport-choice": "node smoke-tests/raid-teleport-choice.smoke.mjs",
+    "smoke:soulforge-crucible": "node smoke-tests/soulforge-crucible.smoke.mjs",
+    "smoke:solo-library": "node smoke-tests/solo-library.smoke.mjs",
+    "smoke:minigames-expedition": "node smoke-tests/minigames-expedition.smoke.mjs",
+    "smoke:minigames-expedition-campaign": "node smoke-tests/minigames-expedition-campaign.smoke.mjs",
+    "smoke:bone-oracle": "node smoke-tests/bone-oracle.smoke.mjs",
+    "smoke:newsun-scheduler": "node smoke-tests/new-sun-scheduler.smoke.mjs",
+    "smoke:open-world": "node smoke-tests/open-world.smoke.mjs",
+    "smoke:manual-exploded-rolls": "node smoke-tests/manual-exploded-rolls.smoke.mjs",
+    "smoke:affix-normalization": "node smoke-tests/affix-normalization.smoke.mjs",
+    "smoke:save-regression": "node smoke-tests/save-regression.smoke.mjs",
+    "smoke:context-tabs": "node smoke-tests/context-tab-visibility.smoke.mjs",
+    "smoke:campaign-missions-context": "node smoke-tests/campaign-missions-context.smoke.mjs",
+    "smoke:campaign-missions-population": "node smoke-tests/campaign-missions-population.smoke.mjs",
+    "smoke:authority-travel": "node smoke-tests/campaign-authority-travel.smoke.mjs",
+    "smoke:portrait-preview": "node smoke-tests/portrait-upload-preview.smoke.mjs",
+    "smoke:reconnect": "node smoke-tests/reconnect-churn.smoke.mjs",
+    "smoke:maybe-reconnect": "node -e \"const run=['1','true','yes','on'].includes(String(process.env.SMOKE_RECONNECT||'').toLowerCase()); if(!run){console.log('Skipping reconnect soak (set SMOKE_RECONNECT=1 to enable).'); process.exit(0);} const {spawnSync}=require('node:child_process'); const cmd=process.platform==='win32'?'npm.cmd':'npm'; const r=spawnSync(cmd,['run','smoke:reconnect'],{stdio:'inherit'}); process.exit(r.status||0);\"",
+    "smoke:galaxy-manual-prompts": "node smoke-tests/galaxy-manual-prompts.smoke.mjs",
+    "smoke:health-dashboard": "node smoke-tests/health-dashboard.smoke.mjs",
+    "smoke:guild-system": "node smoke-tests/guild-system-smoke.mjs",
+    "smoke:guild-multiplayer-sync": "node smoke-tests/guild-multiplayer-sync.smoke.mjs",
+    "smoke:campaign-shared-origin-and-sheets": "node smoke-tests/campaign-shared-origin-and-sheets.smoke.mjs",
+    "smoke:test": "npm run smoke:clicks && npm run smoke:portrait-preview && npm run smoke:solo-library && npm run smoke:minigames-expedition && npm run smoke:minigames-expedition-campaign && npm run smoke:bone-oracle && npm run smoke:combat-sync && npm run smoke:combat-turns && npm run smoke:token-target-damage && npm run smoke:enemy-loot-drop && npm run smoke:enemy-loot-drop-items && npm run smoke:scenario && npm run smoke:campaign-missions-context && npm run smoke:guild-multiplayer-sync && npm run smoke:campaign-shared-origin-and-sheets && npm run smoke:newsun-scheduler && npm run smoke:legacy-raid && npm run smoke:raid-combat-return && npm run smoke:quick-panel-raid-ui && npm run smoke:raid-teleport-choice && npm run smoke:guild-system && npm run smoke:open-world && npm run smoke:maybe-reconnect"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "playwright": "^1.54.2"
+  },
+  "build": {
+    "appId": "com.beyondthelight.game",
+    "productName": "BEYOND The Light",
+    "asar": false,
+    "files": [
+      "*.html",
+      "*.css",
+      "*.js",
+      "assets/**/*",
+      "campaign-data.json",
+      "license-data.json",
+      "desktop/**/*",
+      "node_modules/**/*",
+      "!smoke-tests/**/*",
+      "!*.md",
+      "!license-data.json.bak"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.games"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Game"
+    }
+  }
+}

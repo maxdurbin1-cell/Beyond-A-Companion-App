@@ -1,0 +1,381 @@
+/* GM Worldbuilder tab styles */
+.gmwb-root {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.95fr) minmax(280px, 1.15fr) minmax(260px, 1fr);
+  gap: 0.7rem;
+}
+
+@media (max-width: 1280px) {
+  .gmwb-root {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .gmwb-root {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gmwb-card {
+  background: linear-gradient(180deg, rgba(18, 20, 38, 0.96) 0%, rgba(12, 14, 28, 0.98) 100%);
+  border: 1px solid rgba(94, 136, 210, 0.32);
+  border-radius: 12px;
+  padding: 0.7rem;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+}
+
+.gmwb-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.76rem;
+  letter-spacing: 0.14em;
+  color: var(--gold2);
+  text-transform: uppercase;
+  margin-bottom: 0.45rem;
+}
+
+.gmwb-row {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.gmwb-input,
+.gmwb-select,
+.gmwb-textarea {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: 'Crimson Pro', serif;
+  padding: 0.34rem 0.5rem;
+}
+
+.gmwb-textarea {
+  resize: vertical;
+  min-height: 3.3rem;
+}
+
+.gmwb-list {
+  display: grid;
+  gap: 0.32rem;
+  margin-top: 0.45rem;
+}
+
+.gmwb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid rgba(46, 196, 182, 0.38);
+  color: var(--teal2);
+  background: rgba(46, 196, 182, 0.08);
+  font-size: 0.7rem;
+  padding: 0.12rem 0.4rem;
+}
+
+.gmwb-entity {
+  border: 1px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 0.45rem;
+}
+
+.gmwb-entity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.gmwb-entity-name {
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--gold3);
+  text-transform: uppercase;
+}
+
+.gmwb-muted {
+  color: var(--muted2);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.gmwb-sticky-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.35rem;
+}
+
+.gmwb-sticky {
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  padding: 0.42rem;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+}
+
+.gmwb-sticky img {
+  width: 100%;
+  max-height: 88px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.gmwb-level {
+  border: 1px dashed rgba(201, 162, 39, 0.45);
+  border-radius: 10px;
+  padding: 0.4rem;
+}
+
+.gmwb-level-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.28rem;
+}
+
+.gmwb-loc {
+  border-left: 3px solid var(--teal);
+  padding: 0.25rem 0.35rem;
+  background: rgba(255, 255, 255, 0.02);
+  margin-bottom: 0.2rem;
+}
+
+.gmwb-order-handle {
+  color: var(--muted2);
+  letter-spacing: 0.02em;
+  margin-right: 0.15rem;
+  cursor: grab;
+}
+
+.gmwb-level-drop-lane {
+  border: 1px dashed rgba(201, 162, 39, 0.45);
+  border-radius: 8px;
+  padding: 0.24rem 0.35rem;
+  font-size: 0.66rem;
+  color: var(--muted2);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0.16rem 0 0.24rem;
+  background: rgba(201, 162, 39, 0.04);
+}
+
+.gmwb-check {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+}
+
+.gmwb-check.done {
+  color: var(--green2);
+  text-decoration: line-through;
+}
+
+.gmwb-connections {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.35rem;
+}
+
+.gmwb-drop-zone-label {
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  margin-top: 0.28rem;
+  margin-bottom: 0.2rem;
+}
+
+.gmwb-drag-list {
+  display: flex;
+  gap: 0.22rem;
+  flex-wrap: wrap;
+}
+
+.gmwb-drag-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(201, 162, 39, 0.45);
+  border-radius: 999px;
+  background: rgba(201, 162, 39, 0.08);
+  color: var(--gold3);
+  font-size: 0.68rem;
+  padding: 0.14rem 0.44rem;
+  cursor: grab;
+  user-select: none;
+}
+
+.gmwb-loc-drop {
+  border-radius: 8px;
+}
+
+.gmwb-drop-pool {
+  border: 1px dashed rgba(46, 196, 182, 0.45);
+  border-radius: 9px;
+  background: rgba(46, 196, 182, 0.04);
+  padding: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.gmwb-holder-drop {
+  margin-top: 0.22rem;
+  border: 1px dashed rgba(128, 96, 192, 0.5);
+  border-radius: 8px;
+  padding: 0.25rem;
+  background: rgba(128, 96, 192, 0.06);
+}
+
+.gmwb-holder-drop-list {
+  margin-top: 0.18rem;
+  display: flex;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+
+.gmwb-graph-wrap {
+  margin-top: 0.4rem;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: radial-gradient(circle at 20% 20%, rgba(201, 162, 39, 0.08), transparent 45%),
+    radial-gradient(circle at 80% 75%, rgba(46, 196, 182, 0.08), transparent 45%),
+    rgba(8, 11, 20, 0.95);
+  padding: 0.3rem;
+}
+
+.gmwb-graph-svg {
+  width: 100%;
+  height: auto;
+  min-height: 260px;
+}
+
+.gmwb-graph-node {
+  cursor: pointer;
+}
+
+.gmwb-edge-hit {
+  cursor: pointer;
+}
+
+.gmwb-graph-legend {
+  margin-top: 0.35rem;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 0.28rem 0.35rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.gmwb-legend-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--gold2);
+  margin-bottom: 0.2rem;
+}
+
+.gmwb-legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+  margin-bottom: 0.18rem;
+}
+
+.gmwb-legend-row:last-child {
+  margin-bottom: 0;
+}
+
+.gmwb-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 0.08rem 0.36rem;
+  font-size: 0.66rem;
+  color: var(--text2);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gmwb-legend-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  display: inline-block;
+}
+
+.gmwb-legend-loc {
+  background: #1c5c77;
+}
+
+.gmwb-legend-char {
+  background: #5d4b88;
+}
+
+.gmwb-legend-thing {
+  background: #7a5e2d;
+}
+
+.gmwb-legend-line {
+  width: 0.95rem;
+  height: 0;
+  border-top: 2px solid;
+  display: inline-block;
+}
+
+.gmwb-legend-rel {
+  border-top-color: var(--teal2);
+}
+
+.gmwb-legend-portal {
+  border-top-color: var(--gold2);
+}
+
+.gmwb-legend-arrow {
+  font-size: 0.7rem;
+  color: var(--gold2);
+  line-height: 1;
+}
+
+.gmwb-edge-editor {
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 0.35rem;
+  background: rgba(255, 255, 255, 0.02);
+  margin-top: 0.35rem;
+}
+
+.gmwb-context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1999;
+}
+
+.gmwb-context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 180px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(20, 22, 40, 0.98), rgba(10, 12, 22, 0.98));
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.35);
+  padding: 0.3rem;
+}
+
+.gmwb-context-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold2);
+  margin-bottom: 0.22rem;
+}

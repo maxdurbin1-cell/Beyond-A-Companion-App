@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Admin console for BEYOND: The Light license management.">
+  <title>BEYOND License Admin</title>
+  <style>
+    :root {
+      --bg: #080a13;
+      --panel: #11162b;
+      --panel-alt: #0f1324;
+      --line: #2b3358;
+      --gold: #e2bb68;
+      --text: #e8e4d8;
+      --muted: #b8b1a2;
+      --bad: #ff7f7f;
+      --good: #7fe0a6;
+      --warn: #ffc970;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Crimson Pro", Georgia, serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 0% 0%, rgba(226, 187, 104, 0.08), transparent 34%),
+        radial-gradient(circle at 100% 100%, rgba(106, 166, 255, 0.09), transparent 40%),
+        var(--bg);
+      padding: 1rem;
+    }
+
+    .wrap {
+      width: min(1100px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 0.9rem;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius: 12px;
+      padding: 0.85rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Cinzel", serif;
+      font-size: 1.25rem;
+      color: var(--gold);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .sub {
+      margin-top: 0.35rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .grid {
+      display: grid;
+      gap: 0.7rem;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+
+    .field {
+      display: grid;
+      gap: 0.3rem;
+    }
+
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-12 { grid-column: span 12; }
+
+    label {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    input, select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-alt);
+      color: var(--text);
+      padding: 0.55rem 0.62rem;
+      font-size: 0.95rem;
+      width: 100%;
+    }
+
+    input:focus, select:focus {
+      outline: 2px solid rgba(226, 187, 104, 0.45);
+      outline-offset: 1px;
+      border-color: var(--gold);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      align-items: center;
+    }
+
+    .top-links {
+      margin-top: 0.55rem;
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+
+    .top-link {
+      color: var(--gold);
+      text-decoration: none;
+      border: 1px solid rgba(226, 187, 104, 0.45);
+      border-radius: 999px;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.83rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .top-link:hover {
+      color: #f3d596;
+      border-color: rgba(243, 213, 150, 0.75);
+      background: rgba(243, 213, 150, 0.08);
+    }
+
+    button {
+      border: 1px solid rgba(226, 187, 104, 0.75);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(226,187,104,0.2), rgba(226,187,104,0.06));
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      padding: 0.55rem 0.8rem;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      border-color: rgba(125, 159, 232, 0.6);
+      background: linear-gradient(180deg, rgba(125,159,232,0.16), rgba(125,159,232,0.04));
+    }
+
+    button.danger {
+      border-color: rgba(255,127,127,0.7);
+      background: linear-gradient(180deg, rgba(255,127,127,0.16), rgba(255,127,127,0.05));
+    }
+
+    .status {
+      min-height: 1.1rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
+    .status.error { color: var(--bad); }
+    .status.ok { color: var(--good); }
+
+    .status.warn { color: var(--warn); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      overflow: hidden;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      padding: 0.5rem 0.45rem;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--gold);
+      font-family: "Cinzel", serif;
+      text-transform: uppercase;
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .chip {
+      display: inline-block;
+      padding: 0.12rem 0.35rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.02);
+      font-size: 0.75rem;
+    }
+
+    .chip.disabled {
+      color: var(--bad);
+      border-color: rgba(255,127,127,0.5);
+      background: rgba(255,127,127,0.08);
+    }
+
+    .chip.active {
+      color: var(--good);
+      border-color: rgba(127,224,166,0.5);
+      background: rgba(127,224,166,0.08);
+    }
+
+    @media (max-width: 880px) {
+      .span-3, .span-4, .span-6 { grid-column: span 12; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <h1>License Admin</h1>
+      <p class="sub">Use your admin key to issue, search, revoke, and restore paywall codes.</p>
+      <p class="sub">Admin URL: <strong>/admin/licenses</strong>. Enter the same value used in server env var <strong>PAYWALL_ADMIN_KEY</strong>.</p>
+      <div class="top-links">
+        <a class="top-link" href="/">Open Game</a>
+        <a class="top-link" href="/access">Open Access Gate</a>
+      </div>
+      <div class="status" id="admin-config-status"></div>
+      <div class="status" id="license-storage-status"></div>
+      <div class="top-links">
+        <button id="test-admin-btn" type="button" class="btn secondary" onclick="if(window.btlTestAdminAccess){window.btlTestAdminAccess();}">Test Admin Access</button>
+        <span class="status" id="admin-test-status"></span>
+      </div>
+      <div class="grid">
+        <div class="field span-6">
+          <label for="admin-key">Admin Key</label>
+          <input id="admin-key" type="password" autocomplete="off" placeholder="Enter the key VALUE (not the text PAYWALL_ADMIN_KEY)">
+        </div>
+        <div class="field span-6">
+          <label for="remember-key">Key Storage</label>
+          <select id="remember-key">
+            <option value="session">Keep only this tab session</option>
+            <option value="browser">Keep in browser local storage</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="grid">
+        <div class="field span-6">
+          <label for="issue-email">Issue Codes To Email</label>
+          <input id="issue-email" type="email" placeholder="buyer@example.com">
+        </div>
+        <div class="field span-3">
+          <label for="issue-quantity">Quantity</label>
+          <select id="issue-quantity">
+            <option value="1">1 code ($10)</option>
+            <option value="4">4 codes ($25)</option>
+          </select>
+        </div>
+        <div class="field span-3">
+          <label>Issue</label>
+          <button id="issue-btn" type="button">Issue Codes</button>
+        </div>
+      </div>
+      <div class="status" id="issue-status"></div>
+      <div class="status" id="issue-result"></div>
+    </section>
+
+    <section class="card">
+      <div class="grid">
+        <div class="field span-4">
+          <label for="search-email">Filter by Email</label>
+          <input id="search-email" type="text" placeholder="optional">
+        </div>
+        <div class="field span-4">
+          <label for="search-code">Filter by Code</label>
+          <input id="search-code" type="text" placeholder="optional">
+        </div>
+        <div class="field span-4">
+          <label for="include-disabled">Disabled Codes</label>
+          <select id="include-disabled">
+            <option value="false">Hide disabled</option>
+            <option value="true">Show disabled</option>
+          </select>
+        </div>
+        <div class="field span-12 actions">
+          <button id="search-btn" class="secondary" type="button">Search</button>
+          <span class="status" id="search-status"></span>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Email</th>
+            <th>Issued</th>
+            <th>Redeemed By</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="license-table-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/license-admin.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "name": "Beyond The Light CC0 Audio Pack (Example)",
+  "license": "CC0-1.0",
+  "notes": "Copy to /assets/audio/cc0-pack.json and replace src values with your own CC0/public-domain files.",
+  "entries": [
+    {
+      "id": "music-town",
+      "src": "https://example.com/cc0/town-theme.ogg"
+    },
+    {
+      "id": "music-deep-space",
+      "src": "https://example.com/cc0/deep-space-theme.ogg"
+    },
+    {
+      "id": "music-starship",
+      "src": "https://example.com/cc0/starship-loop.ogg"
+    },
+    {
+      "id": "music-sea",
+      "src": "https://example.com/cc0/setting-sail.ogg"
+    },
+    {
+      "id": "amb-rain",
+      "src": "https://example.com/cc0/rain-ambience.ogg"
+    },
+    {
+      "id": "amb-waves",
+      "src": "https://example.com/cc0/ocean-waves.ogg"
+    },
+    {
+      "id": "amb-radio",
+      "src": "https://example.com/cc0/radio-static.ogg"
+    }
+  ]
+}

@@ -1,0 +1,723 @@
+/* faction-intro-system.css — Styles for Faction System & Intro Page */
+
+/* ============================================================================
+   INTRO PAGE STYLES
+   ============================================================================ */
+
+#intro {
+  position: fixed;
+  inset: 0;
+  background: #000a1a;
+  z-index: 9999;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+}
+
+.intro-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.intro-screen {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 2rem 1.5rem 0;
+  background-size: cover;
+  background-position: center;
+  animation: fadeIn 0.5s ease-in;
+  overflow-y: auto;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.intro-content {
+  max-width: 980px;
+  width: min(980px, 100%);
+  text-align: left;
+  color: var(--text);
+  z-index: 2;
+  margin-top: max(1rem, env(safe-area-inset-top));
+  background: linear-gradient(180deg, rgba(7, 14, 26, 0.74) 0%, rgba(7, 14, 26, 0.86) 100%);
+  border: 1px solid rgba(201, 162, 39, 0.25);
+  border-radius: 12px;
+  padding: 1.35rem 1.45rem;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+
+.intro-title {
+  font-family: 'Cinzel Decorative', serif;
+  font-size: clamp(2.2rem, 4vw, 3.5rem);
+  color: var(--gold);
+  margin-bottom: 0.5rem;
+  text-shadow: 0 0 30px rgba(201, 162, 39, 0.4);
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+
+.intro-subtitle {
+  font-family: 'Cinzel', serif;
+  font-size: clamp(1rem, 2vw, 1.4rem);
+  color: var(--teal);
+  margin-bottom: 1.5rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.intro-text {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: clamp(1.08rem, 1.3vw, 1.32rem);
+  line-height: 1.82;
+  color: var(--text);
+  margin-bottom: 1rem;
+}
+
+.intro-text p {
+  margin-bottom: 0.95rem;
+}
+
+.intro-footer {
+  position: sticky;
+  bottom: 0;
+  width: min(980px, 100%);
+  margin-top: auto;
+  padding: 0.9rem 0 1rem;
+  z-index: 4;
+  background: linear-gradient(180deg, rgba(7, 14, 26, 0) 0%, rgba(7, 14, 26, 0.86) 35%, rgba(7, 14, 26, 0.96) 100%);
+}
+
+.intro-nav {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  z-index: 4;
+  margin-bottom: 0.55rem;
+}
+
+.intro-prev,
+.intro-next,
+.intro-start {
+  min-width: 150px;
+}
+
+.intro-progress {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: center;
+  z-index: 4;
+}
+
+@media (max-width: 760px) {
+  .intro-title {
+    font-size: 2rem;
+  }
+
+  .intro-subtitle {
+    font-size: 1rem;
+  }
+
+  .intro-text {
+    font-size: 1rem;
+    line-height: 1.68;
+  }
+
+  .intro-content {
+    padding: 1rem;
+  }
+}
+
+.progress-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: rgba(201, 162, 39, 0.3);
+  border: 1px solid var(--border);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.progress-dot.active {
+  background: var(--gold);
+  box-shadow: 0 0 12px rgba(201, 162, 39, 0.5);
+  border-color: var(--gold);
+}
+
+/* ============================================================================
+   FACTION SYSTEM STYLES
+   ============================================================================ */
+
+.faction-container {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.faction-intro {
+  background: linear-gradient(135deg, rgba(201, 162, 39, 0.08) 0%, rgba(46, 196, 182, 0.04) 100%);
+  border: 1px solid var(--border);
+  padding: 1.2rem;
+  margin-bottom: 1.5rem;
+  border-radius: 4px;
+}
+
+.faction-intro h2 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.82rem;
+  letter-spacing: 0.2em;
+  color: var(--gold2);
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+  font-weight: 700;
+}
+
+.faction-intro p {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.faction-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.faction-card {
+  background: var(--card);
+  border: 2px solid var(--border);
+  padding: 1rem;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.faction-card:hover {
+  border-color: var(--gold);
+  box-shadow: 0 0 20px rgba(201, 162, 39, 0.15);
+  transform: translateY(-2px);
+}
+
+.faction-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.faction-emoji {
+  font-size: 2rem;
+}
+
+.faction-header h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.92rem;
+  letter-spacing: 0.12em;
+  color: var(--gold2);
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.faction-essence {
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  color: var(--teal);
+  letter-spacing: 0.1em;
+  margin-bottom: 0.6rem;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.faction-lore {
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--text2);
+  margin-bottom: 0.85rem;
+}
+
+.faction-motto {
+  font-size: 0.86rem;
+  color: var(--text2);
+  margin-bottom: 0.85rem;
+  padding: 0.6rem 0.85rem;
+  background: rgba(46, 196, 182, .04);
+  border-left: 2px solid var(--teal);
+  border-radius: 2px;
+  line-height: 1.55;
+}
+
+.faction-stats {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.faction-stats .stat {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.faction-stats label {
+  color: var(--muted2);
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.08em;
+}
+
+.faction-stats span {
+  color: var(--gold);
+}
+
+.faction-expand {
+  margin-top: auto;
+}
+
+/* FACTION PATHWAYS */
+
+.faction-pathways {
+  margin-bottom: 2rem;
+}
+
+.faction-pathways h2 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border2);
+}
+
+.faction-pathways > p {
+  margin-bottom: 1rem;
+  color: var(--text2);
+}
+
+.pathway-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.pathway-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 1rem;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pathway-card:hover {
+  border-color: var(--teal);
+}
+
+.pathway-emoji {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.pathway-card h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.9rem;
+  color: var(--gold2);
+  margin-bottom: 0.5rem;
+}
+
+.pathway-desc {
+  font-size: 0.85rem;
+  color: var(--text2);
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+}
+
+.key-choices {
+  background: rgba(46, 196, 182, 0.05);
+  border: 1px solid rgba(46, 196, 182, 0.2);
+  padding: 0.6rem 0.75rem;
+  border-radius: 2px;
+  margin-bottom: 0.75rem;
+}
+
+.key-choices strong {
+  font-family: 'Cinzel', serif;
+  font-size: 0.65rem;
+  color: var(--teal);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.key-choices ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.key-choices li {
+  font-size: 0.78rem;
+  color: var(--muted3);
+  margin-bottom: 0.2rem;
+  padding-left: 1rem;
+  position: relative;
+}
+
+.key-choices li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: var(--teal);
+  font-weight: bold;
+}
+
+.pathway-ending {
+  background: rgba(201, 162, 39, 0.05);
+  border: 1px solid rgba(201, 162, 39, 0.2);
+  padding: 0.6rem 0.75rem;
+  border-radius: 2px;
+  margin-top: auto;
+}
+
+.pathway-ending strong {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+.pathway-ending p {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--muted3);
+  font-style: italic;
+}
+
+/* FACTION DYNAMICS */
+
+.faction-dynamics {
+  margin-bottom: 2rem;
+  padding: 1.2rem;
+  background: var(--card);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+}
+
+.faction-dynamics h2 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 1rem;
+}
+
+.dynamics-section {
+  margin-bottom: 1.5rem;
+}
+
+.dynamics-section:last-child {
+  margin-bottom: 0;
+}
+
+.dynamics-section h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--teal);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+.dynamics-section > p {
+  font-size: 0.82rem;
+  color: var(--muted2);
+  margin-bottom: 0.6rem;
+}
+
+.dynamic-pair {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.5rem;
+  background: rgba(46, 196, 182, 0.04);
+  border: 1px solid rgba(46, 196, 182, 0.15);
+  border-radius: 2px;
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.dynamic-pair.enemy {
+  background: rgba(201, 64, 64, 0.04);
+  border-color: rgba(201, 64, 64, 0.15);
+}
+
+.dynamic-pair span:nth-child(2) {
+  flex-shrink: 0;
+  font-size: 1.1rem;
+  opacity: 0.7;
+}
+
+/* TRUST & BETRAYAL */
+
+.faction-trust {
+  margin-bottom: 2rem;
+}
+
+.faction-trust h2 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border2);
+}
+
+.faction-trust > p {
+  margin-bottom: 1rem;
+  color: var(--text2);
+  font-size: 0.9rem;
+}
+
+.trust-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+}
+
+.trust-level {
+  background: rgba(46, 196, 182, 0.06);
+  border: 1px solid rgba(46, 196, 182, 0.2);
+  padding: 0.75rem;
+  border-radius: 2px;
+}
+
+.trust-level strong {
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  color: var(--teal);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+.trust-level p {
+  font-size: 0.82rem;
+  color: var(--muted3);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* MISSION DETAILS */
+
+.mission-detail {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.8rem;
+  margin-bottom: 0.6rem;
+  border-radius: 2px;
+}
+
+.mission-detail h5 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.8rem;
+  color: var(--gold2);
+  margin-bottom: 0.4rem;
+}
+
+.mission-detail > p {
+  font-size: 0.85rem;
+  color: var(--text2);
+  margin-bottom: 0.5rem;
+}
+
+.mission-stats {
+  font-size: 0.75rem;
+  color: var(--muted2);
+  margin-bottom: 0.5rem;
+  font-family: 'Rajdhani', sans-serif;
+}
+
+.mission-pathways {
+  background: rgba(201, 162, 39, 0.04);
+  border-left: 2px solid var(--gold);
+  padding: 0.5rem 0.75rem;
+}
+
+.mission-pathways strong {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.mission-pathways ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mission-pathways li {
+  font-size: 0.78rem;
+  color: var(--muted3);
+  margin-bottom: 0.2rem;
+}
+
+.mission-pathways strong {
+  color: var(--gold2);
+  font-weight: 600;
+}
+
+.contract-choice-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.contract-choice-actions .btn {
+  width: 100%;
+  white-space: normal;
+  line-height: 1.25;
+  min-height: 2rem;
+}
+
+.hex-primary-actions {
+  margin: 0.35rem 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.hex-primary-actions .btn {
+  width: 100%;
+  white-space: normal;
+}
+
+/* FACTION DETAIL VIEW */
+
+.faction-detail {
+  padding: 0;
+}
+
+.faction-detail h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 1.2rem;
+  color: var(--gold);
+  margin-bottom: 1rem;
+}
+
+.faction-detail h4 {
+  font-family: 'Cinzel', serif;
+  font-size: 0.9rem;
+  color: var(--gold2);
+  margin-bottom: 0.75rem;
+  margin-top: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* RESPONSIVE DESIGN */
+
+@media (max-width: 900px) {
+  .faction-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pathway-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .intro-title {
+    font-size: 2rem;
+  }
+
+  .intro-subtitle {
+    font-size: 1rem;
+  }
+
+  .intro-text {
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+}
+
+@media (max-width: 600px) {
+  .intro-screen {
+    padding: 1rem;
+  }
+
+  .intro-title {
+    font-size: 1.5rem;
+  }
+
+  .intro-subtitle {
+    font-size: 0.85rem;
+  }
+
+  .intro-text {
+    font-size: 0.8rem;
+  }
+
+  .intro-nav {
+    gap: 0.5rem;
+  }
+
+  .intro-prev,
+  .intro-next,
+  .intro-start {
+    min-width: 120px;
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  .faction-card {
+    padding: 0.75rem;
+  }
+
+  .faction-intro h2,
+  .faction-pathways h2,
+  .faction-dynamics h2,
+  .faction-trust h2 {
+    font-size: 0.65rem;
+  }
+
+  .contract-choice-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hex-primary-actions {
+    grid-template-columns: 1fr;
+  }
+}

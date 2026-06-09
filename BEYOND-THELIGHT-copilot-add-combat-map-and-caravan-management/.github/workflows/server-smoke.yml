@@ -1,0 +1,41 @@
+name: Server Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  reconnect-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run reconnect soak
+        env:
+          PORT: 3030
+          SMOKE_URL: http://127.0.0.1:3030
+          SMOKE_RECONNECT: "1"
+          RECONNECT_LOOPS: "12"
+          PAYWALL_DISABLED: "1"
+          CAMPAIGN_STORE_PATH: ${{ runner.temp }}/campaign-data.json
+          LICENSE_STORE_PATH: ${{ runner.temp }}/license-data.json
+        run: npm run smoke:reconnect

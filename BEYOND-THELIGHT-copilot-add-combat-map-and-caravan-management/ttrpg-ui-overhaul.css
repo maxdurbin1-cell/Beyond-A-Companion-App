@@ -1,0 +1,383 @@
+.companion-overhaul {
+  border: 1px solid rgba(201, 162, 39, 0.32);
+  background: linear-gradient(150deg, rgba(8, 12, 19, 0.96), rgba(12, 16, 27, 0.92));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  border-radius: 14px;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.companion-overhaul .co-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold2);
+}
+
+.companion-overhaul .co-sub {
+  font-size: 0.75rem;
+  color: var(--muted2);
+  line-height: 1.45;
+}
+
+.co-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+@media (max-width: 900px) {
+  .co-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.co-card {
+  border: 1px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 0.5rem;
+}
+
+.co-avatar {
+  position: relative;
+  width: 100%;
+  min-height: 200px;
+  border-radius: 10px;
+  border: 1px solid rgba(201, 162, 39, 0.24);
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 12%, rgba(232, 192, 80, 0.16), rgba(0, 0, 0, 0) 56%),
+    linear-gradient(165deg, rgba(18, 25, 38, 0.96), rgba(8, 12, 20, 0.96));
+}
+
+.co-layer {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 999px;
+}
+
+.co-layer.skin {
+  top: 48px;
+  width: 88px;
+  height: 106px;
+  background: var(--co-skin, #d2ad89);
+  box-shadow: inset 0 -16px 18px rgba(0, 0, 0, 0.08);
+}
+
+.co-layer.hair {
+  top: 26px;
+  width: 96px;
+  height: 58px;
+  background: var(--co-hair, #1a1d25);
+  border-radius: 42px 42px 20px 20px;
+}
+
+.co-layer.eyes {
+  top: 90px;
+  width: 72px;
+  height: 10px;
+  background:
+    radial-gradient(circle at 18px 5px, var(--co-eye, #66c4f8) 0 4px, #101420 5px 100%),
+    radial-gradient(circle at 54px 5px, var(--co-eye, #66c4f8) 0 4px, #101420 5px 100%);
+}
+
+.co-layer.tattoo {
+  top: 102px;
+  width: 50px;
+  height: 30px;
+  background: repeating-linear-gradient(135deg, transparent 0 4px, var(--co-tattoo, rgba(70, 180, 255, 0.5)) 4px 6px);
+  opacity: 0.7;
+  border-radius: 8px;
+}
+
+.co-layer.scar {
+  top: 88px;
+  left: calc(50% + 16px);
+  width: 4px;
+  height: 34px;
+  background: var(--co-scar, rgba(164, 52, 52, 0.72));
+  transform: rotate(12deg);
+}
+
+.co-layer.under,
+.co-layer.over,
+.co-layer.suit {
+  width: 134px;
+  border-radius: 18px;
+}
+
+.co-layer.under {
+  top: 132px;
+  height: 48px;
+  background: var(--co-dye-primary, rgba(120, 138, 171, 0.62));
+}
+
+.co-layer.over {
+  top: 144px;
+  height: 54px;
+  background: var(--co-dye-secondary, rgba(80, 190, 175, 0.55));
+}
+
+.co-layer.suit {
+  top: 126px;
+  height: 72px;
+  border: 2px dashed rgba(232, 192, 80, 0.38);
+  background: rgba(232, 192, 80, 0.08);
+}
+
+.co-avatar-caption {
+  position: absolute;
+  left: 0.45rem;
+  right: 0.45rem;
+  bottom: 0.45rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  color: var(--muted2);
+}
+
+.co-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+@media (max-width: 620px) {
+  .co-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+.co-upload-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.co-media-preview {
+  width: 100%;
+  height: 84px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--border2);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.combat-cinematic-hud {
+  border: 1px solid rgba(46, 196, 182, 0.35);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(6, 18, 24, 0.92), rgba(11, 19, 33, 0.92));
+  padding: 0.58rem;
+  margin-bottom: 0.62rem;
+}
+
+.combat-cinematic-hud .label {
+  font-family: 'Cinzel', serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  color: var(--teal2);
+  text-transform: uppercase;
+}
+
+.combat-cinematic-hud .range-readout {
+  margin-top: 0.22rem;
+  font-size: 0.9rem;
+  color: var(--gold2);
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+}
+
+.combat-cinematic-hud .range-help {
+  font-size: 0.74rem;
+  color: var(--muted2);
+  line-height: 1.45;
+  margin-top: 0.2rem;
+}
+
+.roleplay-dock {
+  position: fixed;
+  right: 1rem;
+  bottom: 4.75rem;
+  width: min(380px, calc(100vw - 1.2rem));
+  z-index: 360;
+  border: 1px solid rgba(232, 192, 80, 0.4);
+  border-radius: 14px;
+  background: linear-gradient(170deg, rgba(9, 12, 21, 0.96), rgba(9, 15, 27, 0.96));
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.36);
+  overflow: hidden;
+}
+
+@media (max-width: 740px) {
+  .roleplay-dock {
+    right: 0.5rem;
+    bottom: 0.6rem;
+    width: calc(100vw - 1rem);
+  }
+}
+
+.roleplay-dock .rd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border2);
+}
+
+.roleplay-dock .rd-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--gold2);
+}
+
+.roleplay-dock .rd-channels {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.45rem;
+  border-bottom: 1px solid var(--border2);
+}
+
+.roleplay-dock .rd-chip {
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted2);
+  font-family: 'Cinzel', serif;
+  font-size: 0.57rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.18rem 0.5rem;
+  cursor: pointer;
+}
+
+.roleplay-dock .rd-chip.on {
+  border-color: var(--teal2);
+  color: var(--teal2);
+  background: rgba(46, 196, 182, 0.1);
+}
+
+.roleplay-dock .rd-log {
+  max-height: 180px;
+  overflow: auto;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.42rem;
+}
+
+.roleplay-dock .rd-line {
+  border: 1px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  padding: 0.32rem 0.38rem;
+  font-size: 0.74rem;
+  color: var(--text2);
+  line-height: 1.45;
+}
+
+.roleplay-dock .rd-meta {
+  font-size: 0.62rem;
+  color: var(--muted2);
+  margin-bottom: 0.14rem;
+}
+
+.roleplay-dock .rd-send {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  border-top: 1px solid var(--border2);
+}
+
+.roleplay-dock .rd-send input {
+  min-width: 0;
+}
+
+.co-cosmetic-grid {
+  margin-top: 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.32rem;
+}
+
+@media (max-width: 620px) {
+  .co-cosmetic-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.co-cos-slot {
+  border: 1px dashed rgba(232, 192, 80, 0.4);
+  background: rgba(232, 192, 80, 0.06);
+  border-radius: 9px;
+  padding: 0.32rem;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.co-cos-slot span {
+  font-size: 0.58rem;
+  color: var(--muted2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.co-cos-slot strong {
+  font-size: 0.68rem;
+  color: var(--text2);
+}
+
+.co-inventory-hud {
+  border: 1px solid rgba(46, 196, 182, 0.28);
+  background: rgba(7, 16, 24, 0.72);
+  border-radius: 10px;
+  padding: 0.42rem;
+  margin-bottom: 0.42rem;
+}
+
+.co-inv-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.co-weight-bar {
+  margin-top: 0.22rem;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.co-weight-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(46, 196, 182, 0.8), rgba(108, 237, 226, 0.95));
+}
+
+.co-weight-fill.warn {
+  background: linear-gradient(90deg, rgba(215, 68, 68, 0.9), rgba(255, 124, 80, 0.94));
+}
+
+.co-drop-target {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.co-drop-over {
+  border-color: var(--teal2) !important;
+  box-shadow: 0 0 0 2px rgba(46, 196, 182, 0.2) inset;
+}
+
+#mapInteractionControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
