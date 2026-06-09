@@ -22647,7 +22647,7 @@ function runWhenIdle(fn, timeoutMs){
       b.removeAttribute('aria-current');
     });
     if (el) { el.classList.add('on'); el.setAttribute('aria-current', 'page'); }
-    renderQP(tab);
+    renderQP(tab,{forceSwitch:true});
   };
 
   window.openQuickPanelTab = function(tab) {
@@ -22661,6 +22661,11 @@ function runWhenIdle(fn, timeoutMs){
     var tabBtn = document.querySelector('.qp-tab[onclick*="\''+tabName+'\'"]');
     switchQP(tabName, tabBtn || null);
   };
+
+  function scheduleDynamicTranslation(root){
+    if(!root||!window.accessibilityI18n||typeof window.accessibilityI18n.schedulePageTranslation!=='function')return;
+    try{ window.accessibilityI18n.schedulePageTranslation(root); }catch(_err){}
+  }
 
   function buildQPFlavorCueFeed(){
     if(typeof getBespokeFlavorEntry!=='function'||typeof getFlavorSceneContext!=='function'||typeof getFlavorRuleForEntry!=='function'||typeof isFlavorRuleActive!=='function')return '';
@@ -22685,26 +22690,35 @@ function runWhenIdle(fn, timeoutMs){
     + '</div>';
   }
 
-  function renderQP(tab) {
+  function renderQP(tab, opts) {
     ensureQPState();
+    var options=opts&&typeof opts==='object'?opts:{};
+    var requested=String(tab||_qpTab||'dice');
+    if(options.forceSwitch){
+      _qpTab=requested;
+    }else if(requested!==_qpTab){
+      return;
+    }
     var c = document.getElementById('qpContent');
     if (!c) return;
     var body='';
-    if (tab === 'dice')    body = buildQPDice();
-    else if (tab === 'char')   body = buildQPChar();
-    else if (tab === 'combat') body = buildQPCombat();
-    else if (tab === 'oracle') body = buildQPOracle();
-    else if (tab === 'missions') body = buildQPMissions();
-    else if (tab === 'campaign') body = buildQPCampaign();
-    else if (tab === 'notes') body = buildQPNotes();
+    if (_qpTab === 'dice')    body = buildQPDice();
+    else if (_qpTab === 'char')   body = buildQPChar();
+    else if (_qpTab === 'combat') body = buildQPCombat();
+    else if (_qpTab === 'oracle') body = buildQPOracle();
+    else if (_qpTab === 'missions') body = buildQPMissions();
+    else if (_qpTab === 'campaign') body = buildQPCampaign();
+    else if (_qpTab === 'notes') body = buildQPNotes();
     c.innerHTML = body;
-    if (tab === 'combat' && window._arenaCombatPopupOpen && typeof window.renderArenaCombatPopup === 'function') {
+    scheduleDynamicTranslation(c);
+    if (_qpTab === 'combat' && window._arenaCombatPopupOpen && typeof window.renderArenaCombatPopup === 'function') {
       try { window.renderArenaCombatPopup(); } catch (_err) {}
     }
   }
 
   window.refreshQuickPanelSection = function(tab) {
-    renderQP(tab || _qpTab);
+    if (tab && String(tab) !== String(_qpTab)) return;
+    renderQP(_qpTab);
   };
 
   function qpRoll(sides) {
@@ -24267,6 +24281,164 @@ function runWhenIdle(fn, timeoutMs){
       if(root==='qpCampaign')renderQP('campaign');
       else if(typeof window.renderVttCampaignStoryPanel==='function')window.renderVttCampaignStoryPanel();
     },180);
+  };
+
+  function qpCampaignGetPendingChecks(){
+    if(!window.campaignSystem||typeof window.campaignSystem.getSharedState!=='function')return [];
+    var shared=window.campaignSystem.getSharedState()||{};
+    var pending=shared&&shared.pendingChecks&&typeof shared.pendingChecks==='object'?shared.pendingChecks:{};
+    var active=pending&&pending.active&&typeof pending.active==='object'?pending.active:{};
+    return Object.keys(active).map(function(key){
+      return active[key]&&typeof active[key]==='object'?active[key]:null;
+    }).filter(Boolean).sort(function(a,b){
+      return Number((b&&b.createdAt)||0)-Number((a&&a.createdAt)||0);
+    });
+  }
+
+  function qpCampaignFindPendingCheck(checkId){
+    var id=String(checkId||'').trim();
+    if(!id)return null;
+    var rows=qpCampaignGetPendingChecks();
+    for(var i=0;i<rows.length;i++){
+      if(String(rows[i]&&rows[i].id||'')===id)return rows[i];
+    }
+    return null;
+  }
+
+  function qpCampaignResolveActionDie(statKey){
+    var key=String(statKey||'valor').toLowerCase();
+    if(key==='valor'&&typeof getValorDieSize==='function'){
+      return Math.max(4,Number(getValorDieSize()||4));
+    }
+    if(typeof getEffectiveDie==='function'){
+      return Math.max(4,Number(getEffectiveDie(key)||4));
+    }
+    return Math.max(4,Number((S&&S.stats&&S.stats[key])||4));
+  }
+
+  function qpCampaignFormatPendingSubmissions(check){
+    var rows=Array.isArray(check&&check.submissions)?check.submissions:[];
+    if(!rows.length)return '<div style="font-size:.68rem;color:var(--muted2);margin-top:.16rem;">No player submissions yet.</div>';
+    return '<div style="display:grid;gap:.14rem;margin-top:.18rem;">'+rows.map(function(row){
+      var total=Math.max(0,Number((row&&row.total)||0));
+      var dread=Math.max(0,Number((row&&row.dreadTotal)||0));
+      var method=String((row&&row.method)||'auto');
+      return '<div style="display:flex;justify-content:space-between;gap:.3rem;font-size:.7rem;color:var(--text2);padding:.16rem .18rem;border:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.03);">'
+        + '<span><strong>'+qpCampaignEsc(String((row&&row.name)||'Wayfarer'))+'</strong> <span style="color:var(--muted2);">('+qpCampaignEsc(method)+')</span></span>'
+        + '<span><strong style="color:var(--teal);">'+total+'</strong> vs <strong style="color:var(--red2);">'+dread+'</strong></span>'
+        + '</div>';
+    }).join('')+'</div>';
+  }
+
+  function qpCampaignRenderPendingChecks(){
+    var snap=window.campaignSystem&&typeof window.campaignSystem.getState==='function'?(window.campaignSystem.getState()||{}):{};
+    var isGm=snap.role==='gm';
+    var myToken=String((snap&&snap.token)||'');
+    var rows=qpCampaignGetPendingChecks().slice(0,6);
+    if(!rows.length){
+      return '<div style="font-size:.74rem;color:var(--muted2);line-height:1.4;">No shared checks waiting on the table.</div>';
+    }
+    return rows.map(function(check){
+      var id=String((check&&check.id)||'');
+      var statOptions=Array.isArray(check&&check.statOptions)&&check.statOptions.length
+        ? check.statOptions.map(function(row){return String(row||'').toUpperCase();}).join(' / ')
+        : qpCampaignEsc(String((check&&check.stat)||'VALOR').toUpperCase());
+      var submissions=Array.isArray(check&&check.submissions)?check.submissions:[];
+      var alreadySubmitted=!!(myToken&&submissions.some(function(row){return String((row&&row.token)||'')===myToken;}));
+      return '<div style="border:1px solid rgba(201,162,39,.26);background:rgba(201,162,39,.05);padding:.34rem .4rem;margin-top:.24rem;">'
+        + '<div style="display:flex;justify-content:space-between;gap:.3rem;align-items:flex-start;">'
+        + '<div>'
+          + '<div style="font-family:Cinzel,serif;font-size:.55rem;letter-spacing:.1em;color:var(--gold2);text-transform:uppercase;">'+qpCampaignEsc(String((check&&check.label)||'Shared Check'))+'</div>'
+          + '<div style="font-size:.7rem;color:var(--text2);margin-top:.12rem;">'+statOptions+' vs d'+Math.max(1,Number((check&&check.dread)||6))+' · '+qpCampaignEsc(String((check&&check.scope)||'campaign'))+'</div>'
+          + ((check&&check.stake)?'<div style="font-size:.68rem;color:var(--muted2);margin-top:.08rem;">Stakes: '+qpCampaignEsc(String(check.stake||''))+'</div>':'')
+          + ((check&&check.context)?'<div style="font-size:.68rem;color:var(--muted2);margin-top:.06rem;">'+qpCampaignEsc(String(check.context||''))+'</div>':'')
+        + '</div>'
+        + '<div style="font-size:.66rem;color:var(--muted2);white-space:nowrap;">'+submissions.length+' submit'+(submissions.length===1?'':'s')+'</div>'
+        + '</div>'
+        + qpCampaignFormatPendingSubmissions(check)
+        + '<div style="display:flex;gap:.18rem;flex-wrap:wrap;margin-top:.24rem;">'
+        + (isGm
+          ? '<button class="btn btn-xs btn-primary" onclick="qpCampaignResolvePendingCheck(\''+qpCampaignEsc(id)+'\',true)">Resolve Success</button><button class="btn btn-xs btn-red" onclick="qpCampaignResolvePendingCheck(\''+qpCampaignEsc(id)+'\',false)">Resolve Failure</button>'
+          : (alreadySubmitted
+            ? '<button class="btn btn-xs" disabled>Submitted</button>'
+            : '<button class="btn btn-xs btn-teal" onclick="qpCampaignSubmitPendingCheck(\''+qpCampaignEsc(id)+'\')">Roll & Submit</button>'))
+        + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  window.qpCampaignSubmitPendingCheck = async function(checkId){
+    var check=qpCampaignFindPendingCheck(checkId);
+    if(!check||!window.campaignSystem||typeof window.campaignSystem.submitPendingCheck!=='function'){
+      if(typeof showNotif==='function')showNotif('That shared check is no longer available.','warn');
+      return;
+    }
+    var stat=String((check.statOptions&&check.statOptions[0])||check.stat||'valor').toLowerCase();
+    var actionDie=qpCampaignResolveActionDie(stat);
+    var dreadDie=Math.max(4,Number(check.dread||6));
+    var finishSubmit=async function(outcome){
+      var actionTotal=Math.max(1,Number((outcome&&outcome.actionTotal)!=null?outcome.actionTotal:(outcome&&outcome.total)||0));
+      var dreadTotal=Math.max(1,Number((outcome&&outcome.dreadTotal)!=null?outcome.dreadTotal:dreadDie));
+      var out=await window.campaignSystem.submitPendingCheck(String(checkId||''),{
+        total:actionTotal,
+        dreadTotal:dreadTotal,
+        die:actionDie,
+        manual:!!(outcome&&outcome.manual),
+        method:outcome&&outcome.manual?'manual':'auto',
+        notes:String(check.context||'')
+      });
+      if(out&&out.ok&&typeof showNotif==='function'){
+        showNotif('Shared check submitted: '+String(check.label||'Check')+'.', actionTotal>=dreadTotal?'good':'warn');
+      }
+      setTimeout(function(){ renderQP('campaign'); }, 180);
+    };
+    var manualMode=!!(window.settingsSystem&&typeof window.settingsSystem.isManualRollMode==='function'&&window.settingsSystem.isManualRollMode());
+    if(manualMode&&typeof openProvinceManualCheckPrompt==='function'){
+      openProvinceManualCheckPrompt({
+        title:'Campaign Check',
+        context:String(check.label||'Shared Check'),
+        statKey:stat,
+        statLabel:stat.charAt(0).toUpperCase()+stat.slice(1),
+        actionDie:actionDie,
+        dreadDie:dreadDie,
+        onResolve:finishSubmit
+      });
+      return;
+    }
+    var action=(typeof explodingRoll==='function')?explodingRoll(actionDie,{type:'action',major:true,label:'Campaign '+stat}):{total:Math.floor(Math.random()*actionDie)+1};
+    var dread=(typeof explodingRoll==='function')?explodingRoll(dreadDie,{type:'dread',major:true,label:'Campaign Dread'}):{total:Math.floor(Math.random()*dreadDie)+1};
+    await finishSubmit({
+      actionTotal:Number(action&&action.total||0),
+      dreadTotal:Number(dread&&dread.total||0),
+      manual:false
+    });
+  };
+
+  window.qpCampaignResolvePendingCheck = function(checkId, success){
+    var check=qpCampaignFindPendingCheck(checkId);
+    if(!check||!window.campaignSystem||typeof window.campaignSystem.resolveGmPendingCheck!=='function'){
+      if(typeof showNotif==='function')showNotif('That shared check is no longer available.','warn');
+      return;
+    }
+    var rows=Array.isArray(check.submissions)?check.submissions.slice():[];
+    rows.sort(function(a,b){ return Number((a&&a.at)||0)-Number((b&&b.at)||0); });
+    var last=rows.length?rows[rows.length-1]:null;
+    var actionTotal=Math.max(0,Number((last&&last.total)||0));
+    var dreadTotal=Math.max(0,Number((last&&last.dreadTotal)||0));
+    var approved=!!success;
+    var outcome={
+      success:approved,
+      actionTotal:actionTotal,
+      dreadTotal:dreadTotal,
+      margin:approved?Math.max(0,actionTotal-dreadTotal):Math.max(1,dreadTotal-actionTotal),
+      failedBy:approved?0:Math.max(1,dreadTotal-actionTotal),
+      resolvedVia:'quick-panel'
+    };
+    var ok=window.campaignSystem.resolveGmPendingCheck(String(checkId||''),outcome);
+    if(ok&&typeof showNotif==='function'){
+      showNotif('Shared check resolved: '+(approved?'success':'failure')+'.', approved?'good':'warn');
+    }
+    setTimeout(function(){ renderQP('campaign'); }, 180);
   };
 
   function buildQPDice() {
@@ -25885,6 +26057,10 @@ function runWhenIdle(fn, timeoutMs){
           : '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.submitActiveRoll()">Roll Now</button>')
         : '<button class="btn btn-xs" disabled>Waiting</button>')
       + '</div>'
+      + '<div style="margin-top:.3rem;">'
+      + '<div style="'+compactHead+'color:var(--teal);margin-bottom:.12rem;">Shared Checks Queue</div>'
+      + qpCampaignRenderPendingChecks()
+      + '</div>'
       + '</div>';
 
     var storyPane=''
@@ -25994,6 +26170,7 @@ function runWhenIdle(fn, timeoutMs){
     if(!force&&host.getAttribute('data-story-hash')===hash)return;
     host.setAttribute('data-story-hash',hash);
     host.innerHTML=buildVttCampaignStoryPanel();
+    scheduleDynamicTranslation(host);
   };
 
   setInterval(function(){

@@ -95,6 +95,7 @@ const PLAYER_PATCH_ALLOWED_KEYS = {
   characterInventories: true,
   economyLedger: true,
   readyCheck: true,
+  pendingChecks: true,
   combatScene: true
 };
 const AUDIO_PROXY_ALLOWED_HOSTS = new Set([
@@ -337,7 +338,7 @@ function mergeAllowedPlayerState(existingState, incoming, requesterToken, confli
   const conflictList = Array.isArray(conflicts) ? conflicts : [];
 
   Object.keys(incomingState).forEach((key) => {
-    if (key === "provinceSelections" || key === "economyLedger" || key === "characterInventories" || key === "actionQueue" || key === "readyCheck") return;
+    if (key === "provinceSelections" || key === "economyLedger" || key === "characterInventories" || key === "actionQueue" || key === "readyCheck" || key === "pendingChecks") return;
     if (!PLAYER_PATCH_ALLOWED_KEYS[key]) {
       conflictList.push(key);
       return;
@@ -408,6 +409,48 @@ function mergeAllowedPlayerState(existingState, incoming, requesterToken, confli
       merged.readyCheck = currentReady;
     } else {
       conflictList.push("readyCheck");
+    }
+  }
+
+  if (incomingState.pendingChecks && typeof incomingState.pendingChecks === "object") {
+    const incomingPending = incomingState.pendingChecks;
+    const currentPending = existingState && existingState.pendingChecks && typeof existingState.pendingChecks === "object"
+      ? safeClone(existingState.pendingChecks) || { active: {}, history: [] }
+      : { active: {}, history: [] };
+    const active = currentPending.active && typeof currentPending.active === "object" && !Array.isArray(currentPending.active)
+      ? currentPending.active
+      : {};
+    const recordId = String(incomingPending.id || "");
+    const submission = incomingPending.submission && typeof incomingPending.submission === "object"
+      ? safeClone(incomingPending.submission) || {}
+      : null;
+    const submissionToken = submission ? String(submission.token || "") : "";
+    const record = recordId && active[recordId] && typeof active[recordId] === "object" ? active[recordId] : null;
+    const pending = record && String(record.status || "pending") === "pending";
+
+    if (record && pending && requesterToken && submission && submissionToken === String(requesterToken)) {
+      if (!Array.isArray(record.submissions)) record.submissions = [];
+      const normalized = {
+        token: submissionToken,
+        name: String(submission.name || "Wayfarer").slice(0, 48),
+        role: String(submission.role || "player") === "gm" ? "gm" : "player",
+        total: Math.max(0, Number(submission.total || 0) || 0),
+        dreadTotal: Math.max(0, Number(submission.dreadTotal || 0) || 0),
+        die: Math.max(1, Number(submission.die || 4) || 4),
+        success: typeof submission.success === "boolean"
+          ? !!submission.success
+          : (Math.max(0, Number(submission.total || 0) || 0) >= Math.max(0, Number(submission.dreadTotal || 0) || 0)),
+        method: String(submission.method || "auto").slice(0, 24),
+        notes: String(submission.notes || "").slice(0, 180),
+        at: Number(submission.at || Date.now()) || Date.now()
+      };
+      const idx = record.submissions.findIndex((row) => String(row && row.token || "") === submissionToken);
+      if (idx >= 0) record.submissions[idx] = normalized;
+      else record.submissions.push(normalized);
+      currentPending.active = active;
+      merged.pendingChecks = currentPending;
+    } else {
+      conflictList.push("pendingChecks");
     }
   }
 
@@ -827,6 +870,9 @@ function ensureCampaignShape(raw) {
       stat: String(roll.stat || "valor"),
       dread: Math.max(1, Number(roll.dread || 8)),
       label: String(roll.label || "GM Check").slice(0, 80),
+      pendingCheckId: String(roll.pendingCheckId || "").trim(),
+      targetToken: String(roll.targetToken || "").trim(),
+      targetName: String(roll.targetName || "").trim().slice(0, 48),
       createdAt: Number(roll.createdAt) || Date.now(),
       responses: responses.map((resp) => ({
         token: String((resp && resp.token) || ""),
@@ -893,6 +939,7 @@ function serializeCampaign(campaign) {
           stat: campaign.activeRollRequest.stat,
           dread: campaign.activeRollRequest.dread,
           label: campaign.activeRollRequest.label,
+          pendingCheckId: String(campaign.activeRollRequest.pendingCheckId || ""),
           targetToken: String(campaign.activeRollRequest.targetToken || ""),
           targetName: String(campaign.activeRollRequest.targetName || ""),
           createdAt: campaign.activeRollRequest.createdAt,
@@ -1187,6 +1234,7 @@ function snapshotCampaign(campaign, requesterToken) {
           stat: campaign.activeRollRequest.stat,
           dread: campaign.activeRollRequest.dread,
           label: campaign.activeRollRequest.label,
+          pendingCheckId: String(campaign.activeRollRequest.pendingCheckId || ""),
           targetToken: String(campaign.activeRollRequest.targetToken || ""),
           targetName: String(campaign.activeRollRequest.targetName || ""),
           createdAt: campaign.activeRollRequest.createdAt,
@@ -1569,6 +1617,7 @@ function applyCampaignImportSnapshot(campaign, rawSnapshot) {
         stat: String(roll.stat || "valor"),
         dread: Math.max(1, Number(roll.dread || 8)),
         label: String(roll.label || "GM Check").slice(0, 80),
+        pendingCheckId: String(roll.pendingCheckId || "").trim(),
         targetToken: String(roll.targetToken || "").trim(),
         targetName: String(roll.targetName || "").trim().slice(0, 48),
         createdAt: Number(roll.createdAt || Date.now()),
@@ -2749,6 +2798,7 @@ io.on("connection", (socket) => {
     const dread = Math.max(1, Number((payload && payload.dread) || 8));
     const stat = String((payload && payload.stat) || "valor").trim().slice(0, 32) || "valor";
     const label = String((payload && payload.label) || "GM Check").trim().slice(0, 80) || "GM Check";
+    const pendingCheckId = String((payload && payload.pendingCheckId) || "").trim();
     const targetToken = String((payload && payload.targetToken) || "").trim();
     const targetMember = targetToken ? campaign.participants.get(targetToken) : null;
     if (targetToken && (!targetMember || targetMember.role !== "player")) {
@@ -2761,6 +2811,7 @@ io.on("connection", (socket) => {
       stat,
       dread,
       label,
+      pendingCheckId,
       targetToken: targetToken || "",
       targetName: targetMember ? String(targetMember.name || "") : "",
       createdAt: Date.now(),

@@ -38,8 +38,27 @@
     return false;
   }
 
+  function syncCampaignRivalState(reason){
+    if(typeof window==='undefined'||!window.campaignSystem||typeof window.campaignSystem.getState!=='function'||typeof window.campaignSystem.syncSharedPatch!=='function')return;
+    var snap=window.campaignSystem.getState()||{};
+    if(!snap.code||snap.role!=='gm')return;
+    var r=ensureRivalState();
+    if(!r)return;
+    try{
+      var out=window.campaignSystem.syncSharedPatch({rival:JSON.parse(JSON.stringify(r))},reason||'rival-state');
+      if(out&&typeof out.catch==='function')out.catch(function(){});
+    }catch(_err){}
+  }
+
   function ensureRivalState(){
     if(typeof S==='undefined'||!S||typeof S!=='object')return null;
+    if((!S.rival||typeof S.rival!=='object')&&typeof window!=='undefined'&&window.campaignSystem&&typeof window.campaignSystem.getState==='function'&&typeof window.campaignSystem.getSharedState==='function'){
+      var snap=window.campaignSystem.getState()||{};
+      var shared=window.campaignSystem.getSharedState()||{};
+      if(snap.code&&shared&&shared.rival&&typeof shared.rival==='object'){
+        try{ S.rival=JSON.parse(JSON.stringify(shared.rival)); }catch(_err){ S.rival=shared.rival; }
+      }
+    }
     if(!S.rival||typeof S.rival!=='object'){
       var baseName='The Rival';
       if(S.backstory&&typeof S.backstory.rival==='string'&&S.backstory.rival.trim())baseName=S.backstory.rival.trim();
@@ -260,6 +279,7 @@
     r.lastMap=String(mapKey||'');
     r.lastOutcome='Ally Support';
     addRivalHistory('['+String(mapKey||'province')+'] ally support triggered near '+String((ctx&&ctx.key)||'unknown')+'.');
+    syncCampaignRivalState('rival-ally-support');
     if(typeof showNotif==='function'){
       showNotif(String(r.name)+' intervenes as an ally: +'+teamworkGranted+' Teamwork, +'+pathGranted+' Path Token, and steadied nerves.', 'good');
     }
@@ -467,6 +487,7 @@
     addRivalHistory('['+String(mapKey||'province')+'] '+label+': '+(success?'success':'failure')+' ('+String(stat)+')'+(rollOut.manual?(rollOut.pushLuck?' [manual push-luck]':' [manual]'):'')+'.');
     syncRivalStatus();
     renderRivalCombatStatus();
+    syncCampaignRivalState('rival-interaction');
     if(typeof closeModal==='function')closeModal();
     if(!success&&typeof addTMWOnFail==='function'){
       addTMWOnFail('rival-interaction-failure',{
@@ -506,6 +527,7 @@
     r.lastOutcome='Combat Engaged';
     addRivalHistory('['+String(mapKey||'province')+'] combat engaged at '+String(key||'unknown'));
     renderRivalCombatStatus();
+    syncCampaignRivalState('rival-combat-start');
     if(typeof updateCombatUI==='function')updateCombatUI();
     if(typeof renderEnemies==='function')renderEnemies();
     if(typeof renderQP==='function')renderQP('combat');
@@ -562,6 +584,7 @@
     syncRivalStatus();
     renderRivalCombatStatus();
     r.activeCombat=null;
+    syncCampaignRivalState('rival-combat-finalize');
     if(typeof closeModal==='function')closeModal();
     if(typeof renderQP==='function')renderQP('combat');
   }

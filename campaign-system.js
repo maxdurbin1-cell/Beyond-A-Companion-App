@@ -134,7 +134,8 @@
     partyStash: true,
     characterInventories: true,
     economyLedger: true,
-    readyCheck: true
+    readyCheck: true,
+    pendingChecks: true
   };
 
   // Explicitly local-only character domains (never synced through shared world patches).
@@ -898,6 +899,17 @@
         };
         return;
       }
+      if (key === "pendingChecks") {
+        var pendingPatch = patch.pendingChecks && typeof patch.pendingChecks === "object" ? patch.pendingChecks : null;
+        var submission = pendingPatch && pendingPatch.submission && typeof pendingPatch.submission === "object" ? pendingPatch.submission : null;
+        if (!pendingPatch || !submission) return;
+        if (!state.token || String(submission.token || state.token || "") !== String(state.token)) return;
+        sanitized.pendingChecks = {
+          id: String(pendingPatch.id || ""),
+          submission: buildPendingCheckSubmission(submission)
+        };
+        return;
+      }
       if (key === "characterInventories") {
         if (!state.token || !patch.characterInventories || typeof patch.characterInventories !== "object") return;
         if (!Object.prototype.hasOwnProperty.call(patch.characterInventories, state.token)) return;
@@ -1130,6 +1142,23 @@
     return deepCloneJson(checks) || { active: {}, history: [] };
   }
 
+  function upsertPendingCheckSubmission(record, submission) {
+    if (!record || typeof record !== "object") return false;
+    var next = buildPendingCheckSubmission(submission);
+    var token = String(next.token || "");
+    if (!token) return false;
+    if (!Array.isArray(record.submissions)) record.submissions = [];
+    var replaced = false;
+    for (var i = 0; i < record.submissions.length; i += 1) {
+      if (String(record.submissions[i] && record.submissions[i].token || "") !== token) continue;
+      record.submissions[i] = next;
+      replaced = true;
+      break;
+    }
+    if (!replaced) record.submissions.push(next);
+    return true;
+  }
+
   function isConnectedCampaignPlayer() {
     return !!(state.code && state.connected && state.role === "player");
   }
@@ -1143,11 +1172,51 @@
     return false;
   }
 
+  function normalizePendingCheckParticipants(input) {
+    if (!Array.isArray(input)) return [];
+    return input.map(function (entry) {
+      if (!entry) return null;
+      if (typeof entry === "string") {
+        var tokenText = String(entry || "").trim();
+        return tokenText ? { token: tokenText, name: "" } : null;
+      }
+      if (typeof entry !== "object") return null;
+      var token = String(entry.token || "").trim();
+      var name = String(entry.name || "").trim();
+      if (!token && !name) return null;
+      return { token: token, name: name };
+    }).filter(Boolean);
+  }
+
+  function buildPendingCheckSubmission(entry) {
+    var details = entry && typeof entry === "object" ? entry : {};
+    var totals = {
+      total: Math.max(0, Number(details.total || details.actionTotal || 0) || 0),
+      dreadTotal: Math.max(0, Number(details.dreadTotal || details.ddTotal || 0) || 0),
+      die: Math.max(1, Number(details.die || details.actionDie || 4) || 4)
+    };
+    return {
+      token: String(details.token || state.token || "").trim(),
+      name: String(details.name || state.playerName || ensureName() || "Wayfarer").slice(0, 48),
+      role: String(details.role || state.role || "player") === "gm" ? "gm" : "player",
+      total: totals.total,
+      dreadTotal: totals.dreadTotal,
+      die: totals.die,
+      success: typeof details.success === "boolean" ? !!details.success : (totals.total >= totals.dreadTotal),
+      method: String(details.method || (details.manual ? "manual" : "auto") || "auto").slice(0, 24),
+      notes: String(details.notes || details.context || "").slice(0, 180),
+      at: Number(details.at || Date.now()) || Date.now()
+    };
+  }
+
   function buildPendingCheckRecord(spec) {
     var details = spec && typeof spec === "object" ? spec : {};
     var id = "check-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
     var stat = String(details.stat || details.statKey || "").toLowerCase();
     var dread = Number(details.dread || details.dreadDie || details.dd || 0) || 0;
+    var initialSubmissions = Array.isArray(details.submissions) ? details.submissions.map(buildPendingCheckSubmission).filter(function (row) {
+      return !!String(row && row.token || "");
+    }) : [];
     return {
       id: id,
       status: "pending",
@@ -1155,15 +1224,24 @@
       scope: String(details.scope || details.map || "campaign"),
       label: String(details.label || details.context || "Shared Check").slice(0, 100),
       stat: stat,
+      statOptions: Array.isArray(details.statOptions) ? details.statOptions.map(function (row) {
+        return String(row || "").trim().toLowerCase();
+      }).filter(Boolean).slice(0, 8) : (stat ? [stat] : []),
       dread: dread,
+      stake: String(details.stake || details.stakes || "").slice(0, 180),
       context: String(details.context || details.label || "").slice(0, 180),
       payload: details.payload && typeof details.payload === "object" ? deepCloneJson(details.payload) || {} : {},
+      calledBy: String(details.calledBy || state.playerName || ensureName() || "GM"),
+      calledByToken: String(details.calledByToken || state.token || ""),
+      participants: normalizePendingCheckParticipants(details.participants),
+      submissions: initialSubmissions,
       createdAt: Date.now(),
       createdBy: String(state.playerName || ensureName() || "GM"),
       createdByToken: String(state.token || ""),
       resolvedAt: 0,
       resolvedBy: "",
-      outcome: null
+      outcome: null,
+      effectsApplied: null
     };
   }
 
@@ -1172,6 +1250,35 @@
     var shared = getMutableCampaignSharedState();
     var pending = ensurePendingChecksState(shared);
     syncSharedPatch({ pendingChecks: deepCloneJson(pending) || pending }, reason || "pending-checks").catch(function () {});
+  }
+
+  function submitPendingCheck(checkId, submission) {
+    var id = String(checkId || "").trim();
+    if (!id || !state.code || !state.connected) return Promise.resolve({ ok: false, error: "Not connected." });
+    var nextSubmission = buildPendingCheckSubmission(submission);
+    if (!nextSubmission.token) {
+      nextSubmission.token = String(state.token || "");
+    }
+    if (!nextSubmission.token) return Promise.resolve({ ok: false, error: "Missing participant token." });
+
+    if (state.role === "gm") {
+      var shared = getMutableCampaignSharedState();
+      var pending = ensurePendingChecksState(shared);
+      var record = pending.active[id] && typeof pending.active[id] === "object" ? pending.active[id] : null;
+      if (!record) return Promise.resolve({ ok: false, error: "Pending check not found." });
+      if (!upsertPendingCheckSubmission(record, nextSubmission)) {
+        return Promise.resolve({ ok: false, error: "Could not record submission." });
+      }
+      syncPendingChecks("pending-check-submit");
+      return Promise.resolve({ ok: true, local: true, checkId: id });
+    }
+
+    return syncSharedPatch({
+      pendingChecks: {
+        id: id,
+        submission: nextSubmission
+      }
+    }, "pending-check-submit");
   }
 
   function startGmPendingCheck(spec) {
@@ -1209,6 +1316,9 @@
     record.resolvedAt = Date.now();
     record.resolvedBy = String(state.playerName || ensureName() || "GM");
     record.outcome = outcome && typeof outcome === "object" ? deepCloneJson(outcome) || {} : {};
+    record.effectsApplied = record.outcome && Object.prototype.hasOwnProperty.call(record.outcome, "effectsApplied")
+      ? deepCloneJson(record.outcome.effectsApplied)
+      : null;
     delete pending.active[id];
     pending.history.push(record);
     if (pending.history.length > 80) pending.history = pending.history.slice(-80);
@@ -1779,6 +1889,7 @@
       factionBases: deepCloneJson(window.S.factionBases || {}),
       factionWayfarerTasks: deepCloneJson(window.S.factionWayfarerTasks || []),
       factionNarrative: deepCloneJson(window.S.factionNarrative || {}),
+      rival: deepCloneJson((window.S.rival && typeof window.S.rival === "object" ? window.S.rival : current.rival) || null),
       partyStash: Array.isArray(current.partyStash) ? current.partyStash.slice() : [],
       economyLedger: mergeEconomyLedger(current.economyLedger),
       provinceSelections: existingSelections,
@@ -1828,6 +1939,7 @@
       factionNarrative: deepCloneJson(window.S.factionNarrative || {}),
       factionRenown: deepCloneJson(window.S.factionRenown || {}),
       factionBases: deepCloneJson(window.S.factionBases || {}),
+      rival: deepCloneJson(window.S.rival || {}),
       worldState: deepCloneJson(window.S.worldState || {})
     };
   }
@@ -1912,6 +2024,12 @@
       }
       if (sharedState.factionNarrative && typeof sharedState.factionNarrative === "object") {
         window.S.factionNarrative = deepCloneJson(sharedState.factionNarrative) || {};
+      }
+      if (sharedState.rival && typeof sharedState.rival === "object") {
+        window.S.rival = deepCloneJson(sharedState.rival) || {};
+        if (typeof window.renderRivalCombatStatus === "function") {
+          try { window.renderRivalCombatStatus(); } catch (_err) {}
+        }
       }
       if (sharedState.lastSea && typeof sharedState.lastSea === "object") {
         window.S.lastSea = deepCloneJson(sharedState.lastSea) || {};
@@ -5125,6 +5243,10 @@
         + '</button>'
         + '<button class="btn btn-xs" onclick="window.campaignSystem.jumpDockTimelineLatest()">Jump To Latest' + badge + '</button>';
     }
+
+    if (window.accessibilityI18n && typeof window.accessibilityI18n.schedulePageTranslation === "function") {
+      try { window.accessibilityI18n.schedulePageTranslation(root); } catch (_err) {}
+    }
   }
 
   function toggleDockTimelinePin() {
@@ -5265,6 +5387,12 @@
         snapshot && snapshot.shared ? snapshot.shared.state : null,
         snapshot && snapshot.shared ? snapshot.shared.stateVersion : 0
       );
+
+      if ((!window.S.rival || typeof window.S.rival !== "object")
+        && snapshot && snapshot.shared && snapshot.shared.state
+        && snapshot.shared.state.rival && typeof snapshot.shared.state.rival === "object") {
+        window.S.rival = deepCloneJson(snapshot.shared.state.rival) || {};
+      }
 
       if (incomingVersion >= state.lastSharedVersion) {
         state.syncConflictCount = 0;
@@ -5604,10 +5732,36 @@
     var nextDread = Math.max(1, Number(dread || 8));
     var payload = { label: nextLabel, stat: nextStat, dread: nextDread };
     var target = String(targetToken || "").trim();
+    var pendingCheckId = "";
+    if (state.role === "gm") {
+      var pendingCheck = startGmPendingCheck({
+        type: "shared-check",
+        scope: target ? "individual" : "party",
+        label: nextLabel,
+        stat: nextStat,
+        statOptions: [nextStat],
+        dread: nextDread,
+        context: nextLabel,
+        stake: target ? "Individual actor check waiting on GM resolution." : "Shared campaign consequence waiting on GM resolution.",
+        participants: target ? [{ token: target }] : []
+      });
+      if (pendingCheck && pendingCheck.ok && pendingCheck.id) {
+        pendingCheckId = String(pendingCheck.id || "");
+      }
+    }
     if (target) payload.targetToken = target;
+    if (pendingCheckId) payload.pendingCheckId = pendingCheckId;
 
     var res = await emitWithAck("campaign:rollRequest", payload);
     if (!res.ok) {
+      if (pendingCheckId) {
+        var shared = getMutableCampaignSharedState();
+        var pending = ensurePendingChecksState(shared);
+        if (pending.active && pending.active[pendingCheckId]) {
+          delete pending.active[pendingCheckId];
+          syncPendingChecks("pending-check-cancelled");
+        }
+      }
       safeNotif(res.error || "Could not create roll request.", "warn");
       return res || { ok: false, error: "Could not create roll request." };
     }
@@ -5954,6 +6108,16 @@
     if (!res.ok) {
       safeNotif(res.error || "Could not submit roll.", "warn");
       return;
+    }
+
+    if (req.pendingCheckId) {
+      submitPendingCheck(req.pendingCheckId, {
+        total: action.total,
+        dreadTotal: dreadRoll.total,
+        die: actionDie,
+        method: "auto",
+        manual: false
+      }).catch(function () {});
     }
 
     if (typeof window.closeModal === "function") {
@@ -6573,6 +6737,7 @@
     guardSharedWorldMutation: guardSharedWorldMutation,
     guardGmCheckResolution: guardGmCheckResolution,
     startGmPendingCheck: startGmPendingCheck,
+    submitPendingCheck: submitPendingCheck,
     resolveGmPendingCheck: resolveGmPendingCheck,
     runGmResolvedCheck: runGmResolvedCheck,
     getPendingChecks: getPendingChecks

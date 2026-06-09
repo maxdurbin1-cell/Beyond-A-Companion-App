@@ -435,11 +435,12 @@
   function translatePage(root) {
     if (typeof document === 'undefined' || !document.body) return Promise.resolve();
     ensureTranslationObserver();
-    var passId = ++translatePassCounter;
+    translatePassCounter += 1;
+    var targetLanguage = currentLanguage;
     var units = collectTranslatableUnits(root || document.body);
     var textUnits = units.textUnits;
     var attrUnits = units.attrUnits;
-    if (currentLanguage === FALLBACK_LANGUAGE) return Promise.resolve();
+    if (targetLanguage === FALLBACK_LANGUAGE) return Promise.resolve();
 
     var sourceSet = {};
     textUnits.forEach(function (item) {
@@ -455,7 +456,7 @@
     var unitsMap = {};
     var missing = [];
     sourceTexts.forEach(function (source) {
-      var cached = getCachedTranslation(currentLanguage, source);
+      var cached = getCachedTranslation(targetLanguage, source);
       if (cached) {
         unitsMap[source] = cached;
       } else {
@@ -465,10 +466,11 @@
 
     if (!missing.length) {
       latestTranslationStatus = 'cached';
+      applyTranslatedUnits(unitsMap, textUnits, attrUnits);
       return Promise.resolve();
     }
 
-    return translateMissingTextBatch(missing, currentLanguage).then(function (batchResult) {
+    return translateMissingTextBatch(missing, targetLanguage).then(function (batchResult) {
       var fetched = batchResult && batchResult.pairs ? batchResult.pairs : {};
       var fallbackCount = batchResult && typeof batchResult.fallbackCount === 'number'
         ? batchResult.fallbackCount
@@ -476,12 +478,12 @@
       Object.keys(fetched).forEach(function (source) {
         var translated = fetched[source];
         if (!translated || translated === source) return;
-        setCachedTranslation(currentLanguage, source, translated);
+        setCachedTranslation(targetLanguage, source, translated);
         unitsMap[source] = translated;
       });
       latestTranslationStatus = fallbackCount > 0 ? 'fallback' : 'success';
       persistTranslationCache();
-      if (passId !== translatePassCounter) return;
+      if (targetLanguage !== currentLanguage) return;
       applyTranslatedUnits(unitsMap, textUnits, attrUnits);
     });
   }
@@ -498,6 +500,9 @@
     addRoot(document.querySelector('header'));
     addRoot(document.getElementById('mainNav'));
     addRoot(document.querySelector('.global-quick-access'));
+    addRoot(document.getElementById('quickPanel'));
+    addRoot(document.getElementById('campaignDock'));
+    addRoot(document.getElementById('vttCampaignStoryPanel'));
     addRoot(document.querySelector('.tab-panel.active'));
     addRoot(document.querySelector('#settingsPanel .settings-popup'));
 

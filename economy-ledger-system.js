@@ -103,7 +103,7 @@
     var playerId = String(options.playerId || (window.S && window.S.name) || "Wayfarer");
 
     // Strict mode: require detailed reason
-    if (state.strictTeamworkMode && reason === "failed-roll" || reason.length < 10) {
+    if ((state.strictTeamworkMode && reason === "failed-roll") || reason.length < 10) {
       console.warn("[Economy] Strict teamwork mode: insufficient reason:", reason);
       return 0;
     }
