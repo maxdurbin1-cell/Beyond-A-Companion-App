@@ -5966,8 +5966,12 @@
         refreshSyncHealth();
       }
 
+      var hadActivePrompt = !!state.activePromptId;
       if (!(snapshot && snapshot.activeRollRequest && snapshot.activeRollRequest.id)) {
         state.activePromptId = "";
+        if (hadActivePrompt && state.role === "player" && typeof window.closeModal === "function") {
+          window.closeModal();
+        }
       }
       maybeAutoResolveActiveRoll(snapshot && snapshot.activeRollRequest ? snapshot.activeRollRequest : null).catch(function () {});
       maybePromptActiveRoll(snapshot && snapshot.activeRollRequest ? snapshot.activeRollRequest : null);
@@ -6089,25 +6093,111 @@
     );
   }
 
+  function getCampaignRollInventoryEntries(statKey) {
+    if (typeof window.getInventoryRollBonusEntriesForStat !== "function") return [];
+    var out = window.getInventoryRollBonusEntriesForStat(statKey);
+    return Array.isArray(out) ? out : [];
+  }
+
+  function getCampaignRollHackEntries(statKey) {
+    var key = String(statKey || "valor").trim().toLowerCase();
+    if (key !== "control") return [];
+    var owned = (typeof window.S !== "undefined" && window.S && Array.isArray(window.S.ownedHacks))
+      ? window.S.ownedHacks.filter(Boolean)
+      : [];
+    var catalog = (typeof window.SHOP_DATA !== "undefined" && window.SHOP_DATA && Array.isArray(window.SHOP_DATA.os_hacks))
+      ? window.SHOP_DATA.os_hacks
+      : [];
+    return owned.map(function (name, idx) {
+      var label = String(name || "").trim();
+      var match = catalog.find(function (entry) {
+        return entry && String(entry.name || "").trim().toLowerCase() === label.toLowerCase();
+      }) || null;
+      return {
+        id: "hack:" + idx,
+        name: label,
+        detail: match ? String(match.desc || "") : ""
+      };
+    }).filter(function (entry) {
+      return !!entry.name;
+    });
+  }
+
+  function getCampaignSelectedInventoryEntries(statKey, selections, sources) {
+    var opts = selections && typeof selections === "object" ? selections : {};
+    var selectedIds = Array.isArray(opts.inventorySelectionIds)
+      ? opts.inventorySelectionIds.map(function (id) { return String(id || "").trim(); }).filter(Boolean)
+      : [];
+    if (!selectedIds.length) return [];
+    var selectedMap = {};
+    selectedIds.forEach(function (id) { selectedMap[id] = true; });
+    var entries = sources && Array.isArray(sources.inventoryEntries)
+      ? sources.inventoryEntries
+      : getCampaignRollInventoryEntries(statKey);
+    return entries.filter(function (entry) {
+      return !!(entry && selectedMap[String(entry.id || "")]);
+    });
+  }
+
+  function summarizeCampaignInventoryEntrySelections(entries) {
+    var list = Array.isArray(entries) ? entries : [];
+    return list.map(function (entry) {
+      var label = String(entry && entry.label || "Item");
+      var itemText = String(entry && entry.itemText || "").trim();
+      var summary = String(entry && entry.summary || "").trim().replace(/\s*\|\s*/g, " · ");
+      var head = itemText ? (label + " · " + itemText) : label;
+      return summary ? (head + " (" + summary + ")") : head;
+    }).join(" · ");
+  }
+
+  function getCampaignSelectedHackNames(selections, sources) {
+    var opts = selections && typeof selections === "object" ? selections : {};
+    var selectedIds = Array.isArray(opts.hackSelectionIds)
+      ? opts.hackSelectionIds.map(function (id) { return String(id || "").trim(); }).filter(Boolean)
+      : [];
+    if (!selectedIds.length) return [];
+    var selectedMap = {};
+    selectedIds.forEach(function (id) { selectedMap[id] = true; });
+    var hacks = sources && Array.isArray(sources.hackEntries)
+      ? sources.hackEntries
+      : getCampaignRollHackEntries("");
+    return hacks.filter(function (entry) {
+      return !!(entry && selectedMap[String(entry.id || "")]);
+    }).map(function (entry) {
+      return String(entry && entry.name || "").trim();
+    }).filter(Boolean);
+  }
+
   function getCampaignPromptBonusSources(statKey) {
     var key = String(statKey || "valor").trim().toLowerCase();
+    var flavorName = String((typeof window.S !== "undefined" && window.S && window.S.flavor) || "").trim();
+    var mutationName = String((typeof window.S !== "undefined" && window.S && window.S.mutation) || "").trim();
     var flavor = (typeof window.getFlavorBonus === "function")
       ? (window.getFlavorBonus(key) || { flat: 0, advDice: [], holyShield: false })
       : { flat: 0, advDice: [], holyShield: false };
     var mutation = (typeof window.getMutationBonus === "function")
       ? (window.getMutationBonus(key) || { flat: 0, advDice: [] })
       : { flat: 0, advDice: [] };
+    var inventoryEntries = getCampaignRollInventoryEntries(key);
     var inventory = (typeof window.collectInventoryBonusesForStat === "function")
       ? (window.collectInventoryBonusesForStat(key) || { advDice: [], flat: 0, addValor: 0, notes: [] })
       : { advDice: [], flat: 0, addValor: 0, notes: [] };
+    var hackEntries = getCampaignRollHackEntries(key);
     return {
       key: key,
+      flavorName: flavorName,
       flavor: flavor,
+      mutationName: mutationName,
       mutation: mutation,
+      inventoryEntries: inventoryEntries,
       inventory: inventory,
+      hackEntries: hackEntries,
+      hasFlavorChoice: !!flavorName,
       hasFlavor: hasCampaignRollBonusPack(flavor),
+      hasMutationChoice: !!mutationName,
       hasMutation: hasCampaignRollBonusPack(mutation),
-      hasInventory: hasCampaignRollBonusPack(inventory)
+      hasInventory: !!inventoryEntries.length || hasCampaignRollBonusPack(inventory),
+      hasHackChoice: !!hackEntries.length
     };
   }
 
@@ -6116,10 +6206,22 @@
     var useMutationEl = document.getElementById("campaignRollUseMutation");
     var useInventoryEl = document.getElementById("campaignRollUseInventory");
     var pushLuckEl = document.getElementById("campaignRollUsePushLuck");
+    var inventorySelectionIds = Array.prototype.slice.call(
+      document.querySelectorAll("[data-campaign-roll-inventory]:checked")
+    ).map(function (el) {
+      return String(el && el.value || "").trim();
+    }).filter(Boolean);
+    var hackSelectionIds = Array.prototype.slice.call(
+      document.querySelectorAll("[data-campaign-roll-hack]:checked")
+    ).map(function (el) {
+      return String(el && el.value || "").trim();
+    }).filter(Boolean);
     return {
       useFlavor: !useFlavorEl || !!useFlavorEl.checked,
       useMutation: !useMutationEl || !!useMutationEl.checked,
-      useInventory: !!(useInventoryEl && useInventoryEl.checked),
+      useInventory: !!((useInventoryEl && useInventoryEl.checked) || inventorySelectionIds.length),
+      inventorySelectionIds: inventorySelectionIds,
+      hackSelectionIds: hackSelectionIds,
       pushLuck: !!(pushLuckEl && pushLuckEl.checked)
     };
   }
@@ -6129,18 +6231,38 @@
     var key = String(statKey || "valor").trim().toLowerCase();
     var opts = selections && typeof selections === "object" ? selections : {};
     var sourcePack = sources && typeof sources === "object" ? sources : getCampaignPromptBonusSources(key);
-    if (sourcePack.hasFlavor) {
-      lines.push((opts.useFlavor ? "Apply" : "Ignore") + " Personal Flavor bonus: " + summarizeCampaignRollBonusPack(sourcePack.flavor) + ".");
+    if (sourcePack.hasFlavorChoice) {
+      if (sourcePack.hasFlavor) {
+        lines.push((opts.useFlavor ? "Apply" : "Ignore") + " Personal Flavor (" + sourcePack.flavorName + "): " + summarizeCampaignRollBonusPack(sourcePack.flavor) + ".");
+      } else {
+        lines.push((opts.useFlavor ? "Invoke" : "Ignore") + " Personal Flavor: " + sourcePack.flavorName + ".");
+      }
     }
-    if (sourcePack.hasMutation) {
-      lines.push((opts.useMutation ? "Apply" : "Ignore") + " Mutation bonus: " + summarizeCampaignRollBonusPack(sourcePack.mutation) + ".");
+    if (sourcePack.hasMutationChoice) {
+      if (sourcePack.hasMutation) {
+        lines.push((opts.useMutation ? "Apply" : "Ignore") + " Mutation (" + sourcePack.mutationName + "): " + summarizeCampaignRollBonusPack(sourcePack.mutation) + ".");
+      } else {
+        lines.push((opts.useMutation ? "Invoke" : "Ignore") + " Mutation: " + sourcePack.mutationName + ".");
+      }
     }
     if (sourcePack.hasInventory) {
+      var selectedEntries = getCampaignSelectedInventoryEntries(key, opts, sourcePack);
+      var selectedInventorySummary = summarizeCampaignInventoryEntrySelections(selectedEntries);
       var inventorySummary = summarizeCampaignRollBonusPack(sourcePack.inventory);
       if (opts.useInventory) {
-        lines.push("Apply chosen item bonus: " + inventorySummary + (sourcePack.inventory.notes && sourcePack.inventory.notes.length ? " (" + sourcePack.inventory.notes.join(" · ") + ")." : "."));
+        if (selectedInventorySummary) {
+          lines.push("Apply chosen item bonus: " + selectedInventorySummary + ".");
+        } else {
+          lines.push("Apply chosen item bonus: " + inventorySummary + (sourcePack.inventory.notes && sourcePack.inventory.notes.length ? " (" + sourcePack.inventory.notes.join(" · ") + ")." : "."));
+        }
       } else {
         lines.push("Optional item bonus available: " + inventorySummary + (sourcePack.inventory.notes && sourcePack.inventory.notes.length ? " (" + sourcePack.inventory.notes.join(" · ") + ")." : "."));
+      }
+    }
+    if (sourcePack.hasHackChoice) {
+      var hackNames = getCampaignSelectedHackNames(opts, sourcePack);
+      if (hackNames.length) {
+        lines.push("Selected hack / technique: " + hackNames.join(", ") + ".");
       }
     }
     if (opts.pushLuck) {
@@ -6170,14 +6292,18 @@
       ? Math.max(4, Number(window.stepUp(dreadDie || 8) || dreadDie || 8))
       : Math.max(4, Number(dreadDie || 8) || 8);
     var label = String(requestLabel || key || "Campaign Roll");
-    var flavorBonus = opts.useFlavor && typeof window.getFlavorBonus === "function"
+    var sourcePack = getCampaignPromptBonusSources(key);
+    var flavorBonus = opts.useFlavor && sourcePack.hasFlavorChoice && typeof window.getFlavorBonus === "function"
       ? (window.getFlavorBonus(key) || { flat: 0, advDice: [], holyShield: false })
       : { flat: 0, advDice: [], holyShield: false };
-    var mutationBonus = opts.useMutation && typeof window.getMutationBonus === "function"
+    var mutationBonus = opts.useMutation && sourcePack.hasMutationChoice && typeof window.getMutationBonus === "function"
       ? (window.getMutationBonus(key) || { flat: 0, advDice: [] })
       : { flat: 0, advDice: [] };
+    var selectedInventoryEntries = getCampaignSelectedInventoryEntries(key, opts, sourcePack);
+    var selectedInventorySummary = summarizeCampaignInventoryEntrySelections(selectedInventoryEntries);
+    var selectedHackNames = getCampaignSelectedHackNames(opts, sourcePack);
     var inventoryBonus = opts.useInventory && typeof window.collectInventoryBonusesForStat === "function"
-      ? (window.collectInventoryBonusesForStat(key) || { advDice: [], flat: 0, addValor: 0, notes: [] })
+      ? (window.collectInventoryBonusesForStat(key, { selectedIds: opts.inventorySelectionIds || [] }) || { advDice: [], flat: 0, addValor: 0, notes: [] })
       : { advDice: [], flat: 0, addValor: 0, notes: [] };
     var gearBonus = typeof window.getGearRollBonuses === "function"
       ? (window.getGearRollBonuses(key, actionDie) || { advDice: [], flat: 0, addDice: [], notes: [] })
@@ -6268,14 +6394,31 @@
       dreadTotal: finalDreadTotal,
       success: finalTotal >= finalDreadTotal,
       pushLuck: pushedLuck,
-      usedFlavor: !!opts.useFlavor,
-      usedMutation: !!opts.useMutation,
+      usedFlavor: !!(opts.useFlavor && sourcePack.hasFlavorChoice),
+      usedMutation: !!(opts.useMutation && sourcePack.hasMutationChoice),
       usedInventory: !!opts.useInventory,
+      selectedInventoryEntries: selectedInventoryEntries,
+      selectedHackNames: selectedHackNames,
       conditionApplied: "",
       bonusNotes: []
-        .concat(opts.useFlavor && hasCampaignRollBonusPack(flavorBonus) ? ["Personal Flavor " + summarizeCampaignRollBonusPack(flavorBonus)] : [])
-        .concat(opts.useMutation && hasCampaignRollBonusPack(mutationBonus) ? ["Mutation " + summarizeCampaignRollBonusPack(mutationBonus)] : [])
-        .concat(opts.useInventory && hasCampaignRollBonusPack(inventoryBonus) ? [inventoryBonus.notes && inventoryBonus.notes.length ? inventoryBonus.notes.join(" · ") : ("Inventory " + summarizeCampaignRollBonusPack(inventoryBonus))] : [])
+        .concat((opts.useFlavor && sourcePack.hasFlavorChoice)
+          ? [hasCampaignRollBonusPack(flavorBonus)
+              ? ("Personal Flavor " + summarizeCampaignRollBonusPack(flavorBonus))
+              : "Personal Flavor invoked"]
+          : [])
+        .concat((opts.useMutation && sourcePack.hasMutationChoice)
+          ? [hasCampaignRollBonusPack(mutationBonus)
+              ? ("Mutation " + summarizeCampaignRollBonusPack(mutationBonus))
+              : "Mutation invoked"]
+          : [])
+        .concat(opts.useInventory
+          ? [selectedInventorySummary
+              ? ("Gear " + selectedInventorySummary)
+              : (hasCampaignRollBonusPack(inventoryBonus)
+                  ? (inventoryBonus.notes && inventoryBonus.notes.length ? inventoryBonus.notes.join(" · ") : ("Inventory " + summarizeCampaignRollBonusPack(inventoryBonus)))
+                  : "Gear invoked")]
+          : [])
+        .concat(selectedHackNames.length ? ["Hack " + selectedHackNames.join(", ")] : [])
         .concat(pushedLuck ? ["Push Your Luck"] : []),
       detail: {
         action: action,
@@ -6310,21 +6453,64 @@
       && window.settingsSystem.isManualRollMode()
       && typeof window.openProvinceManualCheckPrompt === "function");
     var canPushLuck = getTmwValue() >= 2;
+    var flavorLabel = String(sources.flavorName || "Personal Flavor").trim() || "Personal Flavor";
+    var mutationLabel = String(sources.mutationName || "Mutation").trim() || "Mutation";
+    var inventoryPickerHtml = "";
+    if (Array.isArray(sources.inventoryEntries) && sources.inventoryEntries.length) {
+      inventoryPickerHtml = '<div style="padding:.44rem .5rem;border:1px solid var(--border2);background:rgba(255,255,255,.03);border-radius:4px;">'
+        + '<div style="font-size:.74rem;color:var(--gold2);margin-bottom:.22rem;"><strong>Use Item / Gear</strong></div>'
+        + '<div style="display:grid;gap:.22rem;">'
+        + sources.inventoryEntries.map(function (entry) {
+          var id = String(entry && entry.id || "");
+          var title = String(entry && entry.label || "Item");
+          var text = String(entry && entry.itemText || "").trim();
+          var summary = String(entry && entry.summary || "").trim();
+          return '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);">'
+            + '<input type="checkbox" data-campaign-roll-inventory value="' + escapeHtml(id) + '" style="margin-top:.16rem;">'
+            + '<span><strong>' + escapeHtml(title) + '</strong> · ' + escapeHtml(text)
+            + (summary ? '<br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(summary) + '</span>' : '')
+            + '</span></label>';
+        }).join("")
+        + '</div>'
+        + '</div>';
+    } else if (sources.hasInventory) {
+      inventoryPickerHtml = '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);">'
+        + '<input id="campaignRollUseInventory" type="checkbox" style="margin-top:.16rem;">'
+        + '<span><strong>Use Relevant Item / Gear</strong><br><span style="font-size:.7rem;color:var(--muted2);">'
+        + escapeHtml((sources.inventory.notes && sources.inventory.notes.length ? sources.inventory.notes.join(" · ") + " · " : "") + summarizeCampaignRollBonusPack(sources.inventory))
+        + '</span></span></label>';
+    }
+    var hackPickerHtml = sources.hasHackChoice
+      ? ('<div style="padding:.44rem .5rem;border:1px solid var(--border2);background:rgba(255,255,255,.03);border-radius:4px;">'
+        + '<div style="font-size:.74rem;color:var(--teal);margin-bottom:.22rem;"><strong>Use Hack / Technique</strong></div>'
+        + '<div style="display:grid;gap:.22rem;">'
+        + sources.hackEntries.map(function (entry) {
+          var id = String(entry && entry.id || "");
+          var name = String(entry && entry.name || "Hack");
+          var detail = String(entry && entry.detail || "").trim();
+          return '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);">'
+            + '<input type="checkbox" data-campaign-roll-hack value="' + escapeHtml(id) + '" style="margin-top:.16rem;">'
+            + '<span><strong>' + escapeHtml(name) + '</strong>'
+            + (detail ? '<br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(detail) + '</span>' : '<br><span style="font-size:.7rem;color:var(--muted2);">Narrative technique note for the GM.</span>')
+            + '</span></label>';
+        }).join("")
+        + '</div>'
+        + '</div>')
+      : "";
     var html = ""
       + '<div style="font-size:.82rem;color:var(--muted2);margin-bottom:.42rem;">GM requested a synchronized campaign roll.</div>'
       + '<div style="font-size:.9rem;color:var(--text2);line-height:1.55;margin-bottom:.5rem;"><strong>' + escapeHtml(activeRequest.label || "Dread Check") + '</strong><br>'
       + 'Roll <strong style="color:var(--teal);">' + escapeHtml(stat.toUpperCase()) + ' d' + actionDie + '</strong> against <strong style="color:var(--red2);">Dread d' + dread + '</strong>.</div>'
       + '<div style="font-size:.74rem;color:var(--muted2);margin-bottom:.38rem;">Success grants <strong style="color:var(--green2);">+1 Successful Roll</strong>. Failure consequence equals the failed margin. Choose any relevant bonus before you roll.</div>'
       + '<div style="display:grid;gap:.28rem;margin-bottom:.46rem;">'
-      + (sources.hasFlavor
-        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseFlavor" type="checkbox" checked style="margin-top:.16rem;"><span><strong>Use Personal Flavor</strong><br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(summarizeCampaignRollBonusPack(sources.flavor)) + '</span></span></label>'
+      + (sources.hasFlavorChoice
+        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseFlavor" type="checkbox" checked style="margin-top:.16rem;"><span><strong>Use Personal Flavor</strong> · ' + escapeHtml(flavorLabel) + '<br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(sources.hasFlavor ? summarizeCampaignRollBonusPack(sources.flavor) : 'Narrative tag ready to invoke.') + '</span></span></label>'
         : '')
-      + (sources.hasMutation
-        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseMutation" type="checkbox" checked style="margin-top:.16rem;"><span><strong>Use Mutation Bonus</strong><br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(summarizeCampaignRollBonusPack(sources.mutation)) + '</span></span></label>'
+      + (sources.hasMutationChoice
+        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseMutation" type="checkbox" checked style="margin-top:.16rem;"><span><strong>Use Mutation</strong> · ' + escapeHtml(mutationLabel) + '<br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(sources.hasMutation ? summarizeCampaignRollBonusPack(sources.mutation) : 'Narrative tag ready to invoke.') + '</span></span></label>'
         : '')
-      + (sources.hasInventory
-        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseInventory" type="checkbox" style="margin-top:.16rem;"><span><strong>Use Relevant Item / Gear</strong><br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml((sources.inventory.notes && sources.inventory.notes.length ? sources.inventory.notes.join(" · ") + " · " : "") + summarizeCampaignRollBonusPack(sources.inventory)) + '</span></span></label>'
-        : '')
+      + inventoryPickerHtml
+      + hackPickerHtml
       + '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:' + (canPushLuck ? 'var(--text2)' : 'var(--muted2)') + ';"><input id="campaignRollUsePushLuck" type="checkbox"' + (canPushLuck ? '' : ' disabled') + ' style="margin-top:.16rem;"><span><strong>Push Your Luck</strong> <span style="font-size:.72rem;color:var(--gold2);">(2 TMW)</span><br><span style="font-size:.7rem;color:var(--muted2);">Step Dread up to d' + (typeof window.stepUp === "function" ? Math.max(4, Number(window.stepUp(dread) || dread)) : dread) + '. On success gain ' + escapeHtml(labelConditionName(condMap.positive)) + '; on failure gain ' + escapeHtml(labelConditionName(condMap.negative)) + '.</span></span></label>'
       + '</div>'
       + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
@@ -6937,6 +7123,7 @@
     state.uiDraft.joinPassword = "";
     state.lastPlayerDockSeed = "";
     clearSession();
+    refreshSettingsModeFromCampaign();
     safeNotif("Deleted campaign " + oldCode + ".", "warn");
     renderSettingsSection();
     renderDockPanel();

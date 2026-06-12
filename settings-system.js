@@ -406,6 +406,18 @@ window.playCustomMusicFromSettings = function() {
     setGameMode(mode, opts) {
       const options = opts || {};
       if (mode === 'solo' || mode === 'gm' || mode === 'campaign') {
+        const campaignApi = window.campaignSystem;
+        const campaignState = (campaignApi && typeof campaignApi.getState === 'function')
+          ? (campaignApi.getState() || {})
+          : {};
+        const hasLiveCampaign = !!campaignState.code;
+        if (mode === 'solo' && hasLiveCampaign && !options.silent && typeof campaignApi.leaveCampaign === 'function') {
+          if (typeof showNotif === 'function') {
+            showNotif('Leaving the live campaign and returning to Solo Mode...', 'info');
+          }
+          campaignApi.leaveCampaign();
+          return;
+        }
         if (this.gameMode === mode) {
           this.applyGameMode();
           syncGameModeUI();

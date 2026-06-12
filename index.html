@@ -27650,44 +27650,130 @@ function runWhenIdle(fn, timeoutMs){
     showNotif('Monument boon: '+applied.join(', ')+'.','good');
   };
 
-  function collectInventoryBonusesForStat(statKey){
+  function createInventoryRollBonusPack(){
+    return {advDice:[],flat:0,addValor:0,notes:[]};
+  }
+
+  function hasInventoryRollBonusPack(pack){
+    return !!(pack&&((Array.isArray(pack.advDice)&&pack.advDice.length)||Number(pack.flat||0)||Number(pack.addValor||0)));
+  }
+
+  function summarizeInventoryRollBonusPack(pack){
+    var source=pack&&typeof pack==='object'?pack:{};
+    var parts=[];
+    var advDice=Array.isArray(source.advDice)?source.advDice:[];
+    var flat=Number(source.flat||0);
+    var addValor=Math.max(0,Number(source.addValor||0)||0);
+    if(advDice.length)parts.push(advDice.map(function(die){return 'Ad'+Number(die||0);}).join(', '));
+    if(flat)parts.push((flat>0?'+':'')+flat);
+    if(addValor)parts.push('+'+addValor+' V.D.');
+    return parts.join(' | ');
+  }
+
+  function appendInventoryBonusTextForStat(bonus,text,statKey){
+    if(!bonus)return bonus;
+    const t=String(text||'');
+    const key=String(statKey||'lead').toLowerCase();
+    let m;
+    const low=t.toLowerCase();
+    m=t.match(new RegExp('\\+(\\d+)\\s*'+key,'i'));
+    if(m){
+      bonus.flat+=parseInt(m[1],10)||0;
+      bonus.notes.push('+'+m[1]+' '+key+' ('+t.split('(')[0].trim()+')');
+    }
+    m=t.match(new RegExp('ad(\\d+)\\s*(?:to\\s*)?'+key,'i'));
+    if(m){
+      const d=parseInt(m[1],10)||0;
+      if(d>0){
+        bonus.advDice.push(d);
+        bonus.notes.push('Ad'+d+' '+key+' ('+t.split('(')[0].trim()+')');
+      }
+    }
+    if((/a\.d\./i.test(t)&&new RegExp(key,'i').test(t))||low.indexOf('valor die advantage to '+key)>=0||low.indexOf('valor die advantage to '+key)>=0){
+      bonus.addValor+=1;
+      bonus.notes.push('+V.D. ('+t.split('(')[0].trim()+')');
+    }
+    if(key==='lead'&&(low.indexOf('compass')>=0||low.indexOf('spyglass')>=0||low.indexOf('survival')>=0)){
+      bonus.addValor+=1;
+      bonus.notes.push('+V.D. ('+t.split('(')[0].trim()+')');
+    }
+    if(key==='control'&&(low.indexOf('lockpick')>=0||low.indexOf('e-picks')>=0||low.indexOf('scavenger\'s pouch')>=0)){
+      bonus.addValor+=1;
+      bonus.notes.push('+V.D. ('+t.split('(')[0].trim()+')');
+    }
+    return bonus;
+  }
+
+  function getInventoryRollBonusEntriesForStat(statKey){
+    const key=String(statKey||'lead').toLowerCase();
+    const entries=[];
+    if(Array.isArray(S.backpack)){
+      S.backpack.forEach(function(item,idx){
+        const txt=String(item||'').trim();
+        if(!txt)return;
+        entries.push({
+          id:'backpack:'+idx,
+          sourceType:'backpack',
+          label:'Backpack '+(idx+1),
+          itemText:txt
+        });
+      });
+    }
+    var readied=String(S&&S.equipment&&S.equipment.readied||'').trim();
+    if(readied){
+      entries.push({
+        id:'readied',
+        sourceType:'readied',
+        label:'Readied Item',
+        itemText:readied
+      });
+    }
+    return entries.map(function(entry){
+      var bonus=createInventoryRollBonusPack();
+      appendInventoryBonusTextForStat(bonus,entry.itemText,key);
+      return {
+        id:String(entry.id||''),
+        sourceType:String(entry.sourceType||'item'),
+        label:String(entry.label||'Item'),
+        itemText:String(entry.itemText||''),
+        bonus:bonus,
+        summary:summarizeInventoryRollBonusPack(bonus)
+      };
+    }).filter(function(entry){
+      return hasInventoryRollBonusPack(entry.bonus);
+    });
+  }
+
+  function collectInventoryBonusesForStat(statKey,options){
+    const opts=options&&typeof options==='object'?options:{};
+    const key=String(statKey||'lead').toLowerCase();
+    const selectedIds=Array.isArray(opts.selectedIds)
+      ? opts.selectedIds.map(function(id){return String(id||'').trim();}).filter(Boolean)
+      : [];
+    const selectedOnly=selectedIds.length>0;
+    const selectedSet={};
+    selectedIds.forEach(function(id){selectedSet[id]=true;});
+
+    const bonus=createInventoryRollBonusPack();
+    const entries=getInventoryRollBonusEntriesForStat(key);
+    if(entries.length){
+      entries.forEach(function(entry){
+        if(selectedOnly&&!selectedSet[String(entry.id||'')])return;
+        bonus.advDice=bonus.advDice.concat(Array.isArray(entry.bonus&&entry.bonus.advDice)?entry.bonus.advDice:[]);
+        bonus.flat+=Number(entry.bonus&&entry.bonus.flat||0);
+        bonus.addValor+=Number(entry.bonus&&entry.bonus.addValor||0);
+        if(Array.isArray(entry.bonus&&entry.bonus.notes))bonus.notes=bonus.notes.concat(entry.bonus.notes);
+      });
+      return bonus;
+    }
+
     const list=[];
     if(Array.isArray(S.backpack)){
       S.backpack.forEach(function(item){if(item&&String(item).trim())list.push(String(item));});
     }
     if(S&&S.equipment&&S.equipment.readied)list.push(String(S.equipment.readied));
-
-    const bonus={advDice:[],flat:0,addValor:0,notes:[]};
-    const key=String(statKey||'lead').toLowerCase();
     list.forEach(function(txt){
-      const t=String(txt||'');
-      let m;
-      const low=t.toLowerCase();
-      m=t.match(new RegExp('\\+(\\d+)\\s*'+key,'i'));
-      if(m){
-        bonus.flat+=parseInt(m[1],10)||0;
-        bonus.notes.push('+'+m[1]+' '+key+' ('+t.split('(')[0].trim()+')');
-      }
-      m=t.match(new RegExp('ad(\\d+)\\s*(?:to\\s*)?'+key,'i'));
-      if(m){
-        const d=parseInt(m[1],10)||0;
-        if(d>0){
-          bonus.advDice.push(d);
-          bonus.notes.push('Ad'+d+' '+key+' ('+t.split('(')[0].trim()+')');
-        }
-      }
-      if((/a\.d\./i.test(t)&&new RegExp(key,'i').test(t))||low.indexOf('valor die advantage to '+key)>=0||low.indexOf('valor die advantage to '+key)>=0){
-        bonus.addValor+=1;
-        bonus.notes.push('+V.D. ('+t.split('(')[0].trim()+')');
-      }
-      if(key==='lead'&&(low.indexOf('compass')>=0||low.indexOf('spyglass')>=0||low.indexOf('survival')>=0)){
-        bonus.addValor+=1;
-        bonus.notes.push('+V.D. ('+t.split('(')[0].trim()+')');
-      }
-      if(key==='control'&&(low.indexOf('lockpick')>=0||low.indexOf('e-picks')>=0||low.indexOf('scavenger\'s pouch')>=0)){
-        bonus.addValor+=1;
-        bonus.notes.push('+V.D. ('+t.split('(')[0].trim()+')');
-      }
+      appendInventoryBonusTextForStat(bonus,txt,key);
     });
     return bonus;
   }
@@ -27695,6 +27781,14 @@ function runWhenIdle(fn, timeoutMs){
   function collectLeadInventoryBonuses(){
     return collectInventoryBonusesForStat('lead');
   }
+
+  window.createInventoryRollBonusPack = createInventoryRollBonusPack;
+  window.hasInventoryRollBonusPack = hasInventoryRollBonusPack;
+  window.summarizeInventoryRollBonusPack = summarizeInventoryRollBonusPack;
+  window.appendInventoryBonusTextForStat = appendInventoryBonusTextForStat;
+  window.getInventoryRollBonusEntriesForStat = getInventoryRollBonusEntriesForStat;
+  window.collectInventoryBonusesForStat = collectInventoryBonusesForStat;
+  window.collectLeadInventoryBonuses = collectLeadInventoryBonuses;
 
   function collectProvinceNarrativeInventoryText(){
     var carried=[];
