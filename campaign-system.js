@@ -29,6 +29,7 @@
     hiddenTimelineKeys: [],
     hiddenTimelineUndoBatches: [],
     lastCharacterHash: "",
+    lastAppliedSelfCharacterAt: 0,
     gmIdea: "",
     gmWayfarerSort: "online",
     lastSharedHash: "",
@@ -739,6 +740,29 @@
     try { window.setProvinceSelectedKey(String(snapshot.selectedKey || "")); } catch (_err) {}
   }
 
+  function resolveProvinceSelectionKeyForSharedState(sharedState, localProvinceState, incomingProvinceMap) {
+    var shared = sharedState && typeof sharedState === "object" ? sharedState : null;
+    var travel = shared && shared.campaignTravel && typeof shared.campaignTravel === "object"
+      ? shared.campaignTravel
+      : null;
+    var incoming = incomingProvinceMap && typeof incomingProvinceMap === "object"
+      ? incomingProvinceMap
+      : null;
+    var localKey = localProvinceState && localProvinceState.selectedKey
+      ? String(localProvinceState.selectedKey || "")
+      : "";
+    var travelKey = travel && String(travel.tab || "") === "map"
+      ? String(travel.provinceKey || "")
+      : "";
+
+    if (travelKey && (state.role === "gm" || isStrictGmCameraLockEnabled(shared))) {
+      return travelKey;
+    }
+    if (localKey) return localKey;
+    if (travelKey) return travelKey;
+    return incoming ? String(incoming.selectedKey || "") : "";
+  }
+
   function applyClientLocalSeaState(snapshot) {
     if (!snapshot || typeof window.S === "undefined" || !window.S || !window.S.lastSea || typeof window.S.lastSea !== "object") return;
     if (snapshot.selectedKey) window.S.lastSea.selectedKey = snapshot.selectedKey;
@@ -759,8 +783,13 @@
     var tab = String(travel.tab || "");
     var provinceKey = String(travel.provinceKey || "");
     var handledWorldThatWas = false;
+    var activeContext = getActiveContextId();
+    var activeTab = getActiveTabId();
+    var activeProvinceKey = (typeof window.getProvinceSelectedKey === "function")
+      ? String(window.getProvinceSelectedKey() || "")
+      : "";
 
-    if (context && typeof window.setContext === "function") {
+    if (context && context !== activeContext && typeof window.setContext === "function") {
       try {
         var ctxBtn = document.querySelector('.ctx-btn[data-ctx="' + context + '"]');
         window.setContext(context, ctxBtn || null);
@@ -769,10 +798,10 @@
 
     if (tab) {
       try {
-        if (tab === "worldthatwas" && typeof window.openWorldThatWasFromGalaxy === "function") {
+        if (tab === "worldthatwas" && activeTab !== "worldthatwas" && typeof window.openWorldThatWasFromGalaxy === "function") {
           window.openWorldThatWasFromGalaxy();
           handledWorldThatWas = true;
-        } else if (typeof window.switchTab === "function") {
+        } else if (tab !== activeTab && typeof window.switchTab === "function") {
           var btn = document.querySelector('#mainNav .tab-btn[onclick*="switchTab(\'' + tab + '\'"]');
           window.switchTab(tab, btn || null);
         }
@@ -786,7 +815,7 @@
       } catch (_err) {}
     }
 
-    if (provinceKey && typeof window.setProvinceSelectedKey === "function") {
+    if (provinceKey && provinceKey !== activeProvinceKey && typeof window.setProvinceSelectedKey === "function") {
       try { window.setProvinceSelectedKey(provinceKey); } catch (_err) {}
     }
 
@@ -847,6 +876,7 @@
       var baseSwitchTab = window.switchTab;
       window.switchTab = function () {
         var out = baseSwitchTab.apply(this, arguments);
+        if (state.applyingSharedState) return out;
         syncCampaignNavigationState(window._activeContext || "", String(arguments[0] || ""));
         scheduleGmCameraSync("switch-tab", true);
         return out;
@@ -857,6 +887,7 @@
       var baseSetContext = window.setContext;
       window.setContext = function () {
         var out = baseSetContext.apply(this, arguments);
+        if (state.applyingSharedState) return out;
         var currentTabBtn = document.querySelector('#mainNavTablist .tab-btn.active[data-tab]');
         syncCampaignNavigationState(String(arguments[0] || window._activeContext || ""), currentTabBtn ? String(currentTabBtn.getAttribute("data-tab") || "") : "");
         scheduleGmCameraSync("set-context", true);
@@ -868,6 +899,7 @@
       var baseSetProvinceSelectedKey = window.setProvinceSelectedKey;
       window.setProvinceSelectedKey = function () {
         var out = baseSetProvinceSelectedKey.apply(this, arguments);
+        if (state.applyingSharedState) return out;
         if (out) scheduleGmCameraSync("province-focus", false);
         return out;
       };
@@ -2144,9 +2176,10 @@
       if (sharedState.provinceMap && typeof window.applyProvinceMapState === "function") {
         var nextProvinceMapHash = safeJsonHash(sharedState.provinceMap);
         if (nextProvinceMapHash !== state.lastProvinceMapHash) {
-          window.applyProvinceMapState(sharedState.provinceMap, { skipSync: true });
+          var provincePayload = deepCloneJson(sharedState.provinceMap) || {};
+          provincePayload.selectedKey = resolveProvinceSelectionKeyForSharedState(sharedState, localProvinceState, provincePayload);
+          window.applyProvinceMapState(provincePayload, { skipSync: true });
           state.lastProvinceMapHash = nextProvinceMapHash;
-          applyClientLocalProvinceState(localProvinceState);
         }
       }
       if (sharedState.worldState && typeof sharedState.worldState === "object") {
@@ -3817,6 +3850,7 @@
     var maxStress = Math.max(1, Number(c.maxMentalStress || c.mentalStressCap || c.stressCap || 20));
     var health = Math.max(0, Number(c.health || 0));
     var maxHealth = Math.max(1, Number(c.maxHealth || c.maxStress || resolveCharacterMaxHealth(c)));
+    var pathTokens = Math.max(0, Number(c.pathTokens || 0));
     var statRows = [
       ["Body", stats.body],
       ["Mind", stats.mind],
@@ -3840,6 +3874,7 @@
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.35rem;">'
       + '<div class="info-cell"><span class="ic-label">Health</span>' + health + '/' + maxHealth + '</div>'
       + '<div class="info-cell"><span class="ic-label">Mental Stress</span>' + stress + '/' + maxStress + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Path Tokens</span>' + pathTokens + '</div>'
       + '</div>'
       + '<div class="info-cell"><span class="ic-label">Loadout</span>'
       + escapeHtml([loadout.weapon1, loadout.weapon2, loadout.armor, loadout.readied].filter(Boolean).join(' | ') || 'No loadout synced')
@@ -3912,6 +3947,7 @@
       mentalStress: Math.max(0, Number(mentalStress || 0)),
       maxMentalStress: maxMentalStress,
       stress: Math.max(0, Number(mentalStress || 0)),
+      pathTokens: Math.max(0, Number((typeof window.S !== "undefined" && window.S && window.S.pathTokens) || 0)),
       look: String(look || "").slice(0, 180),
       stats: {
         body: Number(stats.body || 4),
@@ -3933,6 +3969,94 @@
       hacks: ownedHacks.map(function (name) { return String(name || "").trim(); }).filter(Boolean),
       backpack: normalizeBackpackItems(window.S && window.S.backpack)
     };
+  }
+
+  function findRosterCharacterSnapshot(snapshot, token) {
+    if (!snapshot || !Array.isArray(snapshot.roster)) return null;
+    var wanted = String(token || "").trim();
+    if (!wanted) return null;
+    for (var i = 0; i < snapshot.roster.length; i += 1) {
+      var entry = snapshot.roster[i];
+      if (!entry || String(entry.token || "") !== wanted || !entry.character || typeof entry.character !== "object") continue;
+      return entry.character;
+    }
+    return null;
+  }
+
+  function applyAuthoritativeSelfCharacterFromSnapshot(snapshot) {
+    if (!snapshot || state.role !== "player" || !state.token || typeof window.S === "undefined" || !window.S) return false;
+    var character = findRosterCharacterSnapshot(snapshot, state.token);
+    if (!character) return false;
+
+    var updatedAt = Number(character.updatedAt || 0) || 0;
+    if (updatedAt && updatedAt <= Number(state.lastAppliedSelfCharacterAt || 0)) return false;
+
+    var nextHealth = Math.max(0, Number(character.health || 0));
+    var nextMentalStress = Math.max(0, Number((typeof character.mentalStress === "number" ? character.mentalStress : character.stress) || 0));
+    var nextPathTokens = Math.max(0, Number(character.pathTokens || 0));
+    var changed = false;
+
+    if (Number(window.S.health || 0) !== nextHealth) {
+      window.S.health = nextHealth;
+      window.S.stress = nextHealth;
+      changed = true;
+    }
+    if (Number(window.S.mentalStress || 0) !== nextMentalStress) {
+      window.S.mentalStress = nextMentalStress;
+      changed = true;
+    }
+    if (Number(window.S.pathTokens || 0) !== nextPathTokens) {
+      window.S.pathTokens = nextPathTokens;
+      changed = true;
+    }
+
+    state.lastAppliedSelfCharacterAt = updatedAt || Date.now();
+    state.lastCharacterHash = JSON.stringify(collectCharacterSummary());
+
+    if (!changed) return false;
+    if (typeof window.updateStressUI === "function") window.updateStressUI();
+    if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
+    var pathTokenEl = document.getElementById("pathTokensVal");
+    if (pathTokenEl) pathTokenEl.textContent = String(window.S.pathTokens || 0);
+    if (typeof window.updateAllStatDisplays === "function") window.updateAllStatDisplays();
+    return true;
+  }
+
+  async function applyGmCheckOutcome(spec) {
+    if (!state.socket || !state.connected || !state.code) {
+      return { ok: false, error: "Not connected." };
+    }
+    if (state.role !== "gm") {
+      safeNotif("Only the GM can apply shared check outcomes.", "warn");
+      return { ok: false, error: "Only the GM can apply shared check outcomes." };
+    }
+
+    var details = spec && typeof spec === "object" ? spec : {};
+    var targetTokens = Array.isArray(details.targetTokens)
+      ? details.targetTokens.map(function (token) { return String(token || "").trim(); }).filter(Boolean)
+      : [];
+    var characterDelta = details.characterDelta && typeof details.characterDelta === "object"
+      ? details.characterDelta
+      : {};
+    var sharedDelta = details.sharedDelta && typeof details.sharedDelta === "object"
+      ? details.sharedDelta
+      : {};
+
+    return emitWithAck("campaign:gmApplyCheckOutcome", {
+      checkId: String(details.checkId || "").slice(0, 80),
+      label: String(details.label || "Campaign Check").slice(0, 120),
+      outcome: String(details.outcome || "success").toLowerCase() === "failure" ? "failure" : "success",
+      scope: String(details.scope || (targetTokens.length > 1 ? "party" : "individual")).slice(0, 24),
+      targetTokens: targetTokens,
+      characterDelta: {
+        health: Number(characterDelta.health || 0) || 0,
+        mentalStress: Number(characterDelta.mentalStress || 0) || 0,
+        pathTokens: Number(characterDelta.pathTokens || 0) || 0
+      },
+      sharedDelta: {
+        tmw: Number(sharedDelta.tmw || 0) || 0
+      }
+    });
   }
 
   async function shareBackpackItem(slotIndex) {
@@ -5407,6 +5531,7 @@
       }
 
       maybePromptActiveRoll(snapshot && snapshot.activeRollRequest ? snapshot.activeRollRequest : null);
+      applyAuthoritativeSelfCharacterFromSnapshot(snapshot || null);
       renderSettingsSection();
       renderDockPanel();
       syncCharacterToCampaign(false);
@@ -5609,6 +5734,8 @@
     state.token = String(res.token || "");
     state.playerName = String(res.name || name || "GM");
     state.activePromptId = "";
+    state.lastAppliedSelfCharacterAt = 0;
+    state.lastCharacterHash = "";
     state.uiDraft.code = res.code;
     state.uiDraft.joinPassword = "";
     persistSession();
@@ -5671,6 +5798,8 @@
     state.token = String(res.token || "");
     state.playerName = String(res.name || name || ensureName());
     state.activePromptId = "";
+    state.lastAppliedSelfCharacterAt = 0;
+    state.lastCharacterHash = "";
     state.uiDraft.code = res.code;
     state.uiDraft.joinPassword = "";
     persistSession();
@@ -5701,6 +5830,8 @@
     state.token = "";
     state.campaign = null;
     state.activePromptId = "";
+    state.lastAppliedSelfCharacterAt = 0;
+    state.lastCharacterHash = "";
     state.uiDraft.joinPassword = "";
     state.lastPlayerDockSeed = "";
     clearSession();
@@ -6731,6 +6862,7 @@
     getSharedState: function () {
       return getCampaignSharedState();
     },
+    syncCharacterToCampaign: syncCharacterToCampaign,
     reconnectNow: reconnectNow,
     recoverSyncNow: recoverSyncNow,
     isCampaignPlayerReadOnlyForSharedWorld: isCampaignPlayerReadOnlyForSharedWorld,
@@ -6738,6 +6870,7 @@
     guardGmCheckResolution: guardGmCheckResolution,
     startGmPendingCheck: startGmPendingCheck,
     submitPendingCheck: submitPendingCheck,
+    applyGmCheckOutcome: applyGmCheckOutcome,
     resolveGmPendingCheck: resolveGmPendingCheck,
     runGmResolvedCheck: runGmResolvedCheck,
     getPendingChecks: getPendingChecks

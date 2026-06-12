@@ -24201,6 +24201,21 @@ function runWhenIdle(fn, timeoutMs){
     });
   }
 
+  function qpCampaignFindPromptTarget(token){
+    var wanted=String(token||'').trim();
+    if(!wanted)return null;
+    var options=qpCampaignGetPromptTargetOptions();
+    for(var i=0;i<options.length;i++){
+      if(String(options[i]&&options[i].token||'')===wanted)return options[i];
+    }
+    return null;
+  }
+
+  function qpCampaignResolvePromptTargetLabel(token){
+    var row=qpCampaignFindPromptTarget(token);
+    return row&&row.name?String(row.name||'Wayfarer'):'Party';
+  }
+
   function qpCampaignBuildTargetSelectHtml(selectId){
     var options=qpCampaignGetPromptTargetOptions();
     var body=''
@@ -24212,6 +24227,80 @@ function runWhenIdle(fn, timeoutMs){
             + '</option>';
         }).join('');
     return '<select id="'+selectId+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'+body+'</select>';
+  }
+
+  function qpCampaignBuildStatSelect(selectId){
+    return '<select id="'+selectId+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'
+      + '<option value="valor">Valor</option><option value="mind">Mind</option><option value="spirit">Spirit</option><option value="defend">Defend</option><option value="strike">Strike</option><option value="shoot">Shoot</option><option value="lead">Lead</option><option value="control">Control</option><option value="body">Body</option>'
+      + '</select>';
+  }
+
+  function qpCampaignBuildDreadSelect(selectId){
+    return '<select id="'+selectId+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'
+      + '<option value="4">d4</option><option value="6" selected>d6</option><option value="8">d8</option><option value="10">d10</option><option value="12">d12</option><option value="20">d20</option>'
+      + '</select>';
+  }
+
+  function qpCampaignBuildGmPromptCard(prefix, contextPlaceholder){
+    var root=String(prefix||'qpCampaign');
+    var placeholder=String(contextPlaceholder||'Context (door breach, social test, weather, etc.)');
+    return ''
+      + '<div style="margin-top:.4rem;padding:.34rem .38rem;border:1px solid rgba(201,162,39,.34);background:rgba(201,162,39,.06);">'
+      + '<div style="font-family:Cinzel,serif;font-size:.53rem;letter-spacing:.1em;color:var(--gold2);text-transform:uppercase;">GM Targeted Roll Prompt</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 88px 74px;gap:.22rem;margin-top:.24rem;">'
+      + qpCampaignBuildTargetSelectHtml(root+'RollTarget')
+      + qpCampaignBuildStatSelect(root+'RollStat')
+      + qpCampaignBuildDreadSelect(root+'RollDread')
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr auto auto;gap:.22rem;margin-top:.22rem;">'
+      + '<input id="'+root+'RollContext" type="text" maxlength="120" placeholder="'+qpCampaignEsc(placeholder)+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .36rem;font-size:.74rem;">'
+      + '<button class="btn btn-xs" onclick="qpCampaignCreatePendingCheck(\''+root+'\')">Create Check</button>'
+      + '<button class="btn btn-xs btn-teal" onclick="qpCampaignAction(\'promptRoll\',\''+root+'\')">Prompt Player</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function qpCampaignDomId(value){
+    return String(value||'check').replace(/[^a-z0-9_-]+/gi,'_');
+  }
+
+  function qpCampaignDefaultResolveTarget(check){
+    if(!check||typeof check!=='object')return 'party';
+    if(String((check&&check.scope)||'')==='party')return 'party';
+    var participants=Array.isArray(check&&check.participants)?check.participants:[];
+    for(var i=0;i<participants.length;i++){
+      var token=String((participants[i]&&participants[i].token)||'').trim();
+      if(token)return token;
+    }
+    var submissions=Array.isArray(check&&check.submissions)?check.submissions:[];
+    if(submissions.length){
+      var latest=submissions[submissions.length-1];
+      var submissionToken=String((latest&&latest.token)||'').trim();
+      if(submissionToken)return submissionToken;
+    }
+    return 'party';
+  }
+
+  function qpCampaignBuildResolveTargetSelectHtml(check, selectId){
+    var options=qpCampaignGetPromptTargetOptions();
+    var defaultValue=qpCampaignDefaultResolveTarget(check);
+    var body=['<option value="party"'+(defaultValue==='party'?' selected':'')+'>Entire Party</option>'];
+    options.forEach(function(row){
+      var token=String(row&&row.token||'');
+      if(!token)return;
+      body.push('<option value="'+qpCampaignEsc(token)+'"'+(token===defaultValue?' selected':'')+'>'+qpCampaignEsc(String(row&&row.name||'Wayfarer'))+'</option>');
+    });
+    return '<select id="'+selectId+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.7rem;">'+body.join('')+'</select>';
+  }
+
+  function qpCampaignGetResolveTargetTokens(check, targetValue){
+    var value=String(targetValue||'').trim();
+    if(value&&value!=='party')return [value];
+    var options=qpCampaignGetPromptTargetOptions();
+    var tokens=options.map(function(row){ return String(row&&row.token||'').trim(); }).filter(Boolean);
+    if(tokens.length)return tokens;
+    var participants=Array.isArray(check&&check.participants)?check.participants:[];
+    return participants.map(function(row){ return String(row&&row.token||'').trim(); }).filter(Boolean);
   }
 
   function qpCampaignRenderTimeline(prefix, limit){
@@ -24271,16 +24360,55 @@ function runWhenIdle(fn, timeoutMs){
     var stat=String(((document.getElementById(root+'RollStat')||{}).value)||'valor').trim().toLowerCase();
     var dread=Math.max(1,Number(((document.getElementById(root+'RollDread')||{}).value)||6));
     var context=String(((document.getElementById(root+'RollContext')||{}).value)||'').trim();
-    var label=(target?target+' · ':'')+(context||'GM Check');
+    var targetLabel=target?qpCampaignResolvePromptTargetLabel(target):'Party';
+    var label=(target?targetLabel+' · ':'')+(context||'GM Check');
     var out=await window.campaignSystem.requestRollPrompt(label,stat,dread,target);
     if(out&&out.ok&&typeof window.campaignSystem.sendChatMessage==='function'){
-      var promptMsg='🎲 '+(target||'Party')+' roll '+stat.toUpperCase()+' vs d'+dread+(context?(' · '+context):'');
+      var promptMsg='🎲 '+targetLabel+' roll '+stat.toUpperCase()+' vs d'+dread+(context?(' · '+context):'');
       window.campaignSystem.sendChatMessage({message:promptMsg,targetToken:target});
     }
     setTimeout(function(){
       if(root==='qpCampaign')renderQP('campaign');
       else if(typeof window.renderVttCampaignStoryPanel==='function')window.renderVttCampaignStoryPanel();
     },180);
+  };
+
+  window.qpCampaignCreatePendingCheck = function(prefix){
+    var root=String(prefix||'qpCampaign');
+    if(!window.campaignSystem||typeof window.campaignSystem.startGmPendingCheck!=='function'){
+      if(typeof showNotif==='function')showNotif('Campaign shared checks are unavailable.','warn');
+      return;
+    }
+    var target=String(((document.getElementById(root+'RollTarget')||{}).value)||'').trim();
+    var stat=String(((document.getElementById(root+'RollStat')||{}).value)||'valor').trim().toLowerCase();
+    var dread=Math.max(1,Number(((document.getElementById(root+'RollDread')||{}).value)||6));
+    var context=String(((document.getElementById(root+'RollContext')||{}).value)||'').trim();
+    var targetLabel=target?qpCampaignResolvePromptTargetLabel(target):'Party';
+    var label=(target?targetLabel+' · ':'')+(context||'GM Check');
+    var spec={
+      type:'shared-check',
+      scope:target?'individual':'party',
+      label:label,
+      stat:stat,
+      statOptions:[stat],
+      dread:dread,
+      context:context||label,
+      stake:target?'GM-assigned individual check awaiting final resolve.':'GM-assigned party check awaiting final resolve.',
+      participants:target?[{token:target,name:targetLabel}]:[]
+    };
+    var out=window.campaignSystem.startGmPendingCheck(spec);
+    if(out&&out.ok){
+      if(typeof showNotif==='function')showNotif('Shared check opened for '+targetLabel+'.','good');
+      if(typeof window.campaignSystem.sendChatMessage==='function'){
+        window.campaignSystem.sendChatMessage({message:'🪶 Shared check opened: '+targetLabel+' rolls '+stat.toUpperCase()+' vs d'+dread+(context?(' · '+context):''),targetToken:target});
+      }
+      setTimeout(function(){
+        if(root==='qpCampaign')renderQP('campaign');
+        else if(typeof window.renderVttCampaignStoryPanel==='function')window.renderVttCampaignStoryPanel();
+      },180);
+      return;
+    }
+    if(typeof showNotif==='function')showNotif((out&&out.error)||'Could not create shared check.','warn');
   };
 
   function qpCampaignGetPendingChecks(){
@@ -24340,11 +24468,44 @@ function runWhenIdle(fn, timeoutMs){
     }
     return rows.map(function(check){
       var id=String((check&&check.id)||'');
+      var domId=qpCampaignDomId(id);
       var statOptions=Array.isArray(check&&check.statOptions)&&check.statOptions.length
         ? check.statOptions.map(function(row){return String(row||'').toUpperCase();}).join(' / ')
         : qpCampaignEsc(String((check&&check.stat)||'VALOR').toUpperCase());
       var submissions=Array.isArray(check&&check.submissions)?check.submissions:[];
       var alreadySubmitted=!!(myToken&&submissions.some(function(row){return String((row&&row.token)||'')===myToken;}));
+      var defaultSuccessTokens=String(String((check&&check.scope)||'')==='party'?0:1);
+      var targetSelectId='qpResolveTarget_'+domId;
+      var successInputId='qpResolveSuccess_'+domId;
+      var penaltyTypeId='qpResolvePenaltyType_'+domId;
+      var penaltyAmountId='qpResolvePenaltyAmount_'+domId;
+      var failTmwId='qpResolveFailTmw_'+domId;
+      var gmResolveControls=isGm
+        ? '<div style="margin-top:.24rem;padding:.26rem .28rem;border:1px solid rgba(255,255,255,.08);background:rgba(8,10,14,.26);">'
+          + '<div style="font-family:Cinzel,serif;font-size:.5rem;letter-spacing:.09em;color:var(--gold2);text-transform:uppercase;">GM Resolve</div>'
+          + '<div style="display:grid;grid-template-columns:1fr 86px;gap:.22rem;margin-top:.18rem;">'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Apply To'+qpCampaignBuildResolveTargetSelectHtml(check,targetSelectId)+'</label>'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Success Path Tokens'
+              + '<input id="'+successInputId+'" type="number" min="0" max="20" value="'+defaultSuccessTokens+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+            + '</label>'
+          + '</div>'
+          + '<div style="display:grid;grid-template-columns:1fr 78px 70px;gap:.22rem;margin-top:.16rem;">'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Failure Penalty'
+              + '<select id="'+penaltyTypeId+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+                + '<option value="mentalStress" selected>Mental Stress</option>'
+                + '<option value="health">Damage</option>'
+                + '<option value="none">None</option>'
+              + '</select>'
+            + '</label>'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Amount'
+              + '<input id="'+penaltyAmountId+'" type="number" min="0" max="20" value="1" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+            + '</label>'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Fail TMW'
+              + '<input id="'+failTmwId+'" type="number" min="0" max="20" value="1" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+            + '</label>'
+          + '</div>'
+        + '</div>'
+        : '';
       return '<div style="border:1px solid rgba(201,162,39,.26);background:rgba(201,162,39,.05);padding:.34rem .4rem;margin-top:.24rem;">'
         + '<div style="display:flex;justify-content:space-between;gap:.3rem;align-items:flex-start;">'
         + '<div>'
@@ -24356,6 +24517,7 @@ function runWhenIdle(fn, timeoutMs){
         + '<div style="font-size:.66rem;color:var(--muted2);white-space:nowrap;">'+submissions.length+' submit'+(submissions.length===1?'':'s')+'</div>'
         + '</div>'
         + qpCampaignFormatPendingSubmissions(check)
+        + gmResolveControls
         + '<div style="display:flex;gap:.18rem;flex-wrap:wrap;margin-top:.24rem;">'
         + (isGm
           ? '<button class="btn btn-xs btn-primary" onclick="qpCampaignResolvePendingCheck(\''+qpCampaignEsc(id)+'\',true)">Resolve Success</button><button class="btn btn-xs btn-red" onclick="qpCampaignResolvePendingCheck(\''+qpCampaignEsc(id)+'\',false)">Resolve Failure</button>'
@@ -24414,9 +24576,9 @@ function runWhenIdle(fn, timeoutMs){
     });
   };
 
-  window.qpCampaignResolvePendingCheck = function(checkId, success){
+  window.qpCampaignResolvePendingCheck = async function(checkId, success){
     var check=qpCampaignFindPendingCheck(checkId);
-    if(!check||!window.campaignSystem||typeof window.campaignSystem.resolveGmPendingCheck!=='function'){
+    if(!check||!window.campaignSystem||typeof window.campaignSystem.resolveGmPendingCheck!=='function'||typeof window.campaignSystem.applyGmCheckOutcome!=='function'){
       if(typeof showNotif==='function')showNotif('That shared check is no longer available.','warn');
       return;
     }
@@ -24426,13 +24588,48 @@ function runWhenIdle(fn, timeoutMs){
     var actionTotal=Math.max(0,Number((last&&last.total)||0));
     var dreadTotal=Math.max(0,Number((last&&last.dreadTotal)||0));
     var approved=!!success;
+    var domId=qpCampaignDomId(checkId);
+    var targetValue=String((((document.getElementById('qpResolveTarget_'+domId)||{}).value)||qpCampaignDefaultResolveTarget(check))||'party').trim();
+    var targetTokens=qpCampaignGetResolveTargetTokens(check,targetValue);
+    var successPathTokens=Math.max(0,parseInt(((document.getElementById('qpResolveSuccess_'+domId)||{}).value)||0,10)||0);
+    var penaltyType=String(((document.getElementById('qpResolvePenaltyType_'+domId)||{}).value)||'mentalStress').trim();
+    var penaltyAmount=Math.max(0,parseInt(((document.getElementById('qpResolvePenaltyAmount_'+domId)||{}).value)||0,10)||0);
+    var failTmw=Math.max(0,parseInt(((document.getElementById('qpResolveFailTmw_'+domId)||{}).value)||0,10)||0);
+    var characterDelta={ health:0, mentalStress:0, pathTokens:0 };
+    var sharedDelta={ tmw:0 };
+    if(approved){
+      characterDelta.pathTokens=successPathTokens;
+    }else{
+      if(penaltyType==='health')characterDelta.health=-penaltyAmount;
+      else if(penaltyType==='mentalStress')characterDelta.mentalStress=penaltyAmount;
+      sharedDelta.tmw=failTmw;
+    }
+    var applied=await window.campaignSystem.applyGmCheckOutcome({
+      checkId:String(checkId||''),
+      label:String((check&&check.label)||'Shared Check'),
+      outcome:approved?'success':'failure',
+      scope:targetValue==='party'?'party':'individual',
+      targetTokens:targetTokens,
+      characterDelta:characterDelta,
+      sharedDelta:sharedDelta
+    });
+    if(!applied||!applied.ok){
+      if(typeof showNotif==='function')showNotif((applied&&applied.error)||'Could not apply campaign outcome.','warn');
+      return;
+    }
     var outcome={
       success:approved,
       actionTotal:actionTotal,
       dreadTotal:dreadTotal,
       margin:approved?Math.max(0,actionTotal-dreadTotal):Math.max(1,dreadTotal-actionTotal),
       failedBy:approved?0:Math.max(1,dreadTotal-actionTotal),
-      resolvedVia:'quick-panel'
+      resolvedVia:'quick-panel',
+      effectsApplied:applied.applied||{
+        scope:targetValue==='party'?'party':'individual',
+        targetTokens:targetTokens,
+        characterDelta:characterDelta,
+        sharedDelta:sharedDelta
+      }
     };
     var ok=window.campaignSystem.resolveGmPendingCheck(String(checkId||''),outcome);
     if(ok&&typeof showNotif==='function'){
@@ -26057,6 +26254,7 @@ function runWhenIdle(fn, timeoutMs){
           : '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.submitActiveRoll()">Roll Now</button>')
         : '<button class="btn btn-xs" disabled>Waiting</button>')
       + '</div>'
+      + (isGm ? qpCampaignBuildGmPromptCard('qpCampaign','Context (door breach, weather, rival move, etc.)') : '')
       + '<div style="margin-top:.3rem;">'
       + '<div style="'+compactHead+'color:var(--teal);margin-bottom:.12rem;">Shared Checks Queue</div>'
       + qpCampaignRenderPendingChecks()
@@ -26071,24 +26269,7 @@ function runWhenIdle(fn, timeoutMs){
       + '<button class="btn btn-xs btn-teal" onclick="qpCampaignAction(\'sendChat\',\'qpCampaign\')">Send</button>'
       + '</div>'
       + '<div style="font-size:.67rem;color:var(--muted2);line-height:1.35;margin-top:.16rem;">Tip: GM can type <strong style="color:var(--gold2);">/prompt valor d6 @wayfarer breach door</strong> in chat.</div>'
-      + (isGm
-        ? '<div style="margin-top:.4rem;padding:.34rem .38rem;border:1px solid rgba(201,162,39,.34);background:rgba(201,162,39,.06);">'
-          + '<div style="font-family:Cinzel,serif;font-size:.53rem;letter-spacing:.1em;color:var(--gold2);text-transform:uppercase;">GM Targeted Roll Prompt</div>'
-          + '<div style="display:grid;grid-template-columns:1fr 88px 74px;gap:.22rem;margin-top:.24rem;">'
-          + qpCampaignBuildTargetSelectHtml('qpCampaignRollTarget')
-          + '<select id="qpCampaignRollStat" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'
-          + '<option value="valor">Valor</option><option value="mind">Mind</option><option value="spirit">Spirit</option><option value="defend">Defend</option><option value="strike">Strike</option><option value="shoot">Shoot</option><option value="lead">Lead</option><option value="control">Control</option><option value="body">Body</option>'
-          + '</select>'
-          + '<select id="qpCampaignRollDread" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'
-          + '<option value="4">d4</option><option value="6" selected>d6</option><option value="8">d8</option><option value="10">d10</option><option value="12">d12</option><option value="20">d20</option>'
-          + '</select>'
-          + '</div>'
-          + '<div style="display:grid;grid-template-columns:1fr auto;gap:.22rem;margin-top:.22rem;">'
-          + '<input id="qpCampaignRollContext" type="text" maxlength="120" placeholder="Context (door breach, social test, etc.)" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .36rem;font-size:.74rem;">'
-          + '<button class="btn btn-xs btn-teal" onclick="qpCampaignAction(\'promptRoll\',\'qpCampaign\')">Prompt</button>'
-          + '</div>'
-          + '</div>'
-        : '')
+      + (isGm ? qpCampaignBuildGmPromptCard('qpCampaign','Context (door breach, social test, weather, etc.)') : '')
       + '</div>';
 
     var miniRows=qpCampaignBuildLogRows(8,'story');
@@ -26132,24 +26313,7 @@ function runWhenIdle(fn, timeoutMs){
       + '<button class="btn btn-xs btn-teal" onclick="qpCampaignAction(\'sendChat\',\'vttCampaign\')">Send</button>'
       + '</div>'
       + '<div style="font-size:.67rem;color:var(--muted2);line-height:1.35;margin-top:.14rem;">Tip: GM can type <strong style="color:var(--gold2);">/prompt valor d6 @wayfarer breach door</strong> in chat.</div>'
-      + (isGm
-        ? '<div style="margin-top:.36rem;padding:.32rem .36rem;border:1px solid rgba(201,162,39,.34);background:rgba(201,162,39,.06);">'
-          + '<div style="font-family:Cinzel,serif;font-size:.52rem;letter-spacing:.1em;color:var(--gold2);text-transform:uppercase;">GM Targeted Roll Prompt</div>'
-          + '<div style="display:grid;grid-template-columns:1fr 88px 74px;gap:.22rem;margin-top:.22rem;">'
-          + qpCampaignBuildTargetSelectHtml('vttCampaignRollTarget')
-          + '<select id="vttCampaignRollStat" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'
-          + '<option value="valor">Valor</option><option value="mind">Mind</option><option value="spirit">Spirit</option><option value="defend">Defend</option><option value="strike">Strike</option><option value="shoot">Shoot</option><option value="lead">Lead</option><option value="control">Control</option><option value="body">Body</option>'
-          + '</select>'
-          + '<select id="vttCampaignRollDread" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .3rem;font-size:.74rem;">'
-          + '<option value="4">d4</option><option value="6" selected>d6</option><option value="8">d8</option><option value="10">d10</option><option value="12">d12</option><option value="20">d20</option>'
-          + '</select>'
-          + '</div>'
-          + '<div style="display:grid;grid-template-columns:1fr auto;gap:.22rem;margin-top:.22rem;">'
-          + '<input id="vttCampaignRollContext" type="text" maxlength="120" placeholder="Context (breach, diplomacy, etc.)" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .36rem;font-size:.74rem;">'
-          + '<button class="btn btn-xs btn-teal" onclick="qpCampaignAction(\'promptRoll\',\'vttCampaign\')">Prompt</button>'
-          + '</div>'
-          + '</div>'
-        : '');
+      + (isGm ? qpCampaignBuildGmPromptCard('vttCampaign','Context (breach, diplomacy, weather, etc.)') : '');
   }
 
   window.renderVttCampaignStoryPanel = function(force){

@@ -54,6 +54,7 @@ const GM_ONLY_EVENTS = {
   "campaign:delete": true,
   "campaign:rollRequest": true,
   "campaign:closeRoll": true,
+  "campaign:gmApplyCheckOutcome": true,
   "campaign:exportSnapshot": true,
   "campaign:importSnapshot": true
 };
@@ -833,6 +834,7 @@ function ensureCampaignShape(raw) {
             mentalStress: Math.max(0, Number((typeof p.character.mentalStress === "number" ? p.character.mentalStress : p.character.stress) || 0)),
             maxMentalStress: Math.max(1, Number(p.character.maxMentalStress || p.character.mentalStressCap || p.character.stressCap || 20)),
             stress: Math.max(0, Number((typeof p.character.mentalStress === "number" ? p.character.mentalStress : p.character.stress) || 0)),
+            pathTokens: Math.max(0, Number(p.character.pathTokens || 0)),
             look: String(p.character.look || "").slice(0, 180),
             stats: p.character.stats && typeof p.character.stats === "object" ? p.character.stats : {},
             loadout: p.character.loadout && typeof p.character.loadout === "object" ? p.character.loadout : {},
@@ -1147,6 +1149,7 @@ function snapshotCampaign(campaign, requesterToken) {
             mentalStress: Math.max(0, Number((typeof member.character.mentalStress === "number" ? member.character.mentalStress : member.character.stress) || 0)),
             maxMentalStress: Math.max(1, Number(member.character.maxMentalStress || member.character.mentalStressCap || member.character.stressCap || 20)),
             stress: Math.max(0, Number((typeof member.character.mentalStress === "number" ? member.character.mentalStress : member.character.stress) || 0)),
+            pathTokens: Math.max(0, Number(member.character.pathTokens || 0)),
             look: String(member.character.look || "").slice(0, 180),
             stats: member.character.stats && typeof member.character.stats === "object" ? member.character.stats : {},
             loadout: member.character.loadout && typeof member.character.loadout === "object" ? member.character.loadout : {},
@@ -1417,6 +1420,7 @@ function normalizeCharacter(input, fallbackName) {
   const c = input && typeof input === "object" ? input : {};
   const stats = c.stats && typeof c.stats === "object" ? c.stats : {};
   const mentalStress = Math.max(0, Number((typeof c.mentalStress === "number" ? c.mentalStress : c.stress) || 0));
+  const pathTokens = Math.max(0, Number(c.pathTokens || 0));
   const maxHealthFromStats = Math.max(1, Number((stats.defend || stats.body || stats.valor || 4)) * 2);
   const maxHealth = Math.max(1, Number(c.maxHealth || c.maxStress || maxHealthFromStats));
   const maxMentalStress = Math.max(1, Number(c.maxMentalStress || c.mentalStressCap || c.stressCap || 20));
@@ -1436,6 +1440,7 @@ function normalizeCharacter(input, fallbackName) {
     mentalStress,
     maxMentalStress,
     stress: mentalStress,
+    pathTokens,
     look: String(c.look || "").slice(0, 180),
     stats,
     loadout,
@@ -2701,6 +2706,142 @@ io.on("connection", (socket) => {
 
     emitCampaignState(campaign.code);
     if (typeof ack === "function") ack({ ok: true });
+  });
+
+  socket.on("campaign:gmApplyCheckOutcome", (payload, ack) => {
+    const campaign = getCampaignBySocket(socket);
+    if (!campaign) {
+      if (typeof ack === "function") ack({ ok: false, error: "Not connected to a campaign." });
+      return;
+    }
+
+    const token = socket.data.token;
+    if (!requireGmAction(campaign, token, "campaign:gmApplyCheckOutcome", ack)) return;
+
+    const details = payload && typeof payload === "object" ? payload : {};
+    const label = String(details.label || "Campaign Check").trim().slice(0, 120) || "Campaign Check";
+    const outcome = String(details.outcome || "success").toLowerCase() === "failure" ? "failure" : "success";
+    const scope = String(details.scope || "individual").trim().slice(0, 24) || "individual";
+    const checkId = String(details.checkId || "").trim().slice(0, 80);
+    const rawTargets = Array.isArray(details.targetTokens) ? details.targetTokens : [];
+    const characterDelta = details.characterDelta && typeof details.characterDelta === "object"
+      ? details.characterDelta
+      : {};
+    const sharedDelta = details.sharedDelta && typeof details.sharedDelta === "object"
+      ? details.sharedDelta
+      : {};
+
+    const healthDeltaRaw = Number(characterDelta.health || 0);
+    const mentalStressDeltaRaw = Number(characterDelta.mentalStress || 0);
+    const pathTokensDeltaRaw = Number(characterDelta.pathTokens || 0);
+    const tmwDeltaRaw = Number(sharedDelta.tmw || 0);
+
+    const healthDelta = Number.isFinite(healthDeltaRaw) ? Math.trunc(healthDeltaRaw) : 0;
+    const mentalStressDelta = Number.isFinite(mentalStressDeltaRaw) ? Math.trunc(mentalStressDeltaRaw) : 0;
+    const pathTokensDelta = Number.isFinite(pathTokensDeltaRaw) ? Math.trunc(pathTokensDeltaRaw) : 0;
+    const tmwDelta = Number.isFinite(tmwDeltaRaw) ? Math.trunc(tmwDeltaRaw) : 0;
+
+    const targetTokens = [];
+    const seenTargets = new Set();
+    rawTargets.forEach((entry) => {
+      const targetToken = String(entry || "").trim();
+      if (!targetToken || seenTargets.has(targetToken) || !campaign.participants.has(targetToken)) return;
+      seenTargets.add(targetToken);
+      targetTokens.push(targetToken);
+    });
+
+    if (!targetTokens.length && tmwDelta === 0) {
+      if (typeof ack === "function") ack({ ok: false, error: "No valid targets or party effect provided." });
+      return;
+    }
+
+    const targetNames = [];
+    targetTokens.forEach((targetToken) => {
+      const participant = campaign.participants.get(targetToken);
+      if (!participant) return;
+      participant.character = normalizeCharacter(participant.character, participant.name);
+      if (healthDelta !== 0) {
+        const maxHealth = Math.max(1, Number(participant.character.maxHealth || participant.character.maxStress || 1));
+        participant.character.health = Math.max(0, Math.min(maxHealth, Number(participant.character.health || 0) + healthDelta));
+      }
+      if (mentalStressDelta !== 0) {
+        const maxMentalStress = Math.max(1, Number(participant.character.maxMentalStress || participant.character.mentalStressCap || participant.character.stressCap || 20));
+        const nextStress = Math.max(0, Math.min(maxMentalStress, Number((typeof participant.character.mentalStress === "number" ? participant.character.mentalStress : participant.character.stress) || 0) + mentalStressDelta));
+        participant.character.mentalStress = nextStress;
+        participant.character.stress = nextStress;
+      }
+      if (pathTokensDelta !== 0) {
+        participant.character.pathTokens = Math.max(0, Number(participant.character.pathTokens || 0) + pathTokensDelta);
+      }
+      participant.character.updatedAt = Date.now();
+      targetNames.push(String(participant.name || participant.character.name || "Wayfarer"));
+    });
+
+    if (tmwDelta !== 0) {
+      campaign.shared.tmw = Math.max(0, Number(campaign.shared.tmw || 0) + tmwDelta);
+    }
+
+    const effectParts = [];
+    if (pathTokensDelta !== 0) effectParts.push(`${pathTokensDelta > 0 ? "+" : ""}${pathTokensDelta} Path Token${Math.abs(pathTokensDelta) === 1 ? "" : "s"}`);
+    if (mentalStressDelta !== 0) effectParts.push(`${mentalStressDelta > 0 ? "+" : ""}${mentalStressDelta} Mental Stress`);
+    if (healthDelta !== 0) {
+      effectParts.push(
+        healthDelta < 0
+          ? `${Math.abs(healthDelta)} Damage`
+          : `+${healthDelta} Health`
+      );
+    }
+    if (tmwDelta !== 0) effectParts.push(`${tmwDelta > 0 ? "+" : ""}${tmwDelta} TMW`);
+
+    const targetLabel = targetNames.length
+      ? targetNames.join(", ")
+      : (scope === "party" ? "party" : "no one");
+
+    addLog(
+      campaign,
+      "roll-result",
+      `GM resolved ${label} (${outcome}) for ${targetLabel}: ${effectParts.length ? effectParts.join(", ") : "no applied effect"}.`,
+      {
+        checkId,
+        outcome,
+        scope,
+        targetTokens,
+        targetNames,
+        characterDelta: {
+          health: healthDelta,
+          mentalStress: mentalStressDelta,
+          pathTokens: pathTokensDelta
+        },
+        sharedDelta: {
+          tmw: tmwDelta
+        }
+      }
+    );
+
+    campaign.updatedAt = Date.now();
+    schedulePersist();
+    emitCampaignState(campaign.code);
+    if (typeof ack === "function") {
+      ack({
+        ok: true,
+        applied: {
+          checkId,
+          label,
+          outcome,
+          scope,
+          targetTokens,
+          targetNames,
+          characterDelta: {
+            health: healthDelta,
+            mentalStress: mentalStressDelta,
+            pathTokens: pathTokensDelta
+          },
+          sharedDelta: {
+            tmw: tmwDelta
+          }
+        }
+      });
+    }
   });
 
   socket.on("campaign:archive", (_payload, ack) => {
