@@ -3918,6 +3918,30 @@
     });
   }
 
+  function openWorldThatWasCampaignSceneCheck(hexId) {
+    const hex = hexId ? hexById(hexId) : getSelectedHex();
+    if (!hex || !window.campaignSystem || typeof window.campaignSystem.requestSceneCheck !== "function") {
+      if (typeof showNotif === "function") showNotif("Campaign scene checks are unavailable here.", "warn");
+      return false;
+    }
+    const label = String(hex.zone || "World That Was") + " - " + String(hex.district || ("District " + String(hex.id || "")));
+    return window.campaignSystem.requestSceneCheck({
+      title: "World That Was Scene Check",
+      label: "World That Was Scene Check",
+      context: "World That Was · " + label,
+      type: "scene-check",
+      stat: "lead",
+      dread: 8,
+      successRewardType: "none",
+      successRewardAmount: 0,
+      failurePenaltyType: "mentalStress",
+      failurePenaltyAmount: 1,
+      failTmw: 1,
+      stake: "The GM chooses who acts, who takes the consequence, and whether the table rolls digitally or physically.",
+      playerRequestMessage: "🌆 Requesting a World That Was scene check at " + label + " so the GM can assign the acting wayfarer."
+    });
+  }
+
   function renderWorldThatWasInfo() {
     const w = ensureWorldState();
     const panel = document.getElementById("wtwInfo");
@@ -3945,6 +3969,7 @@
       : ("<strong>Check:</strong> Valor d" + getActionDie("valor") + " vs DD" + eventDread);
 
     const gmMode = !!(window.settingsSystem && typeof window.settingsSystem.isGMMode === "function" && window.settingsSystem.isGMMode());
+    const campaignSceneAvailable = !!(window.campaignSystem && typeof window.campaignSystem.getState === "function" && (window.campaignSystem.getState() || {}).code && (window.campaignSystem.getState() || {}).connected);
     const gmEncounterControls = (gmMode && hex.encounter && hex.encounter.mode !== "combat" && hex.encounter.mode !== "wayfarer")
       ? "<button class='btn btn-xs' style='border-color:var(--purple);color:var(--purple);' onclick='wtwResolveEncounterAs(\"success\")'>GM: Force Success</button><button class='btn btn-xs' style='border-color:var(--purple);color:var(--purple);' onclick='wtwResolveEncounterAs(\"failure\")'>GM: Force Failure</button>"
       : "";
@@ -4175,6 +4200,7 @@
       + "<div class='wtw-headline'>" + hex.zone + " - " + hex.district + "</div>"
       + "<div class='wtw-summary'>" + n.location + " • " + n.sight + " • " + n.weather + " • " + n.feature + "</div>"
       + "</div>"
+      + (campaignSceneAvailable ? "<div class='wtw-chip-wrap' style='margin-bottom:.32rem;'><button class='btn btn-xs btn-primary' onclick='openWorldThatWasCampaignSceneCheck(\"" + String(hex.id) + "\")'>GM Scene Check</button></div>" : "")
       + summaryGrid
       + buildWtwTravelSceneCard(hex)
       + eventCard
@@ -4594,4 +4620,5 @@
   } else {
     initWorldThatWas();
   }
+  window.openWorldThatWasCampaignSceneCheck = openWorldThatWasCampaignSceneCheck;
 })();

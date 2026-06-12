@@ -1766,6 +1766,43 @@
     return false;
   }
 
+  function ensureSeaCampaignSceneHandlers() {
+    if (window._seaCampaignSceneHandlersInstalled) return true;
+    if (!window.campaignSystem || typeof window.campaignSystem.registerSceneCheckHandler !== 'function') return false;
+    window._seaCampaignSceneHandlersInstalled = true;
+    window.campaignSystem.registerSceneCheckHandler('last-sea-weather', function (evt) {
+      if (!S.lastSea || !S.lastSea.weather) return;
+      const check = evt && evt.check && typeof evt.check === 'object' ? evt.check : {};
+      const payload = check.payload && typeof check.payload === 'object' ? check.payload : {};
+      const outcome = evt && evt.outcome && typeof evt.outcome === 'object' ? evt.outcome : {};
+      const weather = ensureSeaWeatherCheck(S.lastSea.weather);
+      S.lastSea.weather = weather;
+      weather.checkResolved = true;
+      weather.checkLast = {
+        stat: String(payload.statKey || check.stat || 'lead'),
+        statDie: Math.max(4, Number(payload.actionDie || 4) || 4),
+        statRoll: Number(outcome.actionTotal || 0),
+        dd: Number(outcome.dreadTotal || check.dread || payload.dd || 8),
+        dreadRoll: Number(outcome.dreadTotal || 0),
+        success: !!outcome.success
+      };
+      showNotif(
+        `${capitalize(String(payload.statKey || check.stat || 'lead'))} ${Number(outcome.actionTotal || 0)} vs Dread ${Number(outcome.dreadTotal || check.dread || payload.dd || 8)}. ${outcome.success ? 'Sea lane stabilized.' : 'You push through under strain.'}`,
+        outcome.success ? 'good' : 'warn'
+      );
+      renderLastSeaMap();
+      renderLastSeaInfo();
+    });
+    return true;
+  }
+
+  function requestSeaCampaignSceneCheck(spec) {
+    ensureSeaCampaignSceneHandlers();
+    if (!window.campaignSystem || typeof window.campaignSystem.requestSceneCheck !== 'function') return false;
+    var out = window.campaignSystem.requestSceneCheck(spec || {});
+    return !!(out && out.handled);
+  }
+
   function resolveLastSeaWeatherCheck(stat) {
     if (!S.lastSea || !S.lastSea.weather) {
       showNotif('No weather check required right now.', 'warn');
@@ -1786,6 +1823,28 @@
     const checkStat = allowed.indexOf(chosen) >= 0 ? chosen : allowed[0];
     const statDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie(checkStat) : ((S.stats && S.stats[checkStat]) || 4);
     const dd = Number(weather.check.dd) || 8;
+    if (requestSeaCampaignSceneCheck({
+      title: 'Last Sea Scene Check',
+      label: 'Last Sea Weather Check',
+      context: String(weather.label || 'Sea Weather') + ' weather pressure',
+      type: 'last-sea-weather',
+      stat: checkStat,
+      dread: dd,
+      successRewardType: 'successRolls',
+      successRewardAmount: 1,
+      failurePenaltyType: 'mentalStress',
+      failurePenaltyAmount: 1,
+      failurePenaltyScale: 'margin',
+      failTmw: 1,
+      stake: 'The GM chooses who navigates the weather and who takes the strain from failure.',
+      payload: {
+        statKey: checkStat,
+        actionDie: statDie,
+        dd: dd,
+        weatherLabel: String(weather.label || 'Sea Weather')
+      },
+      playerRequestMessage: '🌊 Requesting a Last Sea weather roll so the GM can assign the acting wayfarer.'
+    })) return;
     const pendingCheck = startCampaignGmCheckRecord({
       type: 'weather',
       scope: 'sea',

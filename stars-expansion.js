@@ -14555,6 +14555,138 @@ function resolveCampaignGmCheckRecord(checkId, outcome) {
   return false;
 }
 
+function requestStarsCampaignSceneCheck(spec) {
+  ensureStarsCampaignSceneHandlers();
+  if (!window.campaignSystem || typeof window.campaignSystem.requestSceneCheck !== 'function') return false;
+  var out = window.campaignSystem.requestSceneCheck(spec || {});
+  return !!(out && out.handled);
+}
+
+function buildYessodAdjacentObservationRows(state, cell) {
+  const offsets = (cell.row % 2 === 0)
+    ? [
+      { label: 'N', dr: -1, dc: 0 },
+      { label: 'NE', dr: -1, dc: 1 },
+      { label: 'SE', dr: 0, dc: 1 },
+      { label: 'S', dr: 1, dc: 0 },
+      { label: 'SW', dr: 0, dc: -1 },
+      { label: 'NW', dr: -1, dc: -1 },
+    ]
+    : [
+      { label: 'N', dr: -1, dc: 0 },
+      { label: 'NE', dr: 0, dc: 1 },
+      { label: 'SE', dr: 1, dc: 1 },
+      { label: 'S', dr: 1, dc: 0 },
+      { label: 'SW', dr: 1, dc: -1 },
+      { label: 'NW', dr: 0, dc: -1 },
+    ];
+  return offsets.map((entry) => {
+    const near = yessodGetCell(state, yessodCellId(cell.row + entry.dr, cell.col + entry.dc));
+    if (!near) return `<li style="margin-bottom:.2rem;color:var(--muted2);">${entry.label}: Boundary wall / no route.</li>`;
+    const marker = YESSOD_MARKERS[near.marker] || YESSOD_MARKERS.wilderness;
+    const status = near.explored ? 'explored' : 'unexplored';
+    return `<li style="margin-bottom:.2rem;"><strong>${entry.label}</strong>: ${marker.label} in ${near.reachName || 'Yessod Reach'} (${status}).</li>`;
+  });
+}
+
+function getGalaxyObservationTargetFromPayload(payload) {
+  const sourceHexId = payload && payload.sourceHexId != null ? payload.sourceHexId : null;
+  const directionKey = payload ? payload.directionKey : '';
+  if (sourceHexId == null || !directionKey) return null;
+  const source = (S.starSystem && Array.isArray(S.starSystem.hexes))
+    ? S.starSystem.hexes.find(function (hex) { return hex && String(hex.id) === String(sourceHexId); })
+    : null;
+  if (!source) return null;
+  return getGalaxyHexByDirection(source, directionKey);
+}
+
+function ensureStarsCampaignSceneHandlers() {
+  if (window._starsCampaignSceneHandlersInstalled) return true;
+  if (!window.campaignSystem || typeof window.campaignSystem.registerSceneCheckHandler !== 'function') return false;
+  window._starsCampaignSceneHandlersInstalled = true;
+
+  window.campaignSystem.registerSceneCheckHandler('yessod-observe-adjacent', function (evt) {
+    const check = evt && evt.check && typeof evt.check === 'object' ? evt.check : {};
+    const payload = check.payload && typeof check.payload === 'object' ? check.payload : {};
+    const outcome = evt && evt.outcome && typeof evt.outcome === 'object' ? evt.outcome : {};
+    const state = ensureYessodState();
+    const cell = yessodGetCell(state, payload.cellId != null ? payload.cellId : state.selectedCellId);
+    if (!cell) return;
+    const rows = buildYessodAdjacentObservationRows(state, cell);
+    const resultText = Number(outcome.actionTotal || 0) + ' vs ' + Number(outcome.dreadTotal || check.dread || 6);
+    const out = document.getElementById('yessodEncResult');
+    if (out) {
+      out.innerHTML = `<div class="venture-result"><div class="vr-type">Observation</div>${outcome.success ? 'Observation complete: adjacent routes and markers logged.' : 'Observation failed: Yessod fog occludes adjacent route details.'}</div>`;
+    }
+    state.lastEncounter = outcome.success
+      ? 'Observation complete: adjacent routes and markers logged.'
+      : 'Observation failed: Yessod fog occludes adjacent route details.';
+    if (typeof renderYessodPanel === 'function') renderYessodPanel();
+    if (typeof openModal === 'function') {
+      openModal('Observe Adjacent', outcome.success
+        ? `<div class="hex-info-inner"><div style="font-size:.74rem;color:var(--muted2);margin-bottom:.24rem;">Lead ${resultText}</div><ul style="margin:.1rem 0;padding-left:1rem;font-size:.82rem;color:var(--text2);">${rows.join('')}</ul><div style="margin-top:.35rem;"><button class="btn btn-sm" onclick="closeModal()">Close</button></div></div>`
+        : `<div style="font-size:.82rem;color:var(--red2);line-height:1.6;">Observation failed (${resultText}). The GM can hand the pressure out normally, but the adjacent routes remain obscured.</div>`);
+    }
+  });
+
+  window.campaignSystem.registerSceneCheckHandler('galaxy-observe-adjacent', function (evt) {
+    const check = evt && evt.check && typeof evt.check === 'object' ? evt.check : {};
+    const payload = check.payload && typeof check.payload === 'object' ? check.payload : {};
+    const outcome = evt && evt.outcome && typeof evt.outcome === 'object' ? evt.outcome : {};
+    const target = getGalaxyObservationTargetFromPayload(payload);
+    const actionTotal = Number(outcome.actionTotal || 0);
+    const dreadTotal = Number(outcome.dreadTotal || check.dread || 6);
+    let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.4rem;"><div style="text-align:center;"><div style="font-size:.7rem;color:var(--muted2);">Action</div><div style="font-size:1.6rem;color:var(--teal);font-family:Rajdhani,sans-serif;font-weight:700;">' + actionTotal + '</div></div><div style="text-align:center;"><div style="font-size:.7rem;color:var(--muted2);">Dread</div><div style="font-size:1.6rem;color:var(--red2);font-family:Rajdhani,sans-serif;font-weight:700;">' + dreadTotal + '</div></div></div>';
+    if (outcome.success && target) {
+      if (typeof window.revealMapFogHex === 'function') window.revealMapFogHex('galaxy', String(target.hex.id));
+      html += '<div style="background:rgba(46,196,182,.06);border:1px solid rgba(46,196,182,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--green2);font-weight:700;margin-bottom:.25rem;">✓ Observation success (' + target.label + ')</div><div style="padding:.22rem .42rem;border-left:2px solid rgba(201,162,39,.4);"><div style="font-size:.78rem;color:var(--teal);font-weight:700;margin-bottom:.15rem;">Hex ' + target.hex.id + ': ' + (STAR_SIGHTING_COLORS[target.hex.type] ? STAR_SIGHTING_COLORS[target.hex.type].label : target.hex.type) + '</div><div style="font-size:.7rem;color:var(--muted2);">Signal lock established.</div></div></div>';
+      syncCampaignSharedWorldSoon('galaxy-observe-adjacent');
+    } else if (outcome.success) {
+      html += '<div style="background:rgba(200,50,50,.06);border:1px solid rgba(200,50,50,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--red2);font-weight:700;margin-bottom:.2rem;">No hex in that direction</div></div>';
+    } else {
+      html += '<div style="font-size:.82rem;color:var(--red2);">✗ Observation failed. Sensor noise obscures the signal.</div>';
+    }
+    if (typeof openModal === 'function') openModal('Observe Adjacent Galaxy Hex', html);
+    if (typeof renderStarSystemMap === 'function') renderStarSystemMap();
+    if (typeof updateStarSystemReadouts === 'function') updateStarSystemReadouts();
+  });
+
+  window.campaignSystem.registerSceneCheckHandler('galaxy-system-analysis', function (evt) {
+    const check = evt && evt.check && typeof evt.check === 'object' ? evt.check : {};
+    const payload = check.payload && typeof check.payload === 'object' ? check.payload : {};
+    const outcome = evt && evt.outcome && typeof evt.outcome === 'object' ? evt.outcome : {};
+    const hex = (S.starSystem && Array.isArray(S.starSystem.hexes))
+      ? S.starSystem.hexes.find(function (row) { return row && String(row.id) === String(payload.hexId); })
+      : null;
+    if (!hex) return;
+    const el = document.getElementById('starAnalysisResult');
+    if (outcome.success) {
+      hex.scanned = true;
+      hex.explored = true;
+      if (window.TrophySystem) window.TrophySystem.check('first_galaxy_hex');
+      if (hex.type === 'planet') {
+        if (window.TrophySystem) window.TrophySystem.check('first_planet');
+        const profile = ensurePlanetProfile(hex);
+        hex.detail = `Planet ${profile.planetName} catalogued. ${profile.planetType} world with ${profile.biome} biome signatures.`;
+      } else if (hex.hiddenOutcome) {
+        hex.type = convertOutcomeToHexType(hex.hiddenOutcome);
+        hex.textureVariant = pickSpaceTextureVariant(hex.type, hex.ring || 'middle');
+        hex.detail = `${hex.hiddenOutcome} detected ahead.`;
+      } else if (!hex.detail) {
+        hex.detail = 'System Analysis confirms stable telemetry in this hex.';
+      }
+      if (el) el.innerHTML = `<span style="color:var(--green2);">Success</span>: ${Number(outcome.actionTotal || 0)} vs ${Number(outcome.dreadTotal || check.dread || 8)}. Hex ${hex.id} fully scanned.`;
+      syncCampaignSharedWorldSoon('galaxy-system-analysis');
+    } else if (el) {
+      el.innerHTML = `<span style="color:var(--red2);">Failure</span>: ${Number(outcome.actionTotal || 0)} vs ${Number(outcome.dreadTotal || check.dread || 8)}. Data remains noisy.`;
+    }
+    if (typeof updateStarSystemReadouts === 'function') updateStarSystemReadouts();
+    if (typeof renderStarSystemMap === 'function') renderStarSystemMap();
+  });
+
+  return true;
+}
+
 function observeAdjacentPlanetHexes() {
   const hex = getActivePlanetHex();
   const state = ensurePlanetSurfaceState(hex);
@@ -16499,6 +16631,22 @@ function rollYessodObserveAdjacent() {
   const state = ensureYessodState();
   const cell = yessodGetCell(state, state.selectedCellId);
   if (!cell) return;
+  if (requestStarsCampaignSceneCheck({
+    title: 'Yessod Scene Check',
+    label: 'Yessod Observe Adjacent',
+    context: 'Yessod adjacent routes',
+    type: 'yessod-observe-adjacent',
+    stat: 'lead',
+    dread: 6,
+    successRewardType: 'successRolls',
+    successRewardAmount: 1,
+    failurePenaltyType: 'none',
+    failurePenaltyAmount: 0,
+    failTmw: 1,
+    stake: 'The GM decides who scouts the route and who takes the shared outcome.',
+    payload: { cellId: cell.id },
+    playerRequestMessage: '🧭 Requesting a Yessod observation roll so the GM can assign the acting wayfarer.'
+  })) return;
   const leadDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('lead') : ((S.stats && S.stats.lead) || 4);
   const pendingCheck = startCampaignGmCheckRecord({
     type: 'observation',
@@ -16528,30 +16676,7 @@ function rollYessodObserveAdjacent() {
     failedBy: success ? 0 : failedBy,
     manual: false
   });
-  const offsets = (cell.row % 2 === 0)
-    ? [
-      { label: 'N', dr: -1, dc: 0 },
-      { label: 'NE', dr: -1, dc: 1 },
-      { label: 'SE', dr: 0, dc: 1 },
-      { label: 'S', dr: 1, dc: 0 },
-      { label: 'SW', dr: 0, dc: -1 },
-      { label: 'NW', dr: -1, dc: -1 },
-    ]
-    : [
-      { label: 'N', dr: -1, dc: 0 },
-      { label: 'NE', dr: 0, dc: 1 },
-      { label: 'SE', dr: 1, dc: 1 },
-      { label: 'S', dr: 1, dc: 0 },
-      { label: 'SW', dr: 1, dc: -1 },
-      { label: 'NW', dr: 0, dc: -1 },
-    ];
-  const rows = offsets.map((entry) => {
-    const near = yessodGetCell(state, yessodCellId(cell.row + entry.dr, cell.col + entry.dc));
-    if (!near) return `<li style="margin-bottom:.2rem;color:var(--muted2);">${entry.label}: Boundary wall / no route.</li>`;
-    const marker = YESSOD_MARKERS[near.marker] || YESSOD_MARKERS.wilderness;
-    const status = near.explored ? 'explored' : 'unexplored';
-    return `<li style="margin-bottom:.2rem;"><strong>${entry.label}</strong>: ${marker.label} in ${near.reachName || 'Yessod Reach'} (${status}).</li>`;
-  });
+  const rows = buildYessodAdjacentObservationRows(state, cell);
   const rollHeader = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.4rem;"><div style="text-align:center;"><div style="font-size:.7rem;color:var(--muted2);">Lead d${leadDie}</div><div style="font-size:1.6rem;color:var(--teal);font-family:Rajdhani,sans-serif;font-weight:700;">${Number(leadRoll.total || 0)}</div></div><div style="text-align:center;"><div style="font-size:.7rem;color:var(--muted2);">DD6</div><div style="font-size:1.6rem;color:var(--red2);font-family:Rajdhani,sans-serif;font-weight:700;">${Number(dreadRoll.total || 0)}</div></div></div>`;
   state.lastEncounter = success
     ? 'Observation complete: adjacent routes and markers logged.'
@@ -19160,6 +19285,22 @@ function getGalaxyHexByDirection(hex, directionKey) {
 function performGalaxyObservation(directionKey) {
   const current = getCurrentStarHex();
   if (!current) { showNotif('Select a galaxy hex first.', 'warn'); return; }
+  if (requestStarsCampaignSceneCheck({
+    title: 'Galaxy Scene Check',
+    label: 'Observe Adjacent Galaxy Hex',
+    context: 'Observe Adjacent Galaxy Hex',
+    type: 'galaxy-observe-adjacent',
+    stat: 'mind',
+    dread: 6,
+    successRewardType: 'successRolls',
+    successRewardAmount: 1,
+    failurePenaltyType: 'none',
+    failurePenaltyAmount: 0,
+    failTmw: 1,
+    stake: 'The GM chooses who scans the neighboring hex and who takes the result.',
+    payload: { sourceHexId: current.id, directionKey: directionKey },
+    playerRequestMessage: '🛰️ Requesting a galaxy observation roll so the GM can assign the acting wayfarer.'
+  })) return;
   const mindDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('mind') : ((S.stats && S.stats.mind) || 4);
   const target = getGalaxyHexByDirection(current, directionKey);
   const finalizeObservation = function (outcome) {
@@ -19890,6 +20031,22 @@ function runSystemAnalysisCheck() {
   ensureStarsState();
   const hex = getCurrentStarHex();
   if (!hex) return;
+  if (requestStarsCampaignSceneCheck({
+    title: 'Galaxy Scene Check',
+    label: 'Galaxy System Analysis',
+    context: 'Analyze Hex (Lead vs DD8)',
+    type: 'galaxy-system-analysis',
+    stat: 'lead',
+    dread: 8,
+    successRewardType: 'successRolls',
+    successRewardAmount: 1,
+    failurePenaltyType: 'none',
+    failurePenaltyAmount: 0,
+    failTmw: 1,
+    stake: 'The GM chooses who leads the scan and who carries the table result.',
+    payload: { hexId: hex.id },
+    playerRequestMessage: '📡 Requesting a galaxy system analysis roll so the GM can assign the acting wayfarer.'
+  })) return;
 
   const die = (typeof getEffectiveDie === 'function') ? getEffectiveDie('lead') : ((S.stats && S.stats.lead) || 4);
 

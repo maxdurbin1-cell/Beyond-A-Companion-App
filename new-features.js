@@ -13155,6 +13155,34 @@
     { id: "surprise",  label: "Surprise Round",    cost: "Setup",     zones: ["Engaged","Close","Nearby","Far"], desc: "+2 to first round attacks for the acting party.", tags: [] }
   ];
 
+  function openCombatCampaignSceneCheck() {
+    if (!window.campaignSystem || typeof window.campaignSystem.requestSceneCheck !== "function") {
+      if (typeof showNotif === "function") showNotif("Campaign scene checks are unavailable.", "warn");
+      return false;
+    }
+    var allies = S.combatMap.units.filter(function (u) { return u.side === "ally"; });
+    var enemies = S.combatMap.units.filter(function (u) { return u.side === "enemy"; });
+    var playerZone = allies.length ? allies[0].zone : "Unknown";
+    var enemyZoneInfo = enemies.length
+      ? enemies.map(function (u) { return String(u.name || "Enemy") + " @ " + String(u.zone || "Unknown"); }).join(", ")
+      : "no visible enemies";
+    return window.campaignSystem.requestSceneCheck({
+      title: "Combat Scene Check",
+      label: "Combat Scene Check",
+      context: "Combat tab · " + playerZone + " vs " + enemyZoneInfo,
+      type: "scene-check",
+      stat: "strike",
+      dread: 8,
+      successRewardType: "none",
+      successRewardAmount: 0,
+      failurePenaltyType: "health",
+      failurePenaltyAmount: 1,
+      failTmw: 1,
+      stake: "The GM chooses who acts, who absorbs the consequence, and whether the table rolls digitally or physically.",
+      playerRequestMessage: "⚔️ Requesting a combat scene check so the GM can assign the acting wayfarer."
+    });
+  }
+
   function renderCombatOptions() {
     var el = document.getElementById("combatOptionsPanel");
     if (!el) { return; }
@@ -13202,6 +13230,10 @@
     var activeAoe = aoeTemplates.filter(function (row) {
       return row && String(row.id || '') === String(S.combatMap.activeAoeTemplateId || '');
     })[0] || null;
+    var campaignSnap = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+      ? (window.campaignSystem.getState() || {})
+      : {};
+    var showCampaignSceneButton = !!(campaignSnap && campaignSnap.code && campaignSnap.connected);
     var aoeSummary = activeAoe
       ? ('Active: <strong style="color:var(--red2);">' + escapeCombatAoeHtml(String(activeAoe.name || 'AOE')) + '</strong> (' + escapeCombatAoeHtml(String(activeAoe.shape || 'line')) + ' / ' + escapeCombatAoeHtml(getCombatAoeBandSpec(activeAoe.band).label) + ')')
       : 'No active AOE template.';
@@ -13226,6 +13258,7 @@
         + '</div>'
         + '<div style="font-size:.66rem;color:var(--text2);margin-top:.12rem;">' + aoeSummary + '</div>'
         + '<div style="font-size:.64rem;color:var(--muted2);margin-top:.1rem;">Damage rule: success margin equals damage per enemy hit. Spacing: Engaged 1, Close 2, Nearby 3, Far 4 hexes.</div>'
+        + (showCampaignSceneButton ? '<div style="margin-top:.2rem;"><button class="btn btn-xs btn-teal" onclick="openCombatCampaignSceneCheck()">GM Scene Check</button></div>' : '')
         + '</div>'
       + '</div>';
   }
@@ -13329,6 +13362,7 @@
   window.equipCaravanCargoItem = equipCaravanCargoItem;
   window.useCaravanCargoItem = useCaravanCargoItem;
   window.openCaravanCargoItem = openCaravanCargoItem;
+  window.openCombatCampaignSceneCheck = openCombatCampaignSceneCheck;
   window.installMod           = installMod;
   window.removeMod            = removeMod;
   window.setChaseEnemyDread   = setChaseEnemyDread;

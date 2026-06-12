@@ -91,6 +91,7 @@
   };
 
   var readyCheckCallbacks = {};
+  var sceneCheckHandlers = {};
 
   var ROLE_ACTIONS = {
     gm: {
@@ -1277,6 +1278,166 @@
     };
   }
 
+  function normalizeSceneCheckRewardType(value) {
+    var key = String(value || "").trim().toLowerCase();
+    if (key === "successroll" || key === "success-roll" || key === "success_roll" || key === "successrolls" || key === "successfulrolls") {
+      return "successRolls";
+    }
+    if (key === "pathtoken" || key === "path-token" || key === "path_token" || key === "pathtokens") {
+      return "pathTokens";
+    }
+    if (key === "none" || !key) return "none";
+    return "none";
+  }
+
+  function normalizeFailurePenaltyScale(value) {
+    var key = String(value || "flat").trim().toLowerCase();
+    if (key === "margin" || key === "failedby" || key === "failed-by" || key === "failed_by") return "margin";
+    return "flat";
+  }
+
+  function normalizeSceneCharacterDelta(input) {
+    var source = input && typeof input === "object" ? input : {};
+    return {
+      health: Math.trunc(Number(source.health || 0) || 0),
+      mentalStress: Math.trunc(Number(source.mentalStress || 0) || 0),
+      pathTokens: Math.trunc(Number(source.pathTokens || 0) || 0),
+      successRolls: Math.trunc(Number(source.successRolls || source.successRollCount || 0) || 0)
+    };
+  }
+
+  function normalizeSceneSharedDelta(input) {
+    var source = input && typeof input === "object" ? input : {};
+    return {
+      tmw: Math.trunc(Number(source.tmw || 0) || 0)
+    };
+  }
+
+  function registerSceneCheckHandler(type, handler) {
+    var key = String(type || "").trim().toLowerCase();
+    if (!key || typeof handler !== "function") return false;
+    if (!sceneCheckHandlers[key]) sceneCheckHandlers[key] = [];
+    if (sceneCheckHandlers[key].indexOf(handler) >= 0) return true;
+    sceneCheckHandlers[key].push(handler);
+    return true;
+  }
+
+  function dispatchSceneCheckResolved(event) {
+    var evt = event && typeof event === "object" ? event : {};
+    var check = evt.check && typeof evt.check === "object" ? evt.check : {};
+    var key = String(check.type || "").trim().toLowerCase();
+    var handlers = key && Array.isArray(sceneCheckHandlers[key]) ? sceneCheckHandlers[key].slice() : [];
+    for (var i = 0; i < handlers.length; i += 1) {
+      try {
+        handlers[i](evt);
+      } catch (_err) {}
+    }
+    if (typeof window.handleCampaignSceneCheckResolved === "function") {
+      try {
+        window.handleCampaignSceneCheckResolved(evt);
+      } catch (_err2) {}
+    }
+  }
+
+  function applyLocalCharacterDeltaIfTargeted(targetTokens, rawDelta) {
+    if (!window.S || !state.token || !Array.isArray(targetTokens) || targetTokens.indexOf(String(state.token || "")) < 0) return false;
+    var characterDelta = normalizeSceneCharacterDelta(rawDelta);
+    var changed = false;
+
+    if (characterDelta.health !== 0) {
+      var maxHealth = Math.max(1, Number(window.S.maxHealth || window.S.maxStress || 1) || 1);
+      var nextHealth = Math.max(0, Math.min(maxHealth, Number(window.S.health || 0) + characterDelta.health));
+      if (Number(window.S.health || 0) !== nextHealth) {
+        window.S.health = nextHealth;
+        window.S.stress = nextHealth;
+        changed = true;
+      }
+    }
+
+    if (characterDelta.mentalStress !== 0) {
+      var maxMentalStress = Math.max(1, Number(window.S.maxMentalStress || window.S.mentalStressCap || window.S.stressCap || 20) || 20);
+      var nextMentalStress = Math.max(0, Math.min(maxMentalStress, Number(window.S.mentalStress || 0) + characterDelta.mentalStress));
+      if (Number(window.S.mentalStress || 0) !== nextMentalStress) {
+        window.S.mentalStress = nextMentalStress;
+        changed = true;
+      }
+    }
+
+    if (characterDelta.pathTokens !== 0) {
+      var nextPathTokens = Math.max(0, Number(window.S.pathTokens || 0) + characterDelta.pathTokens);
+      if (Number(window.S.pathTokens || 0) !== nextPathTokens) {
+        window.S.pathTokens = nextPathTokens;
+        changed = true;
+      }
+    }
+
+    if (characterDelta.successRolls !== 0) {
+      var currentSuccessRolls = Math.max(0, Number(window.S.successRolls || window.S.successRollCount || 0) || 0);
+      var nextSuccessRolls = Math.max(0, currentSuccessRolls + characterDelta.successRolls);
+      if (nextSuccessRolls >= 3) {
+        var grantedTokens = Math.floor(nextSuccessRolls / 3);
+        nextSuccessRolls = nextSuccessRolls % 3;
+        var nextGrantedPathTokens = Math.max(0, Number(window.S.pathTokens || 0) + grantedTokens);
+        if (Number(window.S.pathTokens || 0) !== nextGrantedPathTokens) {
+          window.S.pathTokens = nextGrantedPathTokens;
+          changed = true;
+        }
+      }
+      if (currentSuccessRolls !== nextSuccessRolls || Number(window.S.successRollCount || 0) !== nextSuccessRolls) {
+        window.S.successRolls = nextSuccessRolls;
+        window.S.successRollCount = nextSuccessRolls;
+        changed = true;
+      }
+    }
+
+    if (!changed) return false;
+    if (typeof window.updateStressUI === "function") window.updateStressUI();
+    if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
+    var pathTokenEl = document.getElementById("pathTokensVal");
+    if (pathTokenEl) pathTokenEl.textContent = String(window.S.pathTokens || 0);
+    var successRollEl = document.getElementById("successRollsVal");
+    if (successRollEl) successRollEl.textContent = String(window.S.successRolls || window.S.successRollCount || 0);
+    if (typeof window.updateAllStatDisplays === "function") window.updateAllStatDisplays();
+    state.lastCharacterHash = JSON.stringify(collectCharacterSummary());
+    return true;
+  }
+
+  function requestSceneCheck(spec) {
+    if (!state.code || !state.connected) return { ok: false, handled: false, error: "Not connected." };
+    var details = spec && typeof spec === "object" ? spec : {};
+    var label = String(details.label || details.context || "Scene Check").trim() || "Scene Check";
+    var stat = String(details.stat || "valor").trim().toLowerCase() || "valor";
+    var dread = Math.max(4, Number(details.dread || 6) || 6);
+
+    if (state.role === "gm") {
+      if (typeof window.openCampaignSceneCheckPrompt !== "function") {
+        safeNotif("Scene check controls are unavailable.", "warn");
+        return { ok: false, handled: true, error: "Scene check controls are unavailable." };
+      }
+      var opened = !!window.openCampaignSceneCheckPrompt(details);
+      if (!opened) {
+        safeNotif("Could not open the GM scene check prompt.", "warn");
+        return { ok: false, handled: true, error: "Could not open the GM scene check prompt." };
+      }
+      return { ok: true, handled: true, role: "gm" };
+    }
+
+    if (state.role === "player") {
+      if (typeof sendChatMessage === "function") {
+        try {
+          sendChatMessage({
+            message: String(details.playerRequestMessage || ("🎲 Requesting GM scene check: " + label + " (" + stat.toUpperCase() + " vs d" + dread + ").")).slice(0, 220),
+            targetToken: ""
+          });
+        } catch (_err) {}
+      }
+      safeNotif(String(details.playerNotice || "Tell the GM your approach. They can now assign the roll from their screen."), "info");
+      return { ok: true, handled: true, role: "player", gmRequired: true };
+    }
+
+    return { ok: false, handled: false, error: "No campaign role is active." };
+  }
+
   function syncPendingChecks(reason) {
     if (!state.code || !state.connected || state.role !== "gm") return;
     var shared = getMutableCampaignSharedState();
@@ -1483,6 +1644,241 @@
     });
 
     return out;
+  }
+
+  function getCampaignRosterMember(token) {
+    var wanted = String(token || "").trim();
+    if (!wanted) return null;
+    var roster = state.campaign && Array.isArray(state.campaign.roster) ? state.campaign.roster : [];
+    for (var i = 0; i < roster.length; i += 1) {
+      var row = roster[i];
+      if (!row || String(row.token || "").trim() !== wanted) continue;
+      return row;
+    }
+    return null;
+  }
+
+  function getCampaignCharacterSnapshot(token) {
+    var member = getCampaignRosterMember(token);
+    return member && member.character && typeof member.character === "object" ? member.character : null;
+  }
+
+  function getCampaignCharacterName(token, fallback) {
+    var wanted = String(token || "").trim();
+    if (!wanted) return String(fallback || "Wayfarer");
+    var member = getCampaignRosterMember(wanted);
+    if (!member) return String(fallback || "Wayfarer");
+    return String((member.character && member.character.name) || member.name || fallback || "Wayfarer");
+  }
+
+  function getCampaignCharacterDie(token, statKey, fallback) {
+    var key = String(statKey || "valor").trim().toLowerCase();
+    var minDie = Math.max(4, Number(fallback || 4) || 4);
+    var snapshot = getCampaignCharacterSnapshot(token);
+    if (!snapshot || !snapshot.stats || typeof snapshot.stats !== "object") return minDie;
+    var stats = snapshot.stats;
+    var next = Number(stats[key] || 0);
+    if (!next && key === "defend") next = Number(stats.defend || stats.body || 0);
+    if (!next && key === "valor") next = Number(stats.valor || 0);
+    return Math.max(4, Number(next || minDie) || minDie);
+  }
+
+  function getPendingCheckById(checkId) {
+    var id = String(checkId || "").trim();
+    if (!id) return null;
+    var checks = ensurePendingChecksState(getCampaignSharedState());
+    if (checks.active && checks.active[id] && typeof checks.active[id] === "object") {
+      return deepCloneJson(checks.active[id]) || checks.active[id];
+    }
+    var history = Array.isArray(checks.history) ? checks.history : [];
+    for (var i = history.length - 1; i >= 0; i -= 1) {
+      var row = history[i];
+      if (!row || String(row.id || "") !== id) continue;
+      return deepCloneJson(row) || row;
+    }
+    return null;
+  }
+
+  function buildSceneCheckTargetTokens(scope, targetValue, explicitTokens) {
+    if (Array.isArray(explicitTokens) && explicitTokens.length) {
+      return explicitTokens.map(function (token) {
+        return String(token || "").trim();
+      }).filter(Boolean);
+    }
+    var nextScope = String(scope || "").trim().toLowerCase();
+    var wanted = String(targetValue || "").trim();
+    if (nextScope === "individual" && wanted) return [wanted];
+    if (nextScope === "party") {
+      return getRollPromptTargets().map(function (row) {
+        return String(row && row.token || "").trim();
+      }).filter(Boolean);
+    }
+    return wanted ? [wanted] : [];
+  }
+
+  async function resolveSceneCheckOutcome(spec) {
+    var details = spec && typeof spec === "object" ? spec : {};
+    var checkId = String(details.checkId || "").trim();
+    if (!checkId) return { ok: false, error: "Missing shared check id." };
+    if (state.role !== "gm") {
+      safeNotif("Only the GM can resolve shared check outcomes.", "warn");
+      return { ok: false, error: "Only the GM can resolve shared check outcomes." };
+    }
+
+    var checkRecord = getPendingCheckById(checkId);
+    if (!checkRecord) return { ok: false, error: "Shared check no longer exists." };
+
+    var success = !!details.success;
+    var scope = String(details.scope || checkRecord.scope || "individual").trim().toLowerCase();
+    if (scope !== "party") scope = "individual";
+
+    var targetTokens = buildSceneCheckTargetTokens(scope, details.targetValue, details.targetTokens);
+    var defaultDreadTotal = Math.max(0, Number(checkRecord.dread || 0));
+    var rawActionTotal = Number(details.actionTotal);
+    var rawDreadTotal = Number(details.dreadTotal);
+    var actionTotal = Number.isFinite(rawActionTotal) ? Math.max(0, rawActionTotal) : (success ? defaultDreadTotal : 0);
+    var dreadTotal = Number.isFinite(rawDreadTotal) ? Math.max(0, rawDreadTotal) : defaultDreadTotal;
+    var failedBy = success
+      ? 0
+      : Math.max(1, Number(details.failedBy || (dreadTotal - actionTotal)) || 1);
+    var margin = success
+      ? Math.max(0, Number(details.margin || (actionTotal - dreadTotal)) || 0)
+      : failedBy;
+
+    var successRewardType = normalizeSceneCheckRewardType(
+      details.successRewardType || (checkRecord.payload && checkRecord.payload.successRewardType) || (Number(details.successPathTokens || 0) > 0 ? "pathTokens" : "")
+    );
+    var successRewardAmount = Math.max(0, parseInt(
+      details.successRewardAmount != null
+        ? details.successRewardAmount
+        : ((checkRecord.payload && (checkRecord.payload.successRewardAmount != null ? checkRecord.payload.successRewardAmount : checkRecord.payload.successPathTokens)) != null
+            ? (checkRecord.payload.successRewardAmount != null ? checkRecord.payload.successRewardAmount : checkRecord.payload.successPathTokens)
+            : details.successPathTokens),
+      10
+    ) || 0);
+    var failurePenaltyType = String(
+      details.failurePenaltyType != null
+        ? details.failurePenaltyType
+        : ((checkRecord.payload && checkRecord.payload.failurePenaltyType) || "mentalStress")
+    ).trim().toLowerCase();
+    var failurePenaltyAmount = Math.max(0, parseInt(
+      details.failurePenaltyAmount != null
+        ? details.failurePenaltyAmount
+        : (checkRecord.payload && checkRecord.payload.failurePenaltyAmount),
+      10
+    ) || 0);
+    var failurePenaltyScale = normalizeFailurePenaltyScale(
+      details.failurePenaltyScale || (checkRecord.payload && checkRecord.payload.failurePenaltyScale) || "flat"
+    );
+    var failTmw = Math.max(0, parseInt(
+      details.failTmw != null
+        ? details.failTmw
+        : (checkRecord.payload && checkRecord.payload.failTmw),
+      10
+    ) || 0);
+
+    var characterDelta = details.characterDelta && typeof details.characterDelta === "object"
+      ? normalizeSceneCharacterDelta(details.characterDelta)
+      : { health: 0, mentalStress: 0, pathTokens: 0, successRolls: 0 };
+    var sharedDelta = details.sharedDelta && typeof details.sharedDelta === "object"
+      ? normalizeSceneSharedDelta(details.sharedDelta)
+      : { tmw: 0 };
+
+    if (!(details.characterDelta && typeof details.characterDelta === "object")) {
+      if (success) {
+        if (successRewardType === "pathTokens") {
+          characterDelta.pathTokens = successRewardAmount;
+        } else if (successRewardType === "successRolls") {
+          characterDelta.successRolls = successRewardAmount;
+        }
+      } else {
+        var scaledPenaltyAmount = failurePenaltyScale === "margin"
+          ? Math.max(0, (failurePenaltyAmount || 1) * Math.max(1, failedBy || 1))
+          : failurePenaltyAmount;
+        if (failurePenaltyType === "health" || failurePenaltyType === "damage") {
+          characterDelta.health = -scaledPenaltyAmount;
+        } else if (failurePenaltyType === "mentalstress" || failurePenaltyType === "mental-stress" || failurePenaltyType === "mental_stress") {
+          characterDelta.mentalStress = scaledPenaltyAmount;
+        }
+      }
+    }
+    if (!(details.sharedDelta && typeof details.sharedDelta === "object") && !success) {
+      sharedDelta.tmw = failTmw;
+    }
+
+    var hasMechanicalEffect = targetTokens.length > 0 && (
+      characterDelta.health !== 0 ||
+      characterDelta.mentalStress !== 0 ||
+      characterDelta.pathTokens !== 0 ||
+      characterDelta.successRolls !== 0
+    );
+    if (sharedDelta.tmw !== 0) hasMechanicalEffect = true;
+
+    var targetNames = targetTokens.map(function (token) {
+      return getCampaignCharacterName(token, token);
+    }).filter(Boolean);
+
+    var appliedPayload = {
+      checkId: checkId,
+      label: String(checkRecord.label || details.label || "Shared Check"),
+      outcome: success ? "success" : "failure",
+      scope: scope,
+      targetTokens: targetTokens.slice(),
+      targetNames: targetNames.slice(),
+      characterDelta: {
+        health: characterDelta.health,
+        mentalStress: characterDelta.mentalStress,
+        pathTokens: characterDelta.pathTokens,
+        successRolls: characterDelta.successRolls
+      },
+      sharedDelta: {
+        tmw: sharedDelta.tmw
+      }
+    };
+
+    if (hasMechanicalEffect) {
+      var applied = await applyGmCheckOutcome({
+        checkId: checkId,
+        label: String(checkRecord.label || details.label || "Shared Check"),
+        outcome: success ? "success" : "failure",
+        scope: scope,
+        targetTokens: targetTokens,
+        characterDelta: characterDelta,
+        sharedDelta: sharedDelta
+      });
+      if (!applied || !applied.ok) {
+        return applied || { ok: false, error: "Could not apply campaign outcome." };
+      }
+      appliedPayload = applied.applied || appliedPayload;
+    }
+
+    var outcome = {
+      success: success,
+      actionTotal: actionTotal,
+      dreadTotal: dreadTotal,
+      margin: margin,
+      failedBy: failedBy,
+      manual: !!details.manual,
+      resolvedVia: String(details.resolvedVia || "campaign-scene-check"),
+      effectsApplied: appliedPayload
+    };
+
+    var resolved = resolveGmPendingCheck(checkId, outcome);
+    if (!resolved) return { ok: false, error: "Could not resolve shared check." };
+
+    dispatchSceneCheckResolved({
+      check: checkRecord,
+      outcome: outcome,
+      applied: appliedPayload,
+      request: details
+    });
+
+    return {
+      ok: true,
+      check: checkRecord,
+      outcome: outcome,
+      applied: appliedPayload
+    };
   }
 
   function resolvePromptTargetFromMention(rawTarget) {
@@ -3948,6 +4344,8 @@
       maxMentalStress: maxMentalStress,
       stress: Math.max(0, Number(mentalStress || 0)),
       pathTokens: Math.max(0, Number((typeof window.S !== "undefined" && window.S && window.S.pathTokens) || 0)),
+      successRolls: Math.max(0, Number((typeof window.S !== "undefined" && window.S && (window.S.successRolls || window.S.successRollCount)) || 0)),
+      successRollCount: Math.max(0, Number((typeof window.S !== "undefined" && window.S && (window.S.successRolls || window.S.successRollCount)) || 0)),
       look: String(look || "").slice(0, 180),
       stats: {
         body: Number(stats.body || 4),
@@ -3994,6 +4392,7 @@
     var nextHealth = Math.max(0, Number(character.health || 0));
     var nextMentalStress = Math.max(0, Number((typeof character.mentalStress === "number" ? character.mentalStress : character.stress) || 0));
     var nextPathTokens = Math.max(0, Number(character.pathTokens || 0));
+    var nextSuccessRolls = Math.max(0, Number(character.successRolls || character.successRollCount || 0));
     var changed = false;
 
     if (Number(window.S.health || 0) !== nextHealth) {
@@ -4009,6 +4408,11 @@
       window.S.pathTokens = nextPathTokens;
       changed = true;
     }
+    if (Number(window.S.successRolls || window.S.successRollCount || 0) !== nextSuccessRolls) {
+      window.S.successRolls = nextSuccessRolls;
+      window.S.successRollCount = nextSuccessRolls;
+      changed = true;
+    }
 
     state.lastAppliedSelfCharacterAt = updatedAt || Date.now();
     state.lastCharacterHash = JSON.stringify(collectCharacterSummary());
@@ -4018,6 +4422,8 @@
     if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
     var pathTokenEl = document.getElementById("pathTokensVal");
     if (pathTokenEl) pathTokenEl.textContent = String(window.S.pathTokens || 0);
+    var successRollEl = document.getElementById("successRollsVal");
+    if (successRollEl) successRollEl.textContent = String(window.S.successRolls || window.S.successRollCount || 0);
     if (typeof window.updateAllStatDisplays === "function") window.updateAllStatDisplays();
     return true;
   }
@@ -4036,13 +4442,13 @@
       ? details.targetTokens.map(function (token) { return String(token || "").trim(); }).filter(Boolean)
       : [];
     var characterDelta = details.characterDelta && typeof details.characterDelta === "object"
-      ? details.characterDelta
+      ? normalizeSceneCharacterDelta(details.characterDelta)
       : {};
     var sharedDelta = details.sharedDelta && typeof details.sharedDelta === "object"
-      ? details.sharedDelta
+      ? normalizeSceneSharedDelta(details.sharedDelta)
       : {};
 
-    return emitWithAck("campaign:gmApplyCheckOutcome", {
+    var requestPayload = {
       checkId: String(details.checkId || "").slice(0, 80),
       label: String(details.label || "Campaign Check").slice(0, 120),
       outcome: String(details.outcome || "success").toLowerCase() === "failure" ? "failure" : "success",
@@ -4051,11 +4457,19 @@
       characterDelta: {
         health: Number(characterDelta.health || 0) || 0,
         mentalStress: Number(characterDelta.mentalStress || 0) || 0,
-        pathTokens: Number(characterDelta.pathTokens || 0) || 0
+        pathTokens: Number(characterDelta.pathTokens || 0) || 0,
+        successRolls: Number(characterDelta.successRolls || characterDelta.successRollCount || 0) || 0
       },
       sharedDelta: {
         tmw: Number(sharedDelta.tmw || 0) || 0
       }
+    };
+
+    return emitWithAck("campaign:gmApplyCheckOutcome", requestPayload).then(function (res) {
+      if (res && res.ok) {
+        applyLocalCharacterDeltaIfTargeted(targetTokens, requestPayload.characterDelta);
+      }
+      return res;
     });
   }
 
@@ -5615,11 +6029,17 @@
 
     var stat = String(activeRequest.stat || "valor");
     var dread = Number(activeRequest.dread || 8);
+    var manualEnabled = !!(window.settingsSystem
+      && typeof window.settingsSystem.isManualRollMode === "function"
+      && window.settingsSystem.isManualRollMode()
+      && typeof window.openProvinceManualCheckPrompt === "function");
     var html = ""
       + '<div style="font-size:.82rem;color:var(--muted2);margin-bottom:.45rem;">GM requested a synchronized campaign roll.</div>'
       + '<div style="font-size:.9rem;color:var(--text2);margin-bottom:.55rem;"><strong>' + escapeHtml(activeRequest.label || "Dread Check") + '</strong><br>'
       + 'Roll <strong style="color:var(--teal);">' + escapeHtml(stat.toUpperCase()) + '</strong> against <strong style="color:var(--red2);">Dread d' + dread + '</strong>.</div>'
+      + '<div style="font-size:.76rem;color:var(--muted2);margin-bottom:.55rem;">Submit your result here. The GM will confirm who receives the reward or consequence.</div>'
       + '<div style="display:flex;gap:.35rem;justify-content:flex-end;">'
+      + (manualEnabled ? '<button class="btn btn-sm btn-primary" onclick="window.campaignSystem.submitActiveRollManual()">Submit Manual Roll</button>' : '')
       + '<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.submitActiveRoll()">Roll Now</button>'
       + '<button class="btn btn-sm" onclick="closeModal()">Later</button>'
       + "</div>";
@@ -5850,7 +6270,7 @@
     return requestRollPrompt(label, stat, dread, "");
   }
 
-  async function requestRollPrompt(label, stat, dread, targetToken) {
+  async function requestRollPrompt(label, stat, dread, targetToken, options) {
     if (!state.socket) {
       safeNotif("Only connected GM can call campaign rolls.", "warn");
       return { ok: false, error: "Not connected." };
@@ -5858,26 +6278,37 @@
     if (!guardAction("callRoll", "Only connected GM can call campaign rolls.")) return { ok: false, error: "Not allowed." };
     if (!guardRiskySharedAction("call roll request")) return { ok: false, error: "Cancelled." };
 
+    var opts = options && typeof options === "object" ? options : {};
     var nextLabel = String(label || "Dread Check").trim() || "Dread Check";
     var nextStat = String(stat || "valor").trim().toLowerCase() || "valor";
     var nextDread = Math.max(1, Number(dread || 8));
     var payload = { label: nextLabel, stat: nextStat, dread: nextDread };
     var target = String(targetToken || "").trim();
-    var pendingCheckId = "";
+    var providedPendingCheckId = "";
+    if (typeof options === "string") {
+      providedPendingCheckId = String(options || "").trim();
+    } else if (opts.pendingCheckId) {
+      providedPendingCheckId = String(opts.pendingCheckId || "").trim();
+    }
+    var pendingCheckId = providedPendingCheckId;
+    var createdPendingCheck = false;
     if (state.role === "gm") {
-      var pendingCheck = startGmPendingCheck({
-        type: "shared-check",
-        scope: target ? "individual" : "party",
-        label: nextLabel,
-        stat: nextStat,
-        statOptions: [nextStat],
-        dread: nextDread,
-        context: nextLabel,
-        stake: target ? "Individual actor check waiting on GM resolution." : "Shared campaign consequence waiting on GM resolution.",
-        participants: target ? [{ token: target }] : []
-      });
-      if (pendingCheck && pendingCheck.ok && pendingCheck.id) {
-        pendingCheckId = String(pendingCheck.id || "");
+      if (!pendingCheckId) {
+        var pendingCheck = startGmPendingCheck({
+          type: "shared-check",
+          scope: target ? "individual" : "party",
+          label: nextLabel,
+          stat: nextStat,
+          statOptions: [nextStat],
+          dread: nextDread,
+          context: nextLabel,
+          stake: target ? "Individual actor check waiting on GM resolution." : "Shared campaign consequence waiting on GM resolution.",
+          participants: target ? [{ token: target }] : []
+        });
+        if (pendingCheck && pendingCheck.ok && pendingCheck.id) {
+          pendingCheckId = String(pendingCheck.id || "");
+          createdPendingCheck = true;
+        }
       }
     }
     if (target) payload.targetToken = target;
@@ -5885,7 +6316,7 @@
 
     var res = await emitWithAck("campaign:rollRequest", payload);
     if (!res.ok) {
-      if (pendingCheckId) {
+      if (pendingCheckId && state.role === "gm" && (createdPendingCheck || opts.keepPendingOnFailure !== true)) {
         var shared = getMutableCampaignSharedState();
         var pending = ensurePendingChecksState(shared);
         if (pending.active && pending.active[pendingCheckId]) {
@@ -5897,7 +6328,9 @@
       return res || { ok: false, error: "Could not create roll request." };
     }
     safeNotif("Roll request sent to campaign.", "good");
-    return res;
+    var nextRes = res && typeof res === "object" ? res : { ok: true };
+    nextRes.pendingCheckId = pendingCheckId;
+    return nextRes;
   }
 
   async function closeActiveRoll() {
@@ -6229,25 +6662,34 @@
       ? window.explodingRoll(req.dread, { type: "dread", major: true, label: "Campaign Dread" })
       : { total: Math.floor(Math.random() * req.dread) + 1 };
 
+    return submitActiveRollResult(req, actionDie, Number(action.total || 0), Number(dreadRoll.total || 0), false);
+  }
+
+  async function submitActiveRollResult(req, actionDie, actionTotal, dreadTotal, manual) {
+    if (!req || !req.id) {
+      safeNotif("No active campaign roll request.", "warn");
+      return { ok: false, error: "No active campaign roll request." };
+    }
+
     var res = await emitWithAck("campaign:rollSubmit", {
       requestId: req.id,
-      total: action.total,
-      dreadTotal: dreadRoll.total,
+      total: Math.max(0, Number(actionTotal || 0)),
+      dreadTotal: Math.max(0, Number(dreadTotal || 0)),
       die: actionDie
     });
 
     if (!res.ok) {
       safeNotif(res.error || "Could not submit roll.", "warn");
-      return;
+      return res || { ok: false, error: "Could not submit roll." };
     }
 
     if (req.pendingCheckId) {
       submitPendingCheck(req.pendingCheckId, {
-        total: action.total,
-        dreadTotal: dreadRoll.total,
+        total: Math.max(0, Number(actionTotal || 0)),
+        dreadTotal: Math.max(0, Number(dreadTotal || 0)),
         die: actionDie,
-        method: "auto",
-        manual: false
+        method: manual ? "manual" : "auto",
+        manual: !!manual
       }).catch(function () {});
     }
 
@@ -6256,9 +6698,49 @@
     }
 
     safeNotif(
-      "Submitted: " + stat.toUpperCase() + " d" + actionDie + " " + action.total + " vs " + dreadRoll.total + ".",
-      action.total >= dreadRoll.total ? "good" : "warn"
+      "Submitted: " + String(req.stat || "valor").toUpperCase() + " d" + actionDie + " " + Math.max(0, Number(actionTotal || 0)) + " vs " + Math.max(0, Number(dreadTotal || 0)) + ".",
+      Number(actionTotal || 0) >= Number(dreadTotal || 0) ? "good" : "warn"
     );
+    return res;
+  }
+
+  function submitActiveRollManual() {
+    var req = state.campaign && state.campaign.activeRollRequest;
+    if (!req) {
+      safeNotif("No active campaign roll request.", "warn");
+      return;
+    }
+
+    var targetToken = String(req.targetToken || "");
+    if (targetToken && String(state.token || "") !== targetToken) {
+      safeNotif("This roll request targets another player.", "warn");
+      return;
+    }
+
+    if (typeof window.openProvinceManualCheckPrompt !== "function") {
+      safeNotif("Manual roll prompt is unavailable.", "warn");
+      return;
+    }
+
+    var stat = String(req.stat || "valor").toLowerCase();
+    var actionDie = resolveActionDie(stat);
+    window.openProvinceManualCheckPrompt({
+      title: "Campaign Roll Request",
+      context: String(req.label || "GM Check"),
+      statKey: stat,
+      statLabel: stat.toUpperCase(),
+      actionDie: actionDie,
+      dreadDie: Math.max(4, Number(req.dread || 8)),
+      onResolve: function (outcome) {
+        submitActiveRollResult(
+          req,
+          actionDie,
+          Number(outcome && outcome.actionTotal || 0),
+          Number(outcome && outcome.dreadTotal || 0),
+          true
+        );
+      }
+    });
   }
 
   // Broadcast a roll/encounter result to all campaign players so everyone sees
@@ -6753,6 +7235,7 @@
     callRollRequest: callRollRequest,
     closeActiveRoll: closeActiveRoll,
     submitActiveRoll: submitActiveRoll,
+    submitActiveRollManual: submitActiveRollManual,
     savePrivateNote: savePrivateNote,
     setCampaignPassword: setCampaignPassword,
     toggleArchive: toggleArchive,
@@ -6777,6 +7260,13 @@
     requestResync: requestResync,
     requestRollPrompt: requestRollPrompt,
     getRollPromptTargets: getRollPromptTargets,
+    getCampaignCharacterSnapshot: getCampaignCharacterSnapshot,
+    getCampaignCharacterName: getCampaignCharacterName,
+    getCampaignCharacterDie: getCampaignCharacterDie,
+    getPendingCheckById: getPendingCheckById,
+    resolveSceneCheckOutcome: resolveSceneCheckOutcome,
+    requestSceneCheck: requestSceneCheck,
+    registerSceneCheckHandler: registerSceneCheckHandler,
     exportSnapshot: exportSnapshot,
     importSnapshotPrompt: importSnapshotPrompt,
     importSnapshotFromModal: importSnapshotFromModal,

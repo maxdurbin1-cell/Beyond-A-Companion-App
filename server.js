@@ -1421,6 +1421,7 @@ function normalizeCharacter(input, fallbackName) {
   const stats = c.stats && typeof c.stats === "object" ? c.stats : {};
   const mentalStress = Math.max(0, Number((typeof c.mentalStress === "number" ? c.mentalStress : c.stress) || 0));
   const pathTokens = Math.max(0, Number(c.pathTokens || 0));
+  const successRolls = Math.max(0, Number(c.successRolls || c.successRollCount || 0));
   const maxHealthFromStats = Math.max(1, Number((stats.defend || stats.body || stats.valor || 4)) * 2);
   const maxHealth = Math.max(1, Number(c.maxHealth || c.maxStress || maxHealthFromStats));
   const maxMentalStress = Math.max(1, Number(c.maxMentalStress || c.mentalStressCap || c.stressCap || 20));
@@ -1441,6 +1442,8 @@ function normalizeCharacter(input, fallbackName) {
     maxMentalStress,
     stress: mentalStress,
     pathTokens,
+    successRolls,
+    successRollCount: successRolls,
     look: String(c.look || "").slice(0, 180),
     stats,
     loadout,
@@ -2734,11 +2737,13 @@ io.on("connection", (socket) => {
     const healthDeltaRaw = Number(characterDelta.health || 0);
     const mentalStressDeltaRaw = Number(characterDelta.mentalStress || 0);
     const pathTokensDeltaRaw = Number(characterDelta.pathTokens || 0);
+    const successRollsDeltaRaw = Number(characterDelta.successRolls || characterDelta.successRollCount || 0);
     const tmwDeltaRaw = Number(sharedDelta.tmw || 0);
 
     const healthDelta = Number.isFinite(healthDeltaRaw) ? Math.trunc(healthDeltaRaw) : 0;
     const mentalStressDelta = Number.isFinite(mentalStressDeltaRaw) ? Math.trunc(mentalStressDeltaRaw) : 0;
     const pathTokensDelta = Number.isFinite(pathTokensDeltaRaw) ? Math.trunc(pathTokensDeltaRaw) : 0;
+    const successRollsDelta = Number.isFinite(successRollsDeltaRaw) ? Math.trunc(successRollsDeltaRaw) : 0;
     const tmwDelta = Number.isFinite(tmwDeltaRaw) ? Math.trunc(tmwDeltaRaw) : 0;
 
     const targetTokens = [];
@@ -2756,6 +2761,7 @@ io.on("connection", (socket) => {
     }
 
     const targetNames = [];
+    let bonusPathTokensGranted = 0;
     targetTokens.forEach((targetToken) => {
       const participant = campaign.participants.get(targetToken);
       if (!participant) return;
@@ -2773,6 +2779,17 @@ io.on("connection", (socket) => {
       if (pathTokensDelta !== 0) {
         participant.character.pathTokens = Math.max(0, Number(participant.character.pathTokens || 0) + pathTokensDelta);
       }
+      if (successRollsDelta !== 0) {
+        let nextSuccessRolls = Math.max(0, Number(participant.character.successRolls || participant.character.successRollCount || 0) + successRollsDelta);
+        if (nextSuccessRolls >= 3) {
+          const granted = Math.floor(nextSuccessRolls / 3);
+          nextSuccessRolls = nextSuccessRolls % 3;
+          participant.character.pathTokens = Math.max(0, Number(participant.character.pathTokens || 0) + granted);
+          bonusPathTokensGranted += granted;
+        }
+        participant.character.successRolls = nextSuccessRolls;
+        participant.character.successRollCount = nextSuccessRolls;
+      }
       participant.character.updatedAt = Date.now();
       targetNames.push(String(participant.name || participant.character.name || "Wayfarer"));
     });
@@ -2783,6 +2800,8 @@ io.on("connection", (socket) => {
 
     const effectParts = [];
     if (pathTokensDelta !== 0) effectParts.push(`${pathTokensDelta > 0 ? "+" : ""}${pathTokensDelta} Path Token${Math.abs(pathTokensDelta) === 1 ? "" : "s"}`);
+    if (successRollsDelta !== 0) effectParts.push(`${successRollsDelta > 0 ? "+" : ""}${successRollsDelta} Successful Roll${Math.abs(successRollsDelta) === 1 ? "" : "s"}`);
+    if (bonusPathTokensGranted !== 0) effectParts.push(`+${bonusPathTokensGranted} Bonus Path Token${Math.abs(bonusPathTokensGranted) === 1 ? "" : "s"}`);
     if (mentalStressDelta !== 0) effectParts.push(`${mentalStressDelta > 0 ? "+" : ""}${mentalStressDelta} Mental Stress`);
     if (healthDelta !== 0) {
       effectParts.push(
@@ -2810,11 +2829,13 @@ io.on("connection", (socket) => {
         characterDelta: {
           health: healthDelta,
           mentalStress: mentalStressDelta,
-          pathTokens: pathTokensDelta
+          pathTokens: pathTokensDelta,
+          successRolls: successRollsDelta
         },
         sharedDelta: {
           tmw: tmwDelta
-        }
+        },
+        bonusPathTokensGranted
       }
     );
 
@@ -2834,11 +2855,13 @@ io.on("connection", (socket) => {
           characterDelta: {
             health: healthDelta,
             mentalStress: mentalStressDelta,
-            pathTokens: pathTokensDelta
+            pathTokens: pathTokensDelta,
+            successRolls: successRollsDelta
           },
           sharedDelta: {
             tmw: tmwDelta
-          }
+          },
+          bonusPathTokensGranted
         }
       });
     }

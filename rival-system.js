@@ -176,6 +176,445 @@
       + '</div>';
   }
 
+  function rivalEsc(text){
+    return String(text||'')
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  }
+
+  function getCampaignStateSnapshot(){
+    if(typeof window==='undefined'||!window.campaignSystem||typeof window.campaignSystem.getState!=='function')return {};
+    return window.campaignSystem.getState()||{};
+  }
+
+  function isConnectedCampaignGm(){
+    var snap=getCampaignStateSnapshot();
+    return !!(snap&&snap.connected&&snap.code&&snap.role==='gm');
+  }
+
+  function isConnectedCampaignPlayer(){
+    var snap=getCampaignStateSnapshot();
+    return !!(snap&&snap.connected&&snap.code&&snap.role==='player');
+  }
+
+  function getCampaignSceneTargets(){
+    if(typeof window==='undefined'||!window.campaignSystem||typeof window.campaignSystem.getRollPromptTargets!=='function')return [];
+    return window.campaignSystem.getRollPromptTargets()||[];
+  }
+
+  function buildCampaignSceneTargetOptionsHtml(selectedValue,opts){
+    var cfg=opts&&typeof opts==='object'?opts:{};
+    var includeActing=cfg.includeActing===true;
+    var includeParty=cfg.includeParty!==false;
+    var targets=getCampaignSceneTargets();
+    var selected=String(selectedValue||'').trim();
+    var body=[];
+    if(includeActing)body.push('<option value="acting"'+(selected==='acting'?' selected':'')+'>Acting Character</option>');
+    if(includeParty)body.push('<option value="party"'+(selected==='party'?' selected':'')+'>Entire Party</option>');
+    targets.forEach(function(row){
+      var token=String(row&&row.token||'').trim();
+      if(!token)return;
+      body.push('<option value="'+rivalEsc(token)+'"'+(token===selected?' selected':'')+'>'+rivalEsc(String(row&&row.name||'Wayfarer'))+'</option>');
+    });
+    return body.join('');
+  }
+
+  function resolveCampaignSceneOutcomeTarget(applyTargetValue,rollTargetValue){
+    var applyValue=String(applyTargetValue||'acting').trim();
+    if(applyValue==='acting'){
+      var rollValue=String(rollTargetValue||'party').trim();
+      return rollValue||'party';
+    }
+    return applyValue||'party';
+  }
+
+  function getCampaignSceneTargetLabel(targetValue){
+    var value=String(targetValue||'').trim();
+    if(!value||value==='party')return 'Entire Party';
+    var targets=getCampaignSceneTargets();
+    for(var i=0;i<targets.length;i++){
+      var row=targets[i]||{};
+      if(String(row.token||'').trim()!==value)continue;
+      return String(row.name||'Wayfarer');
+    }
+    return 'Wayfarer';
+  }
+
+  function openCampaignSceneCheckPrompt(spec){
+    if(!isConnectedCampaignGm()||typeof openModal!=='function'||typeof window==='undefined'||!window.campaignSystem)return false;
+    var cfg=spec&&typeof spec==='object'?spec:{};
+    var targets=getCampaignSceneTargets();
+    var defaultRollTarget=String(cfg.defaultRollTarget||((targets[0]&&targets[0].token)||'party')).trim()||'party';
+    var defaultOutcomeTarget=String(cfg.defaultOutcomeTarget||'acting').trim()||'acting';
+    var successRewardType=String(cfg.successRewardType||((Number(cfg.successRewardAmount||cfg.successPathTokens||0)>0)?'pathTokens':'none')).trim()||'none';
+    var successRewardKey=successRewardType.toLowerCase();
+    if(successRewardKey==='successroll'||successRewardKey==='success-roll'||successRewardKey==='success_roll'||successRewardKey==='successrolls')successRewardType='successRolls';
+    else if(successRewardKey==='pathtoken'||successRewardKey==='path-token'||successRewardKey==='path_token'||successRewardKey==='pathtokens')successRewardType='pathTokens';
+    else if(successRewardKey!=='none')successRewardType='none';
+    var successRewardAmount=Math.max(0,parseInt((cfg.successRewardAmount!=null?cfg.successRewardAmount:cfg.successPathTokens),10)||0);
+    window._pendingCampaignSceneCheck={
+      title:String(cfg.title||'GM Scene Check'),
+      label:String(cfg.label||'Scene Check'),
+      context:String(cfg.context||cfg.label||'Scene Check'),
+      type:String(cfg.type||'scene-check'),
+      stat:String(cfg.stat||'valor').toLowerCase(),
+      dread:Math.max(4,Number(cfg.dread||6)),
+      stake:String(cfg.stake||'GM decides who rolls and who takes the result.'),
+      successRewardType:successRewardType,
+      successRewardAmount:successRewardAmount,
+      failurePenaltyType:String(cfg.failurePenaltyType||'mentalStress'),
+      failurePenaltyAmount:Math.max(0,parseInt(cfg.failurePenaltyAmount,10)||0),
+      failurePenaltyScale:String(cfg.failurePenaltyScale||'flat'),
+      failTmw:Math.max(0,parseInt(cfg.failTmw,10)||0),
+      payload:cfg.payload&&typeof cfg.payload==='object'?cfg.payload:{}
+    };
+    var html=''
+      + '<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">'
+      + '<div style="font-family:\'Cinzel\',serif;font-size:.84rem;color:var(--gold2);">'+rivalEsc(String(cfg.context||cfg.label||'Scene Check'))+'</div>'
+      + '<div style="margin-top:.18rem;"><strong>'+rivalEsc(String(cfg.stat||'valor').toUpperCase())+'</strong> vs <strong style="color:var(--red2);">Dread d'+Math.max(4,Number(cfg.dread||6))+'</strong></div>'
+      + '<div style="font-size:.72rem;color:var(--muted2);margin-top:.16rem;">Choose who rolls, where the outcome lands, and how the table wants to resolve it.</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.32rem;margin-top:.4rem;">'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Who Rolls?'
+      + '<select id="campaignSceneRollTarget" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
+      + buildCampaignSceneTargetOptionsHtml(defaultRollTarget,{includeParty:true})
+      + '</select></label>'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Apply Outcome To'
+      + '<select id="campaignSceneOutcomeTarget" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
+      + buildCampaignSceneTargetOptionsHtml(defaultOutcomeTarget,{includeActing:true,includeParty:true})
+      + '</select></label>'
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 76px 1fr 76px 72px;gap:.32rem;margin-top:.32rem;">'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Success Reward'
+      + '<select id="campaignSceneSuccessRewardType" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
+      + '<option value="none"'+(successRewardType==='none'?' selected':'')+'>None</option>'
+      + '<option value="successRolls"'+(successRewardType==='successRolls'?' selected':'')+'>Success Rolls</option>'
+      + '<option value="pathTokens"'+(successRewardType==='pathTokens'?' selected':'')+'>Path Tokens</option>'
+      + '</select></label>'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Amount'
+      + '<input id="campaignSceneSuccessRewardAmount" type="number" min="0" max="20" value="'+successRewardAmount+'" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;"></label>'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Failure Penalty'
+      + '<select id="campaignScenePenaltyType" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
+      + '<option value="none"'+(String(cfg.failurePenaltyType||'').toLowerCase()==='none'?' selected':'')+'>None</option>'
+      + '<option value="mentalStress"'+(String(cfg.failurePenaltyType||'mentalStress').toLowerCase()==='mentalstress'?' selected':'')+'>Mental Stress</option>'
+      + '<option value="health"'+(String(cfg.failurePenaltyType||'').toLowerCase()==='health'?' selected':'')+'>Damage</option>'
+      + '</select></label>'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Amount'
+      + '<input id="campaignScenePenaltyAmount" type="number" min="0" max="20" value="'+Math.max(0,parseInt(cfg.failurePenaltyAmount,10)||0)+'" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;"></label>'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Fail TMW'
+      + '<input id="campaignSceneFailTmw" type="number" min="0" max="20" value="'+Math.max(0,parseInt(cfg.failTmw,10)||0)+'" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;"></label>'
+      + '</div>'
+      + '<div style="font-size:.68rem;color:var(--muted2);margin-top:.24rem;">'+rivalEsc(cfg.stake)+'</div>'
+      + '<div style="display:flex;gap:.3rem;flex-wrap:wrap;justify-content:flex-end;margin-top:.46rem;">'
+      + '<button class="btn btn-sm" onclick="if(typeof closeModal===\'function\')closeModal();">Cancel</button>'
+      + '<button class="btn btn-sm btn-teal" onclick="submitCampaignSceneCheckAction(\'prompt\')">Ask Player To Roll</button>'
+      + '<button class="btn btn-sm" onclick="submitCampaignSceneCheckAction(\'manual\')">Record Physical Totals</button>'
+      + '<button class="btn btn-sm btn-primary" onclick="submitCampaignSceneCheckAction(\'success\')">Resolve Success</button>'
+      + '<button class="btn btn-sm btn-red" onclick="submitCampaignSceneCheckAction(\'failure\')">Resolve Failure</button>'
+      + '</div>'
+      + '</div>';
+    openModal(String(cfg.title||'GM Scene Check'),html);
+    return true;
+  }
+
+  async function submitCampaignSceneCheckAction(mode){
+    var cfg=window._pendingCampaignSceneCheck||null;
+    if(!cfg||!window.campaignSystem||typeof window.campaignSystem.startGmPendingCheck!=='function')return false;
+    var rollTargetEl=document.getElementById('campaignSceneRollTarget');
+    var outcomeTargetEl=document.getElementById('campaignSceneOutcomeTarget');
+    var successRewardTypeEl=document.getElementById('campaignSceneSuccessRewardType');
+    var successRewardAmountEl=document.getElementById('campaignSceneSuccessRewardAmount');
+    var penaltyTypeEl=document.getElementById('campaignScenePenaltyType');
+    var penaltyAmountEl=document.getElementById('campaignScenePenaltyAmount');
+    var failTmwEl=document.getElementById('campaignSceneFailTmw');
+    var rollTargetValue=String((rollTargetEl&&rollTargetEl.value)||'party').trim()||'party';
+    var outcomeTargetValue=String((outcomeTargetEl&&outcomeTargetEl.value)||'acting').trim()||'acting';
+    var resolvedOutcomeTarget=resolveCampaignSceneOutcomeTarget(outcomeTargetValue,rollTargetValue);
+    var successRewardType=String((successRewardTypeEl&&successRewardTypeEl.value)||cfg.successRewardType||'none').trim()||'none';
+    var successRewardAmount=Math.max(0,parseInt((successRewardAmountEl&&successRewardAmountEl.value)||cfg.successRewardAmount,10)||0);
+    var failurePenaltyType=String((penaltyTypeEl&&penaltyTypeEl.value)||cfg.failurePenaltyType||'none');
+    var failurePenaltyAmount=Math.max(0,parseInt((penaltyAmountEl&&penaltyAmountEl.value)||cfg.failurePenaltyAmount,10)||0);
+    var failurePenaltyScale=String(cfg.failurePenaltyScale||'flat');
+    var failTmw=Math.max(0,parseInt((failTmwEl&&failTmwEl.value)||cfg.failTmw,10)||0);
+    var rollScope=rollTargetValue==='party'?'party':'individual';
+    var outcomeScope=resolvedOutcomeTarget==='party'?'party':'individual';
+    if(mode==='manual'&&rollScope==='party'){
+      if(typeof showNotif==='function')showNotif('Manual totals need one acting character. Use Ask Player To Roll for an all-party check.','warn');
+      return false;
+    }
+    var rollLabel=getCampaignSceneTargetLabel(rollTargetValue);
+    var pendingLabel=(rollScope==='party'?'Entire Party':rollLabel)+' · '+String(cfg.label||cfg.context||'Scene Check');
+    var pendingSpec={
+      type:String(cfg.type||'scene-check'),
+      scope:rollScope,
+      label:pendingLabel,
+      stat:String(cfg.stat||'valor'),
+      statOptions:[String(cfg.stat||'valor')],
+      dread:Math.max(4,Number(cfg.dread||6)),
+      context:String(cfg.context||pendingLabel),
+      stake:String(cfg.stake||'Scene check'),
+      participants:rollScope==='individual'?[{token:rollTargetValue,name:rollLabel}]:[],
+      payload:Object.assign({},cfg.payload||{},{
+        defaultOutcomeTarget:resolvedOutcomeTarget,
+        rollTarget:rollTargetValue,
+        rollScope:rollScope,
+        successRewardType:successRewardType,
+        successRewardAmount:successRewardAmount,
+        failurePenaltyType:failurePenaltyType,
+        failurePenaltyAmount:failurePenaltyAmount,
+        failurePenaltyScale:failurePenaltyScale,
+        failTmw:failTmw
+      })
+    };
+    var pendingCheck=window.campaignSystem.startGmPendingCheck(pendingSpec);
+    if(!pendingCheck||!pendingCheck.ok||!pendingCheck.id){
+      if(typeof showNotif==='function')showNotif((pendingCheck&&pendingCheck.error)||'Could not open the scene check.','warn');
+      return false;
+    }
+    var checkId=String(pendingCheck.id||'');
+    if(mode==='prompt'){
+      var promptResult=await window.campaignSystem.requestRollPrompt(
+        pendingLabel,
+        String(cfg.stat||'valor'),
+        Math.max(4,Number(cfg.dread||6)),
+        rollScope==='individual'?rollTargetValue:'',
+        { pendingCheckId: checkId }
+      );
+      if(!promptResult||!promptResult.ok){
+        if(typeof showNotif==='function')showNotif((promptResult&&promptResult.error)||'Could not prompt the table.','warn');
+        return false;
+      }
+      if(typeof closeModal==='function')closeModal();
+      window._pendingCampaignSceneCheck=null;
+      if(typeof window.campaignSystem.sendChatMessage==='function'){
+        window.campaignSystem.sendChatMessage({
+          message:'🎲 '+(rollScope==='party'?'Entire Party':rollLabel)+' rolls '+String(cfg.stat||'valor').toUpperCase()+' vs d'+Math.max(4,Number(cfg.dread||6))+(cfg.context?(' · '+String(cfg.context)):''),
+          targetToken:rollScope==='individual'?rollTargetValue:''
+        });
+      }
+      if(typeof renderQP==='function')renderQP('campaign');
+      if(typeof showNotif==='function')showNotif((rollScope==='party'?'Table check opened.':'Player prompt sent.')+' Resolve it after submissions come in.', 'good');
+      return true;
+    }
+
+    if(typeof closeModal==='function')closeModal();
+    window._pendingCampaignSceneCheck=null;
+
+    if(mode==='manual'){
+      if(typeof window.openProvinceManualCheckPrompt!=='function'){
+        if(typeof showNotif==='function')showNotif('Manual roll prompt is unavailable.','warn');
+        return false;
+      }
+      var actionDie=(typeof window.campaignSystem.getCampaignCharacterDie==='function')
+        ? window.campaignSystem.getCampaignCharacterDie(rollTargetValue,String(cfg.stat||'valor'),4)
+        : 4;
+      window.openProvinceManualCheckPrompt({
+        title:String(cfg.title||'Campaign Check'),
+        context:pendingLabel,
+        statKey:String(cfg.stat||'valor'),
+        statLabel:String(cfg.stat||'valor').toUpperCase(),
+        actionDie:actionDie,
+        dreadDie:Math.max(4,Number(cfg.dread||6)),
+        onResolve:function(outcome){
+          window.campaignSystem.resolveSceneCheckOutcome({
+            checkId:checkId,
+            success:!!(outcome&&outcome.success),
+            actionTotal:Number(outcome&&outcome.actionTotal||0),
+            dreadTotal:Number(outcome&&outcome.dreadTotal||0),
+            manual:true,
+            resolvedVia:'gm-manual-scene-check',
+            scope:outcomeScope,
+            targetValue:resolvedOutcomeTarget,
+            successRewardType:successRewardType,
+            successRewardAmount:successRewardAmount,
+            failurePenaltyType:failurePenaltyType,
+            failurePenaltyAmount:failurePenaltyAmount,
+            failurePenaltyScale:failurePenaltyScale,
+            failTmw:failTmw
+          }).then(function(resolved){
+            if(!resolved||!resolved.ok){
+              if(typeof showNotif==='function')showNotif((resolved&&resolved.error)||'Could not resolve the shared check.','warn');
+              return;
+            }
+            if(typeof renderQP==='function')renderQP('campaign');
+            if(typeof showNotif==='function')showNotif('Shared check resolved: '+(outcome&&outcome.success?'success':'failure')+'.', outcome&&outcome.success?'good':'warn');
+          });
+        }
+      });
+      return true;
+    }
+
+    var success=String(mode||'').toLowerCase()==='success';
+    var resolved=await window.campaignSystem.resolveSceneCheckOutcome({
+      checkId:checkId,
+      success:success,
+      actionTotal:success?Math.max(4,Number(cfg.dread||6)):0,
+      dreadTotal:Math.max(4,Number(cfg.dread||6)),
+      manual:false,
+      resolvedVia:'gm-scene-buttons',
+      scope:outcomeScope,
+      targetValue:resolvedOutcomeTarget,
+      successRewardType:successRewardType,
+      successRewardAmount:successRewardAmount,
+      failurePenaltyType:failurePenaltyType,
+      failurePenaltyAmount:failurePenaltyAmount,
+      failurePenaltyScale:failurePenaltyScale,
+      failTmw:failTmw
+    });
+    if(!resolved||!resolved.ok){
+      if(typeof showNotif==='function')showNotif((resolved&&resolved.error)||'Could not resolve the shared check.','warn');
+      return false;
+    }
+    if(typeof renderQP==='function')renderQP('campaign');
+    if(typeof showNotif==='function')showNotif('Shared check resolved: '+(success?'success':'failure')+'.', success?'good':'warn');
+    return true;
+  }
+
+  function openRivalSceneCheck(action,stat,intent,mapKey,key){
+    var r=ensureRivalState();
+    if(!r||!r.alive)return false;
+    var dread=snapRivalDreadDie(r.dread + Math.max(0,Math.floor((r.threatTier-1)/2)));
+    return openCampaignSceneCheckPrompt({
+      title:'Rival Scene Check',
+      label:'Rival '+String(action||'interaction'),
+      context:'Rival '+String(action||'interaction')+' ('+String(stat||'lead').toUpperCase()+')',
+      type:'rival-outcome',
+      stat:String(stat||'lead'),
+      dread:dread,
+      successRewardType:'pathTokens',
+      successRewardAmount:1,
+      failurePenaltyType:'none',
+      failurePenaltyAmount:0,
+      failTmw:1,
+      stake:'The GM assigns who acts, who receives the outcome, and whether the table rolls or resolves immediately.',
+      payload:{
+        sceneType:'rival-interaction',
+        action:String(action||'interaction'),
+        intent:String(intent||'positive'),
+        mapKey:String(mapKey||'province'),
+        key:String(key||'')
+      }
+    });
+  }
+
+  function handleRivalInteractionChoice(action,stat,intent,mapKey,key){
+    var nextAction=String(action||'interaction');
+    var nextStat=String(stat||'lead');
+    var nextIntent=String(intent||'positive');
+    var nextMapKey=String(mapKey||'province');
+    var nextKey=String(key||'');
+    if(isConnectedCampaignGm()){
+      return openRivalSceneCheck(nextAction,nextStat,nextIntent,nextMapKey,nextKey);
+    }
+    if(isConnectedCampaignPlayer()){
+      if(window.campaignSystem&&typeof window.campaignSystem.sendChatMessage==='function'){
+        try{
+          window.campaignSystem.sendChatMessage({
+            message:'🗣️ Rival intent: '+nextAction+' with '+nextStat.toUpperCase()+' at '+(nextKey||nextMapKey)+'. GM can assign the roll when ready.'
+          });
+        }catch(_err){}
+      }
+      if(typeof showNotif==='function'){
+        showNotif('Tell the GM your approach. They can now assign the roll and outcome from their screen.','info');
+      }
+      if(typeof closeModal==='function')closeModal();
+      return true;
+    }
+    resolveRivalInteraction(nextAction,nextStat,nextIntent,nextMapKey,nextKey);
+    return true;
+  }
+
+  function applyRivalInteractionOutcome(action,stat,intent,mapKey,key,rollOut,options){
+    var r=ensureRivalState();
+    if(!r||!r.alive)return false;
+    var result=rollOut&&typeof rollOut==='object'?rollOut:{success:false,actorTotal:0,dreadTotal:0,die:4,dreadDie:8,manual:false,pushLuck:false};
+    var meta=options&&typeof options==='object'?options:{};
+    var success=!!result.success;
+    var label=String(action||'interaction');
+    var failBy=Math.max(1,Number(meta.failedBy||0)||Math.max(1,Number(result.dreadTotal||0)-Number(result.actorTotal||0)));
+    var drift='';
+    if(String(intent)==='positive'){
+      if(success){
+        r.rapport=clamp(r.rapport+1,-8,8);
+        r.dread=shiftRivalDread(r.dread,-1);
+        r.threatTier=clamp(r.threatTier-1,1,10);
+        drift='Trust improved; rival pressure eased.';
+      }else{
+        r.rapport=clamp(r.rapport-1,-8,8);
+        r.dread=shiftRivalDread(r.dread,1);
+        r.threatTier=clamp(r.threatTier+1,1,10);
+        drift='Attempt backfired; they grew sharper.';
+      }
+    }else{
+      if(success){
+        r.rapport=clamp(r.rapport-1,-8,8);
+        r.dread=shiftRivalDread(r.dread,1);
+        r.threatTier=clamp(r.threatTier+1,1,10);
+        drift='You gain ground, but the rivalry escalates.';
+      }else{
+        r.rapport=clamp(r.rapport-2,-8,8);
+        r.dread=shiftRivalDread(r.dread,2);
+        r.threatTier=clamp(r.threatTier+2,1,10);
+        drift='They exploit your opening and become more dangerous.';
+      }
+    }
+    r.encounters=(r.encounters||0)+1;
+    r.lastMap=String(mapKey||'');
+    r.lastOutcome=(success?'Success':'Failure')+' - '+label+(result.manual?' (manual)':'');
+    addRivalHistory('['+String(mapKey||'province')+'] '+label+': '+(success?'success':'failure')+' ('+String(stat)+')'+(result.manual?(result.pushLuck?' [manual push-luck]':' [manual]'):'')+'.');
+    syncRivalStatus();
+    renderRivalCombatStatus();
+    syncCampaignRivalState('rival-interaction');
+    if(!success&&!meta.effectsHandledByCampaign&&typeof addTMWOnFail==='function'){
+      addTMWOnFail('rival-interaction-failure',{
+        failedBy:failBy,
+        actionDie:Math.max(4,Number(result&&result.die||4)),
+        dreadDie:Math.max(4,Number(result&&result.dreadDie||8)),
+        actionLabel:String(stat||'lead').toUpperCase()+' Die'
+      });
+    }
+    if(typeof showNotif==='function'){
+      showNotif('Rival '+label+': '+(success?'success':'failure')+(result.manual?' (manual)':'')+'. '+drift,success?'good':'warn');
+    }
+    if(typeof renderQP==='function')renderQP('combat');
+    return true;
+  }
+
+  function handleRivalCampaignSceneCheckResolved(evt){
+    var check=evt&&evt.check&&typeof evt.check==='object'?evt.check:null;
+    if(!check||String(check.type||'')!=='rival-outcome')return;
+    var payload=check.payload&&typeof check.payload==='object'?check.payload:{};
+    if(payload.sceneType&&String(payload.sceneType)!=='rival-interaction')return;
+    var outcome=evt&&evt.outcome&&typeof evt.outcome==='object'?evt.outcome:{};
+    var stat=String(check.stat||payload.stat||'lead');
+    var rollTarget=String(payload.rollTarget||'').trim();
+    var actorDie=(rollTarget&&rollTarget!=='party'&&window.campaignSystem&&typeof window.campaignSystem.getCampaignCharacterDie==='function')
+      ? window.campaignSystem.getCampaignCharacterDie(rollTarget,stat,4)
+      : 4;
+    applyRivalInteractionOutcome(
+      String(payload.action||'interaction'),
+      stat,
+      String(payload.intent||'positive'),
+      String(payload.mapKey||'province'),
+      String(payload.key||''),
+      {
+        actorTotal:Number(outcome.actionTotal||0),
+        dreadTotal:Number(outcome.dreadTotal||check.dread||0),
+        success:!!outcome.success,
+        die:Math.max(4,Number(actorDie||4)),
+        dreadDie:Math.max(4,Number(check.dread||payload.dread||8)),
+        manual:!!(outcome.manual||String(outcome.resolvedVia||'').indexOf('manual')>=0),
+        pushLuck:false
+      },
+      {
+        failedBy:Number(outcome.failedBy||0),
+        effectsHandledByCampaign:true
+      }
+    );
+  }
+
   function openRivalManualDecision(action,stat,intent,mapKey,key,dreadDie){
     if(typeof openModal!=='function')return false;
     var die=(typeof getEffectiveDie==='function')?getEffectiveDie(stat||'lead'):((S&&S.stats&&S.stats[stat])||4);
@@ -376,6 +815,7 @@
     var mapLabel=String(mapKey||'province').toUpperCase();
     var baseDd=snapRivalDreadDie(r.dread + Math.max(0,Math.floor((r.threatTier-1)/2)));
     var indicator=r.rapport>=2?'Positive Path':(r.rapport<=-2?'Negative Path':'Uncertain Path');
+    var playerCampaign=isConnectedCampaignPlayer();
     var dialogue = r.rapport>=3
       ? '"We keep crossing paths for a reason. Help me end this cleanly."'
       : (r.rapport<=-3
@@ -392,11 +832,14 @@
       + ' | Threat Tier '+String(r.threatTier)
       + ' | Defeated '+String(r.defeatCount)+'/3'
       + '</div>'
+      + (playerCampaign
+        ? '<div style="margin-top:.28rem;font-size:.72rem;color:var(--muted2);">Choose the approach you want, then the GM can assign the roll and consequences from their screen.</div>'
+        : '<div style="margin-top:.28rem;font-size:.72rem;color:var(--muted2);">Pick the approach that fits the scene. In campaign mode the GM can decide who rolls and who receives the outcome.</div>')
       + '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.28rem;margin-top:.4rem;">'
-      + '<button class="btn btn-sm btn-teal" onclick="resolveRivalInteraction(\'parley\',\'lead\',\'positive\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Parley (Lead)</button>'
-      + '<button class="btn btn-sm btn-primary" onclick="resolveRivalInteraction(\'empathize\',\'spirit\',\'positive\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Empathize (Spirit)</button>'
-      + '<button class="btn btn-sm btn-warn" onclick="resolveRivalInteraction(\'intimidate\',\'control\',\'negative\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Intimidate (Control)</button>'
-      + '<button class="btn btn-sm" onclick="resolveRivalInteraction(\'undermine\',\'mind\',\'negative\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Undermine (Mind)</button>'
+      + '<button class="btn btn-sm btn-teal" onclick="handleRivalInteractionChoice(\'parley\',\'lead\',\'positive\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Parley (Lead)</button>'
+      + '<button class="btn btn-sm btn-primary" onclick="handleRivalInteractionChoice(\'empathize\',\'spirit\',\'positive\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Empathize (Spirit)</button>'
+      + '<button class="btn btn-sm btn-warn" onclick="handleRivalInteractionChoice(\'intimidate\',\'control\',\'negative\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Intimidate (Control)</button>'
+      + '<button class="btn btn-sm" onclick="handleRivalInteractionChoice(\'undermine\',\'mind\',\'negative\',\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">Undermine (Mind)</button>'
       + '</div>'
       + '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.45rem;">'
       + '<button class="btn btn-sm btn-red" onclick="startRivalCombat(\''+String(mapKey||'province')+'\',\''+String((ctx&&ctx.key)||'')+'\')">⚔ Enter Combat</button>'
@@ -455,52 +898,8 @@
       action:String(action||'interaction'),
       intent:String(intent||'')
     });
-    var drift='';
-    if(String(intent)==='positive'){
-      if(success){
-        r.rapport=clamp(r.rapport+1,-8,8);
-        r.dread=shiftRivalDread(r.dread,-1);
-        r.threatTier=clamp(r.threatTier-1,1,10);
-        drift='Trust improved; rival pressure eased.';
-      }else{
-        r.rapport=clamp(r.rapport-1,-8,8);
-        r.dread=shiftRivalDread(r.dread,1);
-        r.threatTier=clamp(r.threatTier+1,1,10);
-        drift='Attempt backfired; they grew sharper.';
-      }
-    }else{
-      if(success){
-        r.rapport=clamp(r.rapport-1,-8,8);
-        r.dread=shiftRivalDread(r.dread,1);
-        r.threatTier=clamp(r.threatTier+1,1,10);
-        drift='You gain ground, but the rivalry escalates.';
-      }else{
-        r.rapport=clamp(r.rapport-2,-8,8);
-        r.dread=shiftRivalDread(r.dread,2);
-        r.threatTier=clamp(r.threatTier+2,1,10);
-        drift='They exploit your opening and become more dangerous.';
-      }
-    }
-    r.encounters=(r.encounters||0)+1;
-    r.lastMap=String(mapKey||'');
-    r.lastOutcome=(success?'Success':'Failure')+' - '+label+(rollOut.manual?' (manual)':'');
-    addRivalHistory('['+String(mapKey||'province')+'] '+label+': '+(success?'success':'failure')+' ('+String(stat)+')'+(rollOut.manual?(rollOut.pushLuck?' [manual push-luck]':' [manual]'):'')+'.');
-    syncRivalStatus();
-    renderRivalCombatStatus();
-    syncCampaignRivalState('rival-interaction');
     if(typeof closeModal==='function')closeModal();
-    if(!success&&typeof addTMWOnFail==='function'){
-      addTMWOnFail('rival-interaction-failure',{
-        failedBy:failBy,
-        actionDie:Math.max(4,Number(rollOut&&rollOut.die||4)),
-        dreadDie:Math.max(4,Number(rollOut&&rollOut.dreadDie||dread||8)),
-        actionLabel:String(stat||'lead').toUpperCase()+' Die'
-      });
-    }
-    if(typeof showNotif==='function'){
-      showNotif('Rival '+label+': '+(success?'success':'failure')+(rollOut.manual?' (manual)':'')+'. '+drift,success?'good':'warn');
-    }
-    if(typeof renderQP==='function')renderQP('combat');
+    applyRivalInteractionOutcome(action,stat,intent,mapKey,key,rollOut,{failedBy:failBy});
   }
 
   function startRivalCombat(mapKey,key){
@@ -647,12 +1046,31 @@
     };
   }
 
+  function installRivalCampaignSceneCheckHook(){
+    if(typeof window==='undefined'||window._rivalCampaignSceneCheckHookInstalled)return;
+    var previousHook=typeof window.handleCampaignSceneCheckResolved==='function'
+      ? window.handleCampaignSceneCheckResolved
+      : null;
+    window.handleCampaignSceneCheckResolved=function(evt){
+      if(typeof previousHook==='function'){
+        try{ previousHook(evt); }catch(_err){}
+      }
+      handleRivalCampaignSceneCheckResolved(evt);
+    };
+    window._rivalCampaignSceneCheckHookInstalled=true;
+  }
+
   window.ensureRivalState=ensureRivalState;
+  window.handleRivalInteractionChoice=handleRivalInteractionChoice;
+  window.openCampaignSceneCheckPrompt=openCampaignSceneCheckPrompt;
+  window.submitCampaignSceneCheckAction=submitCampaignSceneCheckAction;
+  window.openRivalSceneCheck=openRivalSceneCheck;
   window.rollRivalEncounterForMap=rollRivalEncounterForMap;
   window.resolveRivalInteraction=resolveRivalInteraction;
   window.resolveRivalManualDecision=resolveRivalManualDecision;
   window.startRivalCombat=startRivalCombat;
   window.finalizeRivalCombat=finalizeRivalCombat;
   window.renderRivalCombatStatus=renderRivalCombatStatus;
+  installRivalCampaignSceneCheckHook();
   patchRivalEndCombatHook();
 })();

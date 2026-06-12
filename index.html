@@ -3897,8 +3897,8 @@ function openBackstoryAnchorInteraction(anchorId,key,scope){
       +'Their network shifts constantly. Every sighting changes the next confrontation.'
       +'<div style="margin-top:.25rem;color:var(--muted2);">Sightings: '+(r.sightings||0)+'</div>'
       +'<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.38rem;">'
-      +'<button class="btn btn-sm btn-warn" onclick="resolveRivalInteraction(\'intimidate\',\'control\',\'negative\',\''+sk+'\',\''+k+'\')">Pressure (Control)</button>'
-      +'<button class="btn btn-sm btn-teal" onclick="resolveRivalInteraction(\'parley\',\'lead\',\'positive\',\''+sk+'\',\''+k+'\')">Parley (Lead)</button>'
+      +'<button class="btn btn-sm btn-warn" onclick="handleRivalInteractionChoice(\'intimidate\',\'control\',\'negative\',\''+sk+'\',\''+k+'\')">Pressure (Control)</button>'
+      +'<button class="btn btn-sm btn-teal" onclick="handleRivalInteractionChoice(\'parley\',\'lead\',\'positive\',\''+sk+'\',\''+k+'\')">Parley (Lead)</button>'
       +'<button class="btn btn-sm btn-red" onclick="startRivalCombat(\''+sk+'\',\''+k+'\')">Confront In Combat</button>'
       +'</div></div>';
     if(typeof openModal==='function')openModal('Rival Marker',html);
@@ -18458,6 +18458,30 @@ function buildTravelScenePanelHtml(hex){
 }
 
 // ── RENDER HEX INFO ──────────────────────────────────────────────────────────
+window.openProvinceCampaignSceneCheck=function(col,row){
+  const hex=mapData.find(function(h){ return h&&h.col===col&&h.row===row; })||null;
+  if(!hex||!window.campaignSystem||typeof window.campaignSystem.requestSceneCheck!=='function'){
+    if(typeof showNotif==='function')showNotif('Campaign scene checks are unavailable here.','warn');
+    return false;
+  }
+  const label=String(hex.name||((hex.terrain&&hex.terrain.name)||('Hex '+(Number(col)+1)+','+(Number(row)+1))));
+  return window.campaignSystem.requestSceneCheck({
+    title:'Province Scene Check',
+    label:'Province Scene Check',
+    context:'Province Map · '+label,
+    type:'scene-check',
+    stat:'lead',
+    dread:6,
+    successRewardType:'none',
+    successRewardAmount:0,
+    failurePenaltyType:'mentalStress',
+    failurePenaltyAmount:1,
+    failTmw:1,
+    stake:'The GM chooses who acts, who takes the outcome, and whether the table rolls digitally or physically.',
+    playerRequestMessage:'🗺️ Requesting a Province scene check at '+label+' so the GM can assign the acting wayfarer.'
+  });
+};
+
 function renderHexInfo(hex){
   const c=document.getElementById('hexInfo');if(!c)return;
   const d=hex.data||{};
@@ -18480,6 +18504,7 @@ function renderHexInfo(hex){
   const provincePadUnlocked=isSecretPadUnlocked('province');
   const season=S.currentSeason||'spring';
   const activeProvinceCtx=getActiveTheosProvinceContext();
+  const campaignSceneAvailable=!!(window.campaignSystem&&typeof window.campaignSystem.getState==='function'&&(window.campaignSystem.getState()||{}).code&&(window.campaignSystem.getState()||{}).connected);
   // Store weather roll in hex data so it persists across renders (fixes Province tab rerolling in campaign mode)
   const wr=d.weatherRoll || roll(6);if(!d.weatherRoll)d.weatherRoll=wr;
   const weatherResult=WEATHER[season][wr-1];
@@ -18489,6 +18514,9 @@ function renderHexInfo(hex){
   html+=`<div class="hex-type-tag ${hex.type}">${hex.type.toUpperCase()}</div>`;
   html+=`<div class="hex-name">${hex.name||hex.terrain.name}</div>`;
   html+=`<div class="hex-desc" style="margin-bottom:.4rem;">${hex.terrain.name} terrain${activeProvinceCtx&&activeProvinceCtx.name?` · ${activeProvinceCtx.name}`:''}</div>`;
+  if(campaignSceneAvailable){
+    html+=`<div style="margin-bottom:.35rem;"><button class="btn btn-xs btn-primary" onclick="openProvinceCampaignSceneCheck(${hex.col},${hex.row})">GM Scene Check</button></div>`;
+  }
   if(hex.type==='dwelling'||hex.type==='temple'||hex.type==='holding'||hex.type==='seat'||hex.type==='trade'||hex.type==='gate'){
     html+=`<div style="margin-bottom:.35rem;"><button class="btn btn-xs btn-teal" onclick="revealProvinceRumorHex(${hex.col},${hex.row})">🗺 Ask Locals (Reveal Random Hex)</button></div>`;
   }
@@ -24266,6 +24294,9 @@ function runWhenIdle(fn, timeoutMs){
 
   function qpCampaignDefaultResolveTarget(check){
     if(!check||typeof check!=='object')return 'party';
+    var payload=check&&check.payload&&typeof check.payload==='object'?check.payload:null;
+    var preferred=String((payload&&payload.defaultOutcomeTarget)||'').trim();
+    if(preferred)return preferred;
     if(String((check&&check.scope)||'')==='party')return 'party';
     var participants=Array.isArray(check&&check.participants)?check.participants:[];
     for(var i=0;i<participants.length;i++){
@@ -24279,6 +24310,36 @@ function runWhenIdle(fn, timeoutMs){
       if(submissionToken)return submissionToken;
     }
     return 'party';
+  }
+
+  function qpCampaignNormalizeSuccessRewardType(value){
+    var key=String(value||'').trim().toLowerCase();
+    if(key==='successroll'||key==='success-roll'||key==='success_roll'||key==='successrolls')return 'successRolls';
+    if(key==='pathtoken'||key==='path-token'||key==='path_token'||key==='pathtokens')return 'pathTokens';
+    return 'none';
+  }
+
+  function qpCampaignDefaultSuccessRewardType(check){
+    var payload=check&&check.payload&&typeof check.payload==='object'?check.payload:{};
+    var rewardType=qpCampaignNormalizeSuccessRewardType(payload.successRewardType||((Number(payload.successRewardAmount||payload.successPathTokens||0)>0)?'pathTokens':''));
+    if(rewardType!=='none')return rewardType;
+    return String((check&&check.scope)||'')==='party'?'none':'pathTokens';
+  }
+
+  function qpCampaignDefaultSuccessRewardAmount(check,rewardType){
+    var payload=check&&check.payload&&typeof check.payload==='object'?check.payload:{};
+    var amount=Math.max(0,parseInt((payload.successRewardAmount!=null?payload.successRewardAmount:payload.successPathTokens),10)||0);
+    if(amount>0)return amount;
+    return rewardType==='pathTokens'&&String((check&&check.scope)||'')!=='party'?1:0;
+  }
+
+  function qpCampaignBuildSuccessRewardSelectHtml(check,selectId){
+    var rewardType=qpCampaignDefaultSuccessRewardType(check);
+    return '<select id="'+selectId+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.7rem;">'
+      + '<option value="none"'+(rewardType==='none'?' selected':'')+'>None</option>'
+      + '<option value="successRolls"'+(rewardType==='successRolls'?' selected':'')+'>Success Rolls</option>'
+      + '<option value="pathTokens"'+(rewardType==='pathTokens'?' selected':'')+'>Path Tokens</option>'
+      + '</select>';
   }
 
   function qpCampaignBuildResolveTargetSelectHtml(check, selectId){
@@ -24474,34 +24535,45 @@ function runWhenIdle(fn, timeoutMs){
         : qpCampaignEsc(String((check&&check.stat)||'VALOR').toUpperCase());
       var submissions=Array.isArray(check&&check.submissions)?check.submissions:[];
       var alreadySubmitted=!!(myToken&&submissions.some(function(row){return String((row&&row.token)||'')===myToken;}));
-      var defaultSuccessTokens=String(String((check&&check.scope)||'')==='party'?0:1);
+      var payload=check&&check.payload&&typeof check.payload==='object'?check.payload:{};
       var targetSelectId='qpResolveTarget_'+domId;
-      var successInputId='qpResolveSuccess_'+domId;
+      var successRewardTypeId='qpResolveSuccessRewardType_'+domId;
+      var successInputId='qpResolveSuccessAmount_'+domId;
       var penaltyTypeId='qpResolvePenaltyType_'+domId;
       var penaltyAmountId='qpResolvePenaltyAmount_'+domId;
       var failTmwId='qpResolveFailTmw_'+domId;
+      var defaultSuccessRewardType=qpCampaignDefaultSuccessRewardType(check);
+      var defaultSuccessRewardAmount=qpCampaignDefaultSuccessRewardAmount(check,defaultSuccessRewardType);
+      var defaultPenaltyType=String(payload.failurePenaltyType||'mentalStress').trim()||'mentalStress';
+      if(defaultPenaltyType.toLowerCase()==='mentalstress'||defaultPenaltyType.toLowerCase()==='mental-stress'||defaultPenaltyType.toLowerCase()==='mental_stress')defaultPenaltyType='mentalStress';
+      var defaultPenaltyAmount=Math.max(0,parseInt((payload.failurePenaltyAmount!=null?payload.failurePenaltyAmount:1),10)||0);
+      var defaultFailTmw=Math.max(0,parseInt((payload.failTmw!=null?payload.failTmw:1),10)||0);
+      var failurePenaltyScale=String(payload.failurePenaltyScale||'flat').trim().toLowerCase();
       var gmResolveControls=isGm
         ? '<div style="margin-top:.24rem;padding:.26rem .28rem;border:1px solid rgba(255,255,255,.08);background:rgba(8,10,14,.26);">'
           + '<div style="font-family:Cinzel,serif;font-size:.5rem;letter-spacing:.09em;color:var(--gold2);text-transform:uppercase;">GM Resolve</div>'
-          + '<div style="display:grid;grid-template-columns:1fr 86px;gap:.22rem;margin-top:.18rem;">'
+          + '<div style="display:grid;grid-template-columns:1fr 1fr 76px;gap:.22rem;margin-top:.18rem;">'
             + '<label style="font-size:.64rem;color:var(--muted2);">Apply To'+qpCampaignBuildResolveTargetSelectHtml(check,targetSelectId)+'</label>'
-            + '<label style="font-size:.64rem;color:var(--muted2);">Success Path Tokens'
-              + '<input id="'+successInputId+'" type="number" min="0" max="20" value="'+defaultSuccessTokens+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Success Reward'
+              + qpCampaignBuildSuccessRewardSelectHtml(check,successRewardTypeId)
+            + '</label>'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Amount'
+              + '<input id="'+successInputId+'" type="number" min="0" max="20" value="'+defaultSuccessRewardAmount+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
             + '</label>'
           + '</div>'
           + '<div style="display:grid;grid-template-columns:1fr 78px 70px;gap:.22rem;margin-top:.16rem;">'
-            + '<label style="font-size:.64rem;color:var(--muted2);">Failure Penalty'
+            + '<label style="font-size:.64rem;color:var(--muted2);">Failure Penalty'+(failurePenaltyScale==='margin'?' <span style="color:var(--muted);">(x margin)</span>':'')
               + '<select id="'+penaltyTypeId+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
-                + '<option value="mentalStress" selected>Mental Stress</option>'
-                + '<option value="health">Damage</option>'
-                + '<option value="none">None</option>'
+                + '<option value="mentalStress"'+(defaultPenaltyType==='mentalStress'?' selected':'')+'>Mental Stress</option>'
+                + '<option value="health"'+(defaultPenaltyType==='health'?' selected':'')+'>Damage</option>'
+                + '<option value="none"'+(defaultPenaltyType==='none'?' selected':'')+'>None</option>'
               + '</select>'
             + '</label>'
             + '<label style="font-size:.64rem;color:var(--muted2);">Amount'
-              + '<input id="'+penaltyAmountId+'" type="number" min="0" max="20" value="1" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+              + '<input id="'+penaltyAmountId+'" type="number" min="0" max="20" value="'+defaultPenaltyAmount+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
             + '</label>'
             + '<label style="font-size:.64rem;color:var(--muted2);">Fail TMW'
-              + '<input id="'+failTmwId+'" type="number" min="0" max="20" value="1" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
+              + '<input id="'+failTmwId+'" type="number" min="0" max="20" value="'+defaultFailTmw+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
             + '</label>'
           + '</div>'
         + '</div>'
@@ -24578,7 +24650,7 @@ function runWhenIdle(fn, timeoutMs){
 
   window.qpCampaignResolvePendingCheck = async function(checkId, success){
     var check=qpCampaignFindPendingCheck(checkId);
-    if(!check||!window.campaignSystem||typeof window.campaignSystem.resolveGmPendingCheck!=='function'||typeof window.campaignSystem.applyGmCheckOutcome!=='function'){
+    if(!check||!window.campaignSystem||typeof window.campaignSystem.resolveSceneCheckOutcome!=='function'){
       if(typeof showNotif==='function')showNotif('That shared check is no longer available.','warn');
       return;
     }
@@ -24591,48 +24663,33 @@ function runWhenIdle(fn, timeoutMs){
     var domId=qpCampaignDomId(checkId);
     var targetValue=String((((document.getElementById('qpResolveTarget_'+domId)||{}).value)||qpCampaignDefaultResolveTarget(check))||'party').trim();
     var targetTokens=qpCampaignGetResolveTargetTokens(check,targetValue);
-    var successPathTokens=Math.max(0,parseInt(((document.getElementById('qpResolveSuccess_'+domId)||{}).value)||0,10)||0);
+    var successRewardType=String(((document.getElementById('qpResolveSuccessRewardType_'+domId)||{}).value)||qpCampaignDefaultSuccessRewardType(check)).trim()||'none';
+    var successRewardAmount=Math.max(0,parseInt(((document.getElementById('qpResolveSuccessAmount_'+domId)||{}).value)||0,10)||0);
     var penaltyType=String(((document.getElementById('qpResolvePenaltyType_'+domId)||{}).value)||'mentalStress').trim();
     var penaltyAmount=Math.max(0,parseInt(((document.getElementById('qpResolvePenaltyAmount_'+domId)||{}).value)||0,10)||0);
     var failTmw=Math.max(0,parseInt(((document.getElementById('qpResolveFailTmw_'+domId)||{}).value)||0,10)||0);
-    var characterDelta={ health:0, mentalStress:0, pathTokens:0 };
-    var sharedDelta={ tmw:0 };
-    if(approved){
-      characterDelta.pathTokens=successPathTokens;
-    }else{
-      if(penaltyType==='health')characterDelta.health=-penaltyAmount;
-      else if(penaltyType==='mentalStress')characterDelta.mentalStress=penaltyAmount;
-      sharedDelta.tmw=failTmw;
-    }
-    var applied=await window.campaignSystem.applyGmCheckOutcome({
+    var failurePenaltyScale=String((((check&&check.payload)||{}).failurePenaltyScale)||'flat').trim();
+    var resolved=await window.campaignSystem.resolveSceneCheckOutcome({
       checkId:String(checkId||''),
-      label:String((check&&check.label)||'Shared Check'),
-      outcome:approved?'success':'failure',
-      scope:targetValue==='party'?'party':'individual',
-      targetTokens:targetTokens,
-      characterDelta:characterDelta,
-      sharedDelta:sharedDelta
-    });
-    if(!applied||!applied.ok){
-      if(typeof showNotif==='function')showNotif((applied&&applied.error)||'Could not apply campaign outcome.','warn');
-      return;
-    }
-    var outcome={
       success:approved,
       actionTotal:actionTotal,
       dreadTotal:dreadTotal,
-      margin:approved?Math.max(0,actionTotal-dreadTotal):Math.max(1,dreadTotal-actionTotal),
-      failedBy:approved?0:Math.max(1,dreadTotal-actionTotal),
       resolvedVia:'quick-panel',
-      effectsApplied:applied.applied||{
-        scope:targetValue==='party'?'party':'individual',
-        targetTokens:targetTokens,
-        characterDelta:characterDelta,
-        sharedDelta:sharedDelta
-      }
-    };
-    var ok=window.campaignSystem.resolveGmPendingCheck(String(checkId||''),outcome);
-    if(ok&&typeof showNotif==='function'){
+      scope:targetValue==='party'?'party':'individual',
+      targetTokens:targetTokens,
+      successRewardType:successRewardType,
+      successRewardAmount:successRewardAmount,
+      successPathTokens:successRewardType==='pathTokens'?successRewardAmount:0,
+      failurePenaltyType:penaltyType,
+      failurePenaltyAmount:penaltyAmount,
+      failurePenaltyScale:failurePenaltyScale,
+      failTmw:failTmw
+    });
+    if(!resolved||!resolved.ok){
+      if(typeof showNotif==='function')showNotif((resolved&&resolved.error)||'Could not apply campaign outcome.','warn');
+      return;
+    }
+    if(typeof showNotif==='function'){
       showNotif('Shared check resolved: '+(approved?'success':'failure')+'.', approved?'good':'warn');
     }
     setTimeout(function(){ renderQP('campaign'); }, 180);
