@@ -21,6 +21,7 @@
     suppressRenownEmit: false,
     lastKnownRenown: null,
     activePromptId: "",
+    lastAutoResolvedRollKey: "",
     autoRestoreTried: false,
     restoringSession: false,
     dockOpen: false,
@@ -1296,11 +1297,20 @@
     return "flat";
   }
 
+  function normalizeSceneFailurePenaltyType(value) {
+    var key = String(value || "mentalStress").trim().toLowerCase();
+    if (key === "damage") return "health";
+    if (key === "mentalstress" || key === "mental-stress" || key === "mental_stress") return "mentalStress";
+    if (key === "health" || key === "radiation" || key === "none") return key;
+    return "mentalStress";
+  }
+
   function normalizeSceneCharacterDelta(input) {
     var source = input && typeof input === "object" ? input : {};
     return {
       health: Math.trunc(Number(source.health || 0) || 0),
       mentalStress: Math.trunc(Number(source.mentalStress || 0) || 0),
+      radiation: Math.trunc(Number(source.radiation || source.rads || 0) || 0),
       pathTokens: Math.trunc(Number(source.pathTokens || 0) || 0),
       successRolls: Math.trunc(Number(source.successRolls || source.successRollCount || 0) || 0)
     };
@@ -1363,6 +1373,15 @@
       }
     }
 
+    if (characterDelta.radiation !== 0) {
+      var currentRads = Math.max(0, Number(window.S.rads || 0) || 0);
+      var nextRads = Math.max(0, currentRads + characterDelta.radiation);
+      if (currentRads !== nextRads) {
+        window.S.rads = nextRads;
+        changed = true;
+      }
+    }
+
     if (characterDelta.pathTokens !== 0) {
       var nextPathTokens = Math.max(0, Number(window.S.pathTokens || 0) + characterDelta.pathTokens);
       if (Number(window.S.pathTokens || 0) !== nextPathTokens) {
@@ -1393,6 +1412,7 @@
     if (!changed) return false;
     if (typeof window.updateStressUI === "function") window.updateStressUI();
     if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
+    if (typeof window.updateRadsUI === "function") window.updateRadsUI();
     var pathTokenEl = document.getElementById("pathTokensVal");
     if (pathTokenEl) pathTokenEl.textContent = String(window.S.pathTokens || 0);
     var successRollEl = document.getElementById("successRollsVal");
@@ -1746,29 +1766,23 @@
       : failedBy;
 
     var successRewardType = normalizeSceneCheckRewardType(
-      details.successRewardType || (checkRecord.payload && checkRecord.payload.successRewardType) || (Number(details.successPathTokens || 0) > 0 ? "pathTokens" : "")
+      details.successRewardType || (checkRecord.payload && checkRecord.payload.successRewardType) || "successRolls"
     );
-    var successRewardAmount = Math.max(0, parseInt(
+    var successRewardAmount = Math.max(1, parseInt(
       details.successRewardAmount != null
         ? details.successRewardAmount
-        : ((checkRecord.payload && (checkRecord.payload.successRewardAmount != null ? checkRecord.payload.successRewardAmount : checkRecord.payload.successPathTokens)) != null
-            ? (checkRecord.payload.successRewardAmount != null ? checkRecord.payload.successRewardAmount : checkRecord.payload.successPathTokens)
-            : details.successPathTokens),
+        : ((checkRecord.payload && checkRecord.payload.successRewardAmount != null)
+            ? checkRecord.payload.successRewardAmount
+            : 1),
       10
-    ) || 0);
-    var failurePenaltyType = String(
+    ) || 1);
+    var failurePenaltyType = normalizeSceneFailurePenaltyType(
       details.failurePenaltyType != null
         ? details.failurePenaltyType
         : ((checkRecord.payload && checkRecord.payload.failurePenaltyType) || "mentalStress")
-    ).trim().toLowerCase();
-    var failurePenaltyAmount = Math.max(0, parseInt(
-      details.failurePenaltyAmount != null
-        ? details.failurePenaltyAmount
-        : (checkRecord.payload && checkRecord.payload.failurePenaltyAmount),
-      10
-    ) || 0);
+    );
     var failurePenaltyScale = normalizeFailurePenaltyScale(
-      details.failurePenaltyScale || (checkRecord.payload && checkRecord.payload.failurePenaltyScale) || "flat"
+      details.failurePenaltyScale || (checkRecord.payload && checkRecord.payload.failurePenaltyScale) || "margin"
     );
     var failTmw = Math.max(0, parseInt(
       details.failTmw != null
@@ -1779,25 +1793,23 @@
 
     var characterDelta = details.characterDelta && typeof details.characterDelta === "object"
       ? normalizeSceneCharacterDelta(details.characterDelta)
-      : { health: 0, mentalStress: 0, pathTokens: 0, successRolls: 0 };
+      : { health: 0, mentalStress: 0, radiation: 0, pathTokens: 0, successRolls: 0 };
     var sharedDelta = details.sharedDelta && typeof details.sharedDelta === "object"
       ? normalizeSceneSharedDelta(details.sharedDelta)
       : { tmw: 0 };
 
     if (!(details.characterDelta && typeof details.characterDelta === "object")) {
       if (success) {
-        if (successRewardType === "pathTokens") {
-          characterDelta.pathTokens = successRewardAmount;
-        } else if (successRewardType === "successRolls") {
-          characterDelta.successRolls = successRewardAmount;
-        }
+        characterDelta.successRolls = Math.max(1, successRewardAmount || 1);
       } else {
         var scaledPenaltyAmount = failurePenaltyScale === "margin"
-          ? Math.max(0, (failurePenaltyAmount || 1) * Math.max(1, failedBy || 1))
-          : failurePenaltyAmount;
-        if (failurePenaltyType === "health" || failurePenaltyType === "damage") {
+          ? Math.max(1, failedBy || 1)
+          : Math.max(1, failedBy || 1);
+        if (failurePenaltyType === "health") {
           characterDelta.health = -scaledPenaltyAmount;
-        } else if (failurePenaltyType === "mentalstress" || failurePenaltyType === "mental-stress" || failurePenaltyType === "mental_stress") {
+        } else if (failurePenaltyType === "radiation") {
+          characterDelta.radiation = scaledPenaltyAmount;
+        } else if (failurePenaltyType === "mentalStress") {
           characterDelta.mentalStress = scaledPenaltyAmount;
         }
       }
@@ -1809,6 +1821,7 @@
     var hasMechanicalEffect = targetTokens.length > 0 && (
       characterDelta.health !== 0 ||
       characterDelta.mentalStress !== 0 ||
+      characterDelta.radiation !== 0 ||
       characterDelta.pathTokens !== 0 ||
       characterDelta.successRolls !== 0
     );
@@ -1828,6 +1841,7 @@
       characterDelta: {
         health: characterDelta.health,
         mentalStress: characterDelta.mentalStress,
+        radiation: characterDelta.radiation,
         pathTokens: characterDelta.pathTokens,
         successRolls: characterDelta.successRolls
       },
@@ -4343,6 +4357,7 @@
       mentalStress: Math.max(0, Number(mentalStress || 0)),
       maxMentalStress: maxMentalStress,
       stress: Math.max(0, Number(mentalStress || 0)),
+      rads: Math.max(0, Number((typeof window.S !== "undefined" && window.S && window.S.rads) || 0)),
       pathTokens: Math.max(0, Number((typeof window.S !== "undefined" && window.S && window.S.pathTokens) || 0)),
       successRolls: Math.max(0, Number((typeof window.S !== "undefined" && window.S && (window.S.successRolls || window.S.successRollCount)) || 0)),
       successRollCount: Math.max(0, Number((typeof window.S !== "undefined" && window.S && (window.S.successRolls || window.S.successRollCount)) || 0)),
@@ -4391,6 +4406,7 @@
 
     var nextHealth = Math.max(0, Number(character.health || 0));
     var nextMentalStress = Math.max(0, Number((typeof character.mentalStress === "number" ? character.mentalStress : character.stress) || 0));
+    var nextRads = Math.max(0, Number(character.rads || character.radiation || 0));
     var nextPathTokens = Math.max(0, Number(character.pathTokens || 0));
     var nextSuccessRolls = Math.max(0, Number(character.successRolls || character.successRollCount || 0));
     var changed = false;
@@ -4402,6 +4418,10 @@
     }
     if (Number(window.S.mentalStress || 0) !== nextMentalStress) {
       window.S.mentalStress = nextMentalStress;
+      changed = true;
+    }
+    if (Number(window.S.rads || 0) !== nextRads) {
+      window.S.rads = nextRads;
       changed = true;
     }
     if (Number(window.S.pathTokens || 0) !== nextPathTokens) {
@@ -4420,6 +4440,7 @@
     if (!changed) return false;
     if (typeof window.updateStressUI === "function") window.updateStressUI();
     if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
+    if (typeof window.updateRadsUI === "function") window.updateRadsUI();
     var pathTokenEl = document.getElementById("pathTokensVal");
     if (pathTokenEl) pathTokenEl.textContent = String(window.S.pathTokens || 0);
     var successRollEl = document.getElementById("successRollsVal");
@@ -4457,6 +4478,7 @@
       characterDelta: {
         health: Number(characterDelta.health || 0) || 0,
         mentalStress: Number(characterDelta.mentalStress || 0) || 0,
+        radiation: Number(characterDelta.radiation || characterDelta.rads || 0) || 0,
         pathTokens: Number(characterDelta.pathTokens || 0) || 0,
         successRolls: Number(characterDelta.successRolls || characterDelta.successRollCount || 0) || 0
       },
@@ -5669,7 +5691,7 @@
           + '<span>' + responseCount + ' response' + (responseCount === 1 ? "" : "s") + '</span>'
           + "</div>"
           + (canRoll
-            ? '<div class="campaign-dock-roll-actions"><button class="btn btn-xs btn-teal" onclick="window.campaignSystem.submitActiveRoll()">Roll Now</button></div>'
+            ? '<div class="campaign-dock-roll-actions"><button class="btn btn-xs btn-teal" onclick="window.campaignSystem.openActiveRollPrompt()">Open Roll Prompt</button></div>'
             : (state.role === "gm"
               ? '<div class="campaign-dock-roll-actions"><button class="btn btn-xs" onclick="window.campaignSystem.closeActiveRoll()">Close Active</button></div>'
               : '<div class="campaign-dock-roll-actions"><span class="campaign-dock-empty">Waiting on target.</span></div>'));
@@ -5944,6 +5966,10 @@
         refreshSyncHealth();
       }
 
+      if (!(snapshot && snapshot.activeRollRequest && snapshot.activeRollRequest.id)) {
+        state.activePromptId = "";
+      }
+      maybeAutoResolveActiveRoll(snapshot && snapshot.activeRollRequest ? snapshot.activeRollRequest : null).catch(function () {});
       maybePromptActiveRoll(snapshot && snapshot.activeRollRequest ? snapshot.activeRollRequest : null);
       applyAuthoritativeSelfCharacterFromSnapshot(snapshot || null);
       renderSettingsSection();
@@ -6019,26 +6045,289 @@
     return true;
   }
 
-  function maybePromptActiveRoll(activeRequest) {
-    if (!activeRequest || !activeRequest.id) return;
-    if (state.role === "gm") return;
+  function labelConditionName(key) {
+    var txt = String(key || "").trim();
+    return txt ? txt.charAt(0).toUpperCase() + txt.slice(1) : "";
+  }
+
+  function getCampaignRollPoolConditionMap(statKey) {
+    var key = String(statKey || "valor").trim().toLowerCase();
+    if (key === "body" || key === "strike" || key === "shoot") {
+      return { positive: "empowered", negative: "weakened", pool: "Body / Strike / Shoot" };
+    }
+    if (key === "mind" || key === "control") {
+      return { positive: "focused", negative: "distracted", pool: "Mind / Control" };
+    }
+    if (key === "spirit" || key === "lead") {
+      return { positive: "bolstered", negative: "shaken", pool: "Spirit / Lead" };
+    }
+    return { positive: "protected", negative: "vulnerable", pool: "Defend" };
+  }
+
+  function summarizeCampaignRollBonusPack(pack) {
+    var source = pack && typeof pack === "object" ? pack : {};
+    var parts = [];
+    var advDice = Array.isArray(source.advDice) ? source.advDice : [];
+    var flat = Number(source.flat || 0);
+    var addValor = Math.max(0, Number(source.addValor || 0) || 0);
+    if (advDice.length) {
+      parts.push(advDice.map(function (die) { return "Ad" + Number(die || 0); }).join(", "));
+    }
+    if (flat) parts.push((flat > 0 ? "+" : "") + flat);
+    if (addValor) parts.push("+" + addValor + " V.D.");
+    if (source.holyShield) parts.push("Holy Shield");
+    return parts.join(" | ");
+  }
+
+  function hasCampaignRollBonusPack(pack) {
+    var source = pack && typeof pack === "object" ? pack : {};
+    return !!(
+      (Array.isArray(source.advDice) && source.advDice.length) ||
+      Number(source.flat || 0) ||
+      Number(source.addValor || 0) ||
+      source.holyShield
+    );
+  }
+
+  function getCampaignPromptBonusSources(statKey) {
+    var key = String(statKey || "valor").trim().toLowerCase();
+    var flavor = (typeof window.getFlavorBonus === "function")
+      ? (window.getFlavorBonus(key) || { flat: 0, advDice: [], holyShield: false })
+      : { flat: 0, advDice: [], holyShield: false };
+    var mutation = (typeof window.getMutationBonus === "function")
+      ? (window.getMutationBonus(key) || { flat: 0, advDice: [] })
+      : { flat: 0, advDice: [] };
+    var inventory = (typeof window.collectInventoryBonusesForStat === "function")
+      ? (window.collectInventoryBonusesForStat(key) || { advDice: [], flat: 0, addValor: 0, notes: [] })
+      : { advDice: [], flat: 0, addValor: 0, notes: [] };
+    return {
+      key: key,
+      flavor: flavor,
+      mutation: mutation,
+      inventory: inventory,
+      hasFlavor: hasCampaignRollBonusPack(flavor),
+      hasMutation: hasCampaignRollBonusPack(mutation),
+      hasInventory: hasCampaignRollBonusPack(inventory)
+    };
+  }
+
+  function getCampaignPromptSelections() {
+    var useFlavorEl = document.getElementById("campaignRollUseFlavor");
+    var useMutationEl = document.getElementById("campaignRollUseMutation");
+    var useInventoryEl = document.getElementById("campaignRollUseInventory");
+    var pushLuckEl = document.getElementById("campaignRollUsePushLuck");
+    return {
+      useFlavor: !useFlavorEl || !!useFlavorEl.checked,
+      useMutation: !useMutationEl || !!useMutationEl.checked,
+      useInventory: !!(useInventoryEl && useInventoryEl.checked),
+      pushLuck: !!(pushLuckEl && pushLuckEl.checked)
+    };
+  }
+
+  function buildCampaignActiveRollManualLines(statKey, request, selections, sources, pushLuckDread) {
+    var lines = [];
+    var key = String(statKey || "valor").trim().toLowerCase();
+    var opts = selections && typeof selections === "object" ? selections : {};
+    var sourcePack = sources && typeof sources === "object" ? sources : getCampaignPromptBonusSources(key);
+    if (sourcePack.hasFlavor) {
+      lines.push((opts.useFlavor ? "Apply" : "Ignore") + " Personal Flavor bonus: " + summarizeCampaignRollBonusPack(sourcePack.flavor) + ".");
+    }
+    if (sourcePack.hasMutation) {
+      lines.push((opts.useMutation ? "Apply" : "Ignore") + " Mutation bonus: " + summarizeCampaignRollBonusPack(sourcePack.mutation) + ".");
+    }
+    if (sourcePack.hasInventory) {
+      var inventorySummary = summarizeCampaignRollBonusPack(sourcePack.inventory);
+      if (opts.useInventory) {
+        lines.push("Apply chosen item bonus: " + inventorySummary + (sourcePack.inventory.notes && sourcePack.inventory.notes.length ? " (" + sourcePack.inventory.notes.join(" · ") + ")." : "."));
+      } else {
+        lines.push("Optional item bonus available: " + inventorySummary + (sourcePack.inventory.notes && sourcePack.inventory.notes.length ? " (" + sourcePack.inventory.notes.join(" · ") + ")." : "."));
+      }
+    }
+    if (opts.pushLuck) {
+      var condMap = getCampaignRollPoolConditionMap(key);
+      lines.push("Push Your Luck selected: spend 2 TMW, step Dread up to d" + Math.max(4, Number(pushLuckDread || request && request.dread || 8)) + ", gain " + labelConditionName(condMap.positive) + " on success or " + labelConditionName(condMap.negative) + " on failure.");
+    }
+    return lines;
+  }
+
+  function applyCampaignPushLuckCondition(statKey, success) {
+    if (typeof window.S === "undefined" || !window.S || !window.S.conditions) return "";
+    var condMap = getCampaignRollPoolConditionMap(statKey);
+    var key = success ? condMap.positive : condMap.negative;
+    if (!key) return "";
+    window.S.conditions[key] = true;
+    if (typeof window.updateConditionButtons === "function") window.updateConditionButtons();
+    if (typeof window.updateAllStatDisplays === "function") window.updateAllStatDisplays();
+    return key;
+  }
+
+  function performCampaignPromptRoll(statKey, dreadDie, selections, requestLabel) {
+    var key = String(statKey || "valor").trim().toLowerCase();
+    var opts = selections && typeof selections === "object" ? selections : {};
+    var actionDie = Math.max(4, Number(resolveActionDie(key) || 4));
+    var pushedLuck = !!opts.pushLuck;
+    var finalDreadDie = pushedLuck && typeof window.stepUp === "function"
+      ? Math.max(4, Number(window.stepUp(dreadDie || 8) || dreadDie || 8))
+      : Math.max(4, Number(dreadDie || 8) || 8);
+    var label = String(requestLabel || key || "Campaign Roll");
+    var flavorBonus = opts.useFlavor && typeof window.getFlavorBonus === "function"
+      ? (window.getFlavorBonus(key) || { flat: 0, advDice: [], holyShield: false })
+      : { flat: 0, advDice: [], holyShield: false };
+    var mutationBonus = opts.useMutation && typeof window.getMutationBonus === "function"
+      ? (window.getMutationBonus(key) || { flat: 0, advDice: [] })
+      : { flat: 0, advDice: [] };
+    var inventoryBonus = opts.useInventory && typeof window.collectInventoryBonusesForStat === "function"
+      ? (window.collectInventoryBonusesForStat(key) || { advDice: [], flat: 0, addValor: 0, notes: [] })
+      : { advDice: [], flat: 0, addValor: 0, notes: [] };
+    var gearBonus = typeof window.getGearRollBonuses === "function"
+      ? (window.getGearRollBonuses(key, actionDie) || { advDice: [], flat: 0, addDice: [], notes: [] })
+      : { advDice: [], flat: 0, addDice: [], notes: [] };
+    var mod = (window.S && window.S.rollMod && typeof window.S.rollMod === "object")
+      ? window.S.rollMod
+      : { advDice: [], flat: 0 };
+    var advDiceArr = [];
+    var flatBonus = 0;
+    var addValorDie = false;
+
+    if ((key === "strike" || key === "shoot" || key === "defend") && typeof window.parseWeaponBonuses === "function") {
+      var weaponBonus = window.parseWeaponBonuses(key === "defend" ? "defend" : key) || { flat: 0, advDie: 0, addAdvDie: false };
+      if (key === "defend" && typeof window.parseArmorAdvDie === "function") {
+        var armorAdv = Number(window.parseArmorAdvDie() || 0);
+        if (armorAdv > 0) advDiceArr.push(armorAdv);
+      }
+      if (Number(weaponBonus.advDie || 0) > 0) advDiceArr.push(Number(weaponBonus.advDie || 0));
+      flatBonus += Number(weaponBonus.flat || 0);
+      addValorDie = !!weaponBonus.addAdvDie;
+    }
+
+    advDiceArr = advDiceArr
+      .concat(Array.isArray(flavorBonus.advDice) ? flavorBonus.advDice : [])
+      .concat(Array.isArray(mutationBonus.advDice) ? mutationBonus.advDice : [])
+      .concat(Array.isArray(gearBonus.advDice) ? gearBonus.advDice : [])
+      .concat(Array.isArray(mod.advDice) ? mod.advDice : [])
+      .concat(Array.isArray(inventoryBonus.advDice) ? inventoryBonus.advDice : []);
+
+    flatBonus += Number(flavorBonus.flat || 0)
+      + Number(mutationBonus.flat || 0)
+      + Number(gearBonus.flat || 0)
+      + Number(mod.flat || 0)
+      + Number(inventoryBonus.flat || 0);
+
+    var augDie = typeof window.getAugBonus === "function" ? Number(window.getAugBonus(key) || 0) : 0;
+    var action = (typeof window.rollWithAdvantage === "function")
+      ? window.rollWithAdvantage(actionDie, advDiceArr, { type: "action", major: true, label: label })
+      : { total: Math.floor(Math.random() * actionDie) + 1, breakdown: "", exploded: false };
+    var total = Number(action.total || 0) + flatBonus;
+    var queuedValor = (typeof window.consumeQueuedRollModValorDice === "function")
+      ? window.consumeQueuedRollModValorDice(label + " Queued Valor")
+      : { total: 0, dice: [], rolls: [] };
+    total += Number(queuedValor.total || 0);
+    var holyShieldRoll = flavorBonus.holyShield && typeof window.explodingRoll === "function"
+      ? window.explodingRoll((window.S && window.S.stats && window.S.stats.spirit) || 4, { type: "action", major: true, label: "Holy Shield" })
+      : null;
+    if (holyShieldRoll) total += Number(holyShieldRoll.total || 0);
+    var weaponValorRoll = addValorDie && typeof window.explodingRoll === "function"
+      ? window.explodingRoll((window.S && window.S.stats && window.S.stats.valor) || 4, { type: "action", major: true, label: "Weapon V.D." })
+      : null;
+    if (weaponValorRoll) total += Number(weaponValorRoll.total || 0);
+    var inventoryValorRolls = [];
+    var inventoryValorCount = Math.max(0, Number(inventoryBonus.addValor || 0) || 0);
+    for (var i = 0; i < inventoryValorCount; i += 1) {
+      if (typeof window.explodingRoll !== "function") break;
+      var inventoryRoll = window.explodingRoll((window.S && window.S.stats && window.S.stats.valor) || 4, { type: "action", major: true, label: "Item V.D. #" + (i + 1) });
+      inventoryValorRolls.push(inventoryRoll);
+      total += Number(inventoryRoll.total || 0);
+    }
+    var gearAddRolls = Array.isArray(gearBonus.addDice)
+      ? gearBonus.addDice.map(function (dieSize) {
+          return typeof window.explodingRoll === "function"
+            ? window.explodingRoll(Number(dieSize || 4), { type: "action", major: true, label: "Gear Bonus" })
+            : { total: Math.floor(Math.random() * Math.max(4, Number(dieSize || 4))) + 1 };
+        })
+      : [];
+    gearAddRolls.forEach(function (rollObj) { total += Number(rollObj && rollObj.total || 0); });
+    var augRoll = augDie > 0 && typeof window.explodingRoll === "function"
+      ? window.explodingRoll(augDie, { type: "action", major: true, label: "Augment" })
+      : null;
+    if (augRoll) total += Number(augRoll.total || 0);
+    var relicRolls = typeof window.getPermanentValorBonusRolls === "function"
+      ? (window.getPermanentValorBonusRolls(key, label + " Relic") || [])
+      : [];
+    if (typeof window.sumValorBonusRolls === "function") total += Number(window.sumValorBonusRolls(relicRolls) || 0);
+    var radPenalty = typeof window.getRadPenaltyForStat === "function" ? Number(window.getRadPenaltyForStat(key) || 0) : 0;
+    total = Math.max(0, total - radPenalty);
+    var dreadRoll = typeof window.explodingRoll === "function"
+      ? window.explodingRoll(finalDreadDie, { type: "dread", major: true, label: "Campaign Dread" })
+      : { total: Math.floor(Math.random() * finalDreadDie) + 1 };
+    var finalTotal = Math.max(0, Number(total || 0));
+    var finalDreadTotal = Math.max(0, Number(dreadRoll.total || 0));
+    return {
+      actionDie: actionDie,
+      actionTotal: finalTotal,
+      dreadDie: finalDreadDie,
+      dreadTotal: finalDreadTotal,
+      success: finalTotal >= finalDreadTotal,
+      pushLuck: pushedLuck,
+      usedFlavor: !!opts.useFlavor,
+      usedMutation: !!opts.useMutation,
+      usedInventory: !!opts.useInventory,
+      conditionApplied: "",
+      bonusNotes: []
+        .concat(opts.useFlavor && hasCampaignRollBonusPack(flavorBonus) ? ["Personal Flavor " + summarizeCampaignRollBonusPack(flavorBonus)] : [])
+        .concat(opts.useMutation && hasCampaignRollBonusPack(mutationBonus) ? ["Mutation " + summarizeCampaignRollBonusPack(mutationBonus)] : [])
+        .concat(opts.useInventory && hasCampaignRollBonusPack(inventoryBonus) ? [inventoryBonus.notes && inventoryBonus.notes.length ? inventoryBonus.notes.join(" · ") : ("Inventory " + summarizeCampaignRollBonusPack(inventoryBonus))] : [])
+        .concat(pushedLuck ? ["Push Your Luck"] : []),
+      detail: {
+        action: action,
+        dread: dreadRoll,
+        queuedValor: queuedValor,
+        holyShieldRoll: holyShieldRoll,
+        weaponValorRoll: weaponValorRoll,
+        inventoryValorRolls: inventoryValorRolls,
+        gearAddRolls: gearAddRolls,
+        augRoll: augRoll,
+        relicRolls: relicRolls,
+        radPenalty: radPenalty
+      }
+    };
+  }
+
+  function openActiveRollPrompt(force) {
+    var activeRequest = state.campaign && state.campaign.activeRollRequest;
+    if (!activeRequest || !activeRequest.id || state.role === "gm") return false;
     var targetToken = String(activeRequest.targetToken || "");
-    if (targetToken && String(state.token || "") !== targetToken) return;
-    if (state.activePromptId === activeRequest.id) return;
+    if (targetToken && String(state.token || "") !== targetToken) return false;
+    if (!force && state.activePromptId === activeRequest.id) return false;
     state.activePromptId = activeRequest.id;
 
-    var stat = String(activeRequest.stat || "valor");
-    var dread = Number(activeRequest.dread || 8);
+    var stat = String(activeRequest.stat || "valor").trim().toLowerCase() || "valor";
+    var dread = Math.max(4, Number(activeRequest.dread || 8) || 8);
+    var actionDie = Math.max(4, Number(resolveActionDie(stat) || 4));
+    var sources = getCampaignPromptBonusSources(stat);
+    var condMap = getCampaignRollPoolConditionMap(stat);
     var manualEnabled = !!(window.settingsSystem
       && typeof window.settingsSystem.isManualRollMode === "function"
       && window.settingsSystem.isManualRollMode()
       && typeof window.openProvinceManualCheckPrompt === "function");
+    var canPushLuck = getTmwValue() >= 2;
     var html = ""
-      + '<div style="font-size:.82rem;color:var(--muted2);margin-bottom:.45rem;">GM requested a synchronized campaign roll.</div>'
-      + '<div style="font-size:.9rem;color:var(--text2);margin-bottom:.55rem;"><strong>' + escapeHtml(activeRequest.label || "Dread Check") + '</strong><br>'
-      + 'Roll <strong style="color:var(--teal);">' + escapeHtml(stat.toUpperCase()) + '</strong> against <strong style="color:var(--red2);">Dread d' + dread + '</strong>.</div>'
-      + '<div style="font-size:.76rem;color:var(--muted2);margin-bottom:.55rem;">Submit your result here. The GM will confirm who receives the reward or consequence.</div>'
-      + '<div style="display:flex;gap:.35rem;justify-content:flex-end;">'
+      + '<div style="font-size:.82rem;color:var(--muted2);margin-bottom:.42rem;">GM requested a synchronized campaign roll.</div>'
+      + '<div style="font-size:.9rem;color:var(--text2);line-height:1.55;margin-bottom:.5rem;"><strong>' + escapeHtml(activeRequest.label || "Dread Check") + '</strong><br>'
+      + 'Roll <strong style="color:var(--teal);">' + escapeHtml(stat.toUpperCase()) + ' d' + actionDie + '</strong> against <strong style="color:var(--red2);">Dread d' + dread + '</strong>.</div>'
+      + '<div style="font-size:.74rem;color:var(--muted2);margin-bottom:.38rem;">Success grants <strong style="color:var(--green2);">+1 Successful Roll</strong>. Failure consequence equals the failed margin. Choose any relevant bonus before you roll.</div>'
+      + '<div style="display:grid;gap:.28rem;margin-bottom:.46rem;">'
+      + (sources.hasFlavor
+        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseFlavor" type="checkbox" checked style="margin-top:.16rem;"><span><strong>Use Personal Flavor</strong><br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(summarizeCampaignRollBonusPack(sources.flavor)) + '</span></span></label>'
+        : '')
+      + (sources.hasMutation
+        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseMutation" type="checkbox" checked style="margin-top:.16rem;"><span><strong>Use Mutation Bonus</strong><br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml(summarizeCampaignRollBonusPack(sources.mutation)) + '</span></span></label>'
+        : '')
+      + (sources.hasInventory
+        ? '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:var(--text2);"><input id="campaignRollUseInventory" type="checkbox" style="margin-top:.16rem;"><span><strong>Use Relevant Item / Gear</strong><br><span style="font-size:.7rem;color:var(--muted2);">' + escapeHtml((sources.inventory.notes && sources.inventory.notes.length ? sources.inventory.notes.join(" · ") + " · " : "") + summarizeCampaignRollBonusPack(sources.inventory)) + '</span></span></label>'
+        : '')
+      + '<label style="display:flex;gap:.42rem;align-items:flex-start;font-size:.76rem;color:' + (canPushLuck ? 'var(--text2)' : 'var(--muted2)') + ';"><input id="campaignRollUsePushLuck" type="checkbox"' + (canPushLuck ? '' : ' disabled') + ' style="margin-top:.16rem;"><span><strong>Push Your Luck</strong> <span style="font-size:.72rem;color:var(--gold2);">(2 TMW)</span><br><span style="font-size:.7rem;color:var(--muted2);">Step Dread up to d' + (typeof window.stepUp === "function" ? Math.max(4, Number(window.stepUp(dread) || dread)) : dread) + '. On success gain ' + escapeHtml(labelConditionName(condMap.positive)) + '; on failure gain ' + escapeHtml(labelConditionName(condMap.negative)) + '.</span></span></label>'
+      + '</div>'
+      + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
       + (manualEnabled ? '<button class="btn btn-sm btn-primary" onclick="window.campaignSystem.submitActiveRollManual()">Submit Manual Roll</button>' : '')
       + '<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.submitActiveRoll()">Roll Now</button>'
       + '<button class="btn btn-sm" onclick="closeModal()">Later</button>'
@@ -6047,7 +6336,15 @@
     if (typeof window.openModal === "function") {
       window.openModal("Campaign Roll Request", html);
     }
-    safeNotif("GM called a campaign roll.", "info");
+    return true;
+  }
+
+  function maybePromptActiveRoll(activeRequest) {
+    if (!activeRequest || !activeRequest.id) return;
+    if (state.role === "gm") return;
+    if (openActiveRollPrompt(false)) {
+      safeNotif("GM called a campaign roll.", "info");
+    }
   }
 
   function getOnboardingSteps() {
@@ -6292,6 +6589,18 @@
     }
     var pendingCheckId = providedPendingCheckId;
     var createdPendingCheck = false;
+    var autoResolveOnSubmit = !!(
+      typeof opts.autoResolveOnSubmit === "boolean"
+        ? opts.autoResolveOnSubmit
+        : !!String(targetToken || "").trim()
+    );
+    var defaultOutcomeTarget = String(
+      opts.defaultOutcomeTarget != null
+        ? opts.defaultOutcomeTarget
+        : (target || "party")
+    ).trim() || (target || "party");
+    var failurePenaltyType = normalizeSceneFailurePenaltyType(opts.failurePenaltyType || "mentalStress");
+    var failTmw = Math.max(0, parseInt(opts.failTmw != null ? opts.failTmw : 1, 10) || 0);
     if (state.role === "gm") {
       if (!pendingCheckId) {
         var pendingCheck = startGmPendingCheck({
@@ -6303,7 +6612,13 @@
           dread: nextDread,
           context: nextLabel,
           stake: target ? "Individual actor check waiting on GM resolution." : "Shared campaign consequence waiting on GM resolution.",
-          participants: target ? [{ token: target }] : []
+          participants: target ? [{ token: target }] : [],
+          payload: {
+            defaultOutcomeTarget: defaultOutcomeTarget,
+            failurePenaltyType: failurePenaltyType,
+            failTmw: failTmw,
+            autoResolveOnSubmit: autoResolveOnSubmit
+          }
         });
         if (pendingCheck && pendingCheck.ok && pendingCheck.id) {
           pendingCheckId = String(pendingCheck.id || "");
@@ -6313,6 +6628,10 @@
     }
     if (target) payload.targetToken = target;
     if (pendingCheckId) payload.pendingCheckId = pendingCheckId;
+    payload.defaultOutcomeTarget = defaultOutcomeTarget;
+    payload.failurePenaltyType = failurePenaltyType;
+    payload.failTmw = failTmw;
+    if (autoResolveOnSubmit) payload.autoResolveOnSubmit = true;
 
     var res = await emitWithAck("campaign:rollRequest", payload);
     if (!res.ok) {
@@ -6331,6 +6650,65 @@
     var nextRes = res && typeof res === "object" ? res : { ok: true };
     nextRes.pendingCheckId = pendingCheckId;
     return nextRes;
+  }
+
+  function buildCampaignRollSubmissionNotes(result) {
+    var parts = [];
+    if (result && result.pushLuck) parts.push("Push Your Luck");
+    if (result && Array.isArray(result.bonusNotes)) {
+      result.bonusNotes.forEach(function (note) {
+        var text = String(note || "").trim();
+        if (text) parts.push(text);
+      });
+    }
+    return parts.join(" | ").slice(0, 180);
+  }
+
+  async function closeActiveRollSilently() {
+    if (!state.socket || state.role !== "gm") return { ok: false, error: "Not allowed." };
+    var res = await emitWithAck("campaign:closeRoll", {});
+    return res || { ok: false, error: "Could not close roll request." };
+  }
+
+  async function maybeAutoResolveActiveRoll(activeRequest) {
+    if (state.role !== "gm" || !activeRequest || !activeRequest.id || !activeRequest.pendingCheckId) return false;
+    if (!activeRequest.autoResolveOnSubmit) return false;
+    var targetToken = String(activeRequest.targetToken || "").trim();
+    if (!targetToken) return false;
+    var responses = Array.isArray(activeRequest.responses) ? activeRequest.responses.slice() : [];
+    if (!responses.length) return false;
+    var targetResponse = null;
+    for (var i = responses.length - 1; i >= 0; i -= 1) {
+      var row = responses[i];
+      if (!row || String(row.token || "").trim() !== targetToken) continue;
+      targetResponse = row;
+      break;
+    }
+    if (!targetResponse) return false;
+    var responseKey = String(activeRequest.id || "") + ":" + String(targetResponse.token || "") + ":" + Number(targetResponse.at || 0);
+    if (state.lastAutoResolvedRollKey === responseKey) return true;
+    state.lastAutoResolvedRollKey = responseKey;
+    var pendingCheck = getPendingCheckById(activeRequest.pendingCheckId);
+    var payload = pendingCheck && pendingCheck.payload && typeof pendingCheck.payload === "object" ? pendingCheck.payload : {};
+    var targetValue = String(payload.defaultOutcomeTarget || targetToken || "party").trim() || "party";
+    var resolved = await resolveSceneCheckOutcome({
+      checkId: String(activeRequest.pendingCheckId || ""),
+      success: !!targetResponse.success,
+      actionTotal: Math.max(0, Number(targetResponse.total || 0)),
+      dreadTotal: Math.max(0, Number(targetResponse.dreadTotal || 0)),
+      resolvedVia: "auto-player-submit",
+      scope: targetValue === "party" ? "party" : "individual",
+      targetValue: targetValue,
+      targetTokens: targetValue === "party" ? buildSceneCheckTargetTokens("party", "", []) : [targetValue]
+    });
+    if (!resolved || !resolved.ok) {
+      state.lastAutoResolvedRollKey = "";
+      return false;
+    }
+    await closeActiveRollSilently();
+    renderSettingsSection();
+    renderDockPanel();
+    return true;
   }
 
   async function closeActiveRoll() {
@@ -6654,28 +7032,48 @@
     }
 
     var stat = String(req.stat || "valor").toLowerCase();
-    var actionDie = resolveActionDie(stat);
-    var action = (typeof window.explodingRoll === "function")
-      ? window.explodingRoll(actionDie, { type: "action", major: true, label: "Campaign " + stat })
-      : { total: Math.floor(Math.random() * actionDie) + 1 };
-    var dreadRoll = (typeof window.explodingRoll === "function")
-      ? window.explodingRoll(req.dread, { type: "dread", major: true, label: "Campaign Dread" })
-      : { total: Math.floor(Math.random() * req.dread) + 1 };
-
-    return submitActiveRollResult(req, actionDie, Number(action.total || 0), Number(dreadRoll.total || 0), false);
+    var selections = getCampaignPromptSelections();
+    if (selections.pushLuck && getTmwValue() < 2) {
+      safeNotif("Need 2 TMW to Push Your Luck.", "warn");
+      return { ok: false, error: "Not enough TMW." };
+    }
+    if (typeof window.clearConditionOnUse === "function") {
+      window.clearConditionOnUse(stat);
+    }
+    if (selections.pushLuck && typeof window.changeCounter === "function") {
+      window.changeCounter("tmw", -2);
+    }
+    var result = performCampaignPromptRoll(stat, req.dread, selections, req.label || ("Campaign " + stat));
+    if (result.pushLuck) {
+      result.conditionApplied = applyCampaignPushLuckCondition(stat, !!result.success);
+    }
+    return submitActiveRollResult(req, result, false);
   }
 
-  async function submitActiveRollResult(req, actionDie, actionTotal, dreadTotal, manual) {
+  async function submitActiveRollResult(req, result, manual) {
     if (!req || !req.id) {
       safeNotif("No active campaign roll request.", "warn");
       return { ok: false, error: "No active campaign roll request." };
     }
 
+    var rollResult = result && typeof result === "object" ? result : {};
+    var actionDie = Math.max(1, Number(rollResult.actionDie || 4) || 4);
+    var actionTotal = Math.max(0, Number(rollResult.actionTotal || rollResult.total || 0) || 0);
+    var dreadTotal = Math.max(0, Number(rollResult.dreadTotal || 0) || 0);
+    var pushLuck = !!rollResult.pushLuck;
+    var conditionApplied = String(rollResult.conditionApplied || "").trim();
+    var notes = buildCampaignRollSubmissionNotes(rollResult);
+
     var res = await emitWithAck("campaign:rollSubmit", {
       requestId: req.id,
-      total: Math.max(0, Number(actionTotal || 0)),
-      dreadTotal: Math.max(0, Number(dreadTotal || 0)),
-      die: actionDie
+      total: actionTotal,
+      dreadTotal: dreadTotal,
+      die: actionDie,
+      method: manual ? "manual" : "auto",
+      manual: !!manual,
+      pushLuck: pushLuck,
+      conditionApplied: conditionApplied,
+      notes: notes
     });
 
     if (!res.ok) {
@@ -6683,13 +7081,14 @@
       return res || { ok: false, error: "Could not submit roll." };
     }
 
-    if (req.pendingCheckId) {
+    if (req.pendingCheckId && !req.autoResolveOnSubmit) {
       submitPendingCheck(req.pendingCheckId, {
-        total: Math.max(0, Number(actionTotal || 0)),
-        dreadTotal: Math.max(0, Number(dreadTotal || 0)),
+        total: actionTotal,
+        dreadTotal: dreadTotal,
         die: actionDie,
         method: manual ? "manual" : "auto",
-        manual: !!manual
+        manual: !!manual,
+        notes: notes
       }).catch(function () {});
     }
 
@@ -6698,8 +7097,8 @@
     }
 
     safeNotif(
-      "Submitted: " + String(req.stat || "valor").toUpperCase() + " d" + actionDie + " " + Math.max(0, Number(actionTotal || 0)) + " vs " + Math.max(0, Number(dreadTotal || 0)) + ".",
-      Number(actionTotal || 0) >= Number(dreadTotal || 0) ? "good" : "warn"
+      "Submitted: " + String(req.stat || "valor").toUpperCase() + " d" + actionDie + " " + actionTotal + " vs " + dreadTotal + (pushLuck ? " [Push Luck]" : "") + ".",
+      actionTotal >= dreadTotal ? "good" : "warn"
     );
     return res;
   }
@@ -6724,19 +7123,48 @@
 
     var stat = String(req.stat || "valor").toLowerCase();
     var actionDie = resolveActionDie(stat);
+    var selections = getCampaignPromptSelections();
+    if (selections.pushLuck && getTmwValue() < 2) {
+      safeNotif("Need 2 TMW to Push Your Luck.", "warn");
+      return;
+    }
+    var manualDread = selections.pushLuck && typeof window.stepUp === "function"
+      ? Math.max(4, Number(window.stepUp(req.dread || 8) || req.dread || 8))
+      : Math.max(4, Number(req.dread || 8) || 8);
+    var sources = getCampaignPromptBonusSources(stat);
     window.openProvinceManualCheckPrompt({
       title: "Campaign Roll Request",
       context: String(req.label || "GM Check"),
       statKey: stat,
       statLabel: stat.toUpperCase(),
       actionDie: actionDie,
-      dreadDie: Math.max(4, Number(req.dread || 8)),
+      dreadDie: manualDread,
+      modifierLines: buildCampaignActiveRollManualLines(stat, req, selections, sources, manualDread),
       onResolve: function (outcome) {
+        if (typeof window.clearConditionOnUse === "function") {
+          window.clearConditionOnUse(stat);
+        }
+        if (selections.pushLuck && typeof window.changeCounter === "function") {
+          window.changeCounter("tmw", -2);
+        }
+        var success = !!(outcome && outcome.success);
+        var conditionApplied = selections.pushLuck ? applyCampaignPushLuckCondition(stat, success) : "";
         submitActiveRollResult(
           req,
-          actionDie,
-          Number(outcome && outcome.actionTotal || 0),
-          Number(outcome && outcome.dreadTotal || 0),
+          {
+            actionDie: actionDie,
+            actionTotal: Number(outcome && outcome.actionTotal || 0),
+            dreadTotal: Number(outcome && outcome.dreadTotal || 0),
+            pushLuck: !!selections.pushLuck,
+            usedFlavor: !!selections.useFlavor,
+            usedMutation: !!selections.useMutation,
+            usedInventory: !!selections.useInventory,
+            conditionApplied: conditionApplied,
+            bonusNotes: buildCampaignRollSubmissionNotes({
+              pushLuck: !!selections.pushLuck,
+              bonusNotes: buildCampaignActiveRollManualLines(stat, req, selections, sources, manualDread)
+            }).split(" | ").filter(Boolean)
+          },
           true
         );
       }
@@ -7234,6 +7662,7 @@
     leaveCampaign: leaveCampaign,
     callRollRequest: callRollRequest,
     closeActiveRoll: closeActiveRoll,
+    openActiveRollPrompt: function () { return openActiveRollPrompt(true); },
     submitActiveRoll: submitActiveRoll,
     submitActiveRollManual: submitActiveRollManual,
     savePrivateNote: savePrivateNote,

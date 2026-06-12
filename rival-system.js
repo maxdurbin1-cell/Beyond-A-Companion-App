@@ -243,69 +243,64 @@
     return 'Wayfarer';
   }
 
+  function buildCampaignSceneStatOptionsHtml(selectedStat){
+    var selected=String(selectedStat||'valor').trim().toLowerCase()||'valor';
+    var stats=['body','mind','spirit','lead','control','defend','strike','shoot','valor'];
+    return stats.map(function(stat){
+      return '<option value="'+rivalEsc(stat)+'"'+(stat===selected?' selected':'')+'>'+rivalEsc(stat.toUpperCase())+'</option>';
+    }).join('');
+  }
+
   function openCampaignSceneCheckPrompt(spec){
     if(!isConnectedCampaignGm()||typeof openModal!=='function'||typeof window==='undefined'||!window.campaignSystem)return false;
     var cfg=spec&&typeof spec==='object'?spec:{};
     var targets=getCampaignSceneTargets();
     var defaultRollTarget=String(cfg.defaultRollTarget||((targets[0]&&targets[0].token)||'party')).trim()||'party';
     var defaultOutcomeTarget=String(cfg.defaultOutcomeTarget||'acting').trim()||'acting';
-    var successRewardType=String(cfg.successRewardType||((Number(cfg.successRewardAmount||cfg.successPathTokens||0)>0)?'pathTokens':'none')).trim()||'none';
-    var successRewardKey=successRewardType.toLowerCase();
-    if(successRewardKey==='successroll'||successRewardKey==='success-roll'||successRewardKey==='success_roll'||successRewardKey==='successrolls')successRewardType='successRolls';
-    else if(successRewardKey==='pathtoken'||successRewardKey==='path-token'||successRewardKey==='path_token'||successRewardKey==='pathtokens')successRewardType='pathTokens';
-    else if(successRewardKey!=='none')successRewardType='none';
-    var successRewardAmount=Math.max(0,parseInt((cfg.successRewardAmount!=null?cfg.successRewardAmount:cfg.successPathTokens),10)||0);
+    var defaultStat=String(cfg.stat||'valor').toLowerCase();
     window._pendingCampaignSceneCheck={
       title:String(cfg.title||'GM Scene Check'),
       label:String(cfg.label||'Scene Check'),
       context:String(cfg.context||cfg.label||'Scene Check'),
       type:String(cfg.type||'scene-check'),
-      stat:String(cfg.stat||'valor').toLowerCase(),
+      stat:defaultStat,
       dread:Math.max(4,Number(cfg.dread||6)),
       stake:String(cfg.stake||'GM decides who rolls and who takes the result.'),
-      successRewardType:successRewardType,
-      successRewardAmount:successRewardAmount,
       failurePenaltyType:String(cfg.failurePenaltyType||'mentalStress'),
-      failurePenaltyAmount:Math.max(0,parseInt(cfg.failurePenaltyAmount,10)||0),
-      failurePenaltyScale:String(cfg.failurePenaltyScale||'flat'),
+      failurePenaltyScale:'margin',
       failTmw:Math.max(0,parseInt(cfg.failTmw,10)||0),
       payload:cfg.payload&&typeof cfg.payload==='object'?cfg.payload:{}
     };
     var html=''
       + '<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">'
       + '<div style="font-family:\'Cinzel\',serif;font-size:.84rem;color:var(--gold2);">'+rivalEsc(String(cfg.context||cfg.label||'Scene Check'))+'</div>'
-      + '<div style="margin-top:.18rem;"><strong>'+rivalEsc(String(cfg.stat||'valor').toUpperCase())+'</strong> vs <strong style="color:var(--red2);">Dread d'+Math.max(4,Number(cfg.dread||6))+'</strong></div>'
+      + '<div style="margin-top:.18rem;"><strong>'+rivalEsc(defaultStat.toUpperCase())+'</strong> suggested vs <strong style="color:var(--red2);">Dread d'+Math.max(4,Number(cfg.dread||6))+'</strong></div>'
       + '<div style="font-size:.72rem;color:var(--muted2);margin-top:.16rem;">Choose who rolls, where the outcome lands, and how the table wants to resolve it.</div>'
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.32rem;margin-top:.4rem;">'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.32rem;margin-top:.4rem;">'
       + '<label style="font-size:.68rem;color:var(--muted2);">Who Rolls?'
       + '<select id="campaignSceneRollTarget" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
       + buildCampaignSceneTargetOptionsHtml(defaultRollTarget,{includeParty:true})
+      + '</select></label>'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Requested Roll'
+      + '<select id="campaignSceneStat" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
+      + buildCampaignSceneStatOptionsHtml(defaultStat)
       + '</select></label>'
       + '<label style="font-size:.68rem;color:var(--muted2);">Apply Outcome To'
       + '<select id="campaignSceneOutcomeTarget" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
       + buildCampaignSceneTargetOptionsHtml(defaultOutcomeTarget,{includeActing:true,includeParty:true})
       + '</select></label>'
       + '</div>'
-      + '<div style="display:grid;grid-template-columns:1fr 76px 1fr 76px 72px;gap:.32rem;margin-top:.32rem;">'
-      + '<label style="font-size:.68rem;color:var(--muted2);">Success Reward'
-      + '<select id="campaignSceneSuccessRewardType" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
-      + '<option value="none"'+(successRewardType==='none'?' selected':'')+'>None</option>'
-      + '<option value="successRolls"'+(successRewardType==='successRolls'?' selected':'')+'>Success Rolls</option>'
-      + '<option value="pathTokens"'+(successRewardType==='pathTokens'?' selected':'')+'>Path Tokens</option>'
-      + '</select></label>'
-      + '<label style="font-size:.68rem;color:var(--muted2);">Amount'
-      + '<input id="campaignSceneSuccessRewardAmount" type="number" min="0" max="20" value="'+successRewardAmount+'" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;"></label>'
-      + '<label style="font-size:.68rem;color:var(--muted2);">Failure Penalty'
+      + '<div style="display:grid;grid-template-columns:1.1fr 92px;gap:.32rem;margin-top:.32rem;">'
+      + '<label style="font-size:.68rem;color:var(--muted2);">Failure Consequence'
       + '<select id="campaignScenePenaltyType" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;">'
-      + '<option value="none"'+(String(cfg.failurePenaltyType||'').toLowerCase()==='none'?' selected':'')+'>None</option>'
       + '<option value="mentalStress"'+(String(cfg.failurePenaltyType||'mentalStress').toLowerCase()==='mentalstress'?' selected':'')+'>Mental Stress</option>'
       + '<option value="health"'+(String(cfg.failurePenaltyType||'').toLowerCase()==='health'?' selected':'')+'>Damage</option>'
+      + '<option value="radiation"'+(String(cfg.failurePenaltyType||'').toLowerCase()==='radiation'?' selected':'')+'>Radiation</option>'
       + '</select></label>'
-      + '<label style="font-size:.68rem;color:var(--muted2);">Amount'
-      + '<input id="campaignScenePenaltyAmount" type="number" min="0" max="20" value="'+Math.max(0,parseInt(cfg.failurePenaltyAmount,10)||0)+'" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;"></label>'
       + '<label style="font-size:.68rem;color:var(--muted2);">Fail TMW'
       + '<input id="campaignSceneFailTmw" type="number" min="0" max="20" value="'+Math.max(0,parseInt(cfg.failTmw,10)||0)+'" style="width:100%;margin-top:.1rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.28rem .34rem;font-size:.78rem;"></label>'
       + '</div>'
+      + '<div style="font-size:.7rem;color:var(--muted2);margin-top:.2rem;">Success always grants <strong style="color:var(--green2);">+1 Successful Roll</strong>. Failure always applies the failed margin as the chosen consequence.</div>'
       + '<div style="font-size:.68rem;color:var(--muted2);margin-top:.24rem;">'+rivalEsc(cfg.stake)+'</div>'
       + '<div style="display:flex;gap:.3rem;flex-wrap:wrap;justify-content:flex-end;margin-top:.46rem;">'
       + '<button class="btn btn-sm" onclick="if(typeof closeModal===\'function\')closeModal();">Cancel</button>'
@@ -323,20 +318,16 @@
     var cfg=window._pendingCampaignSceneCheck||null;
     if(!cfg||!window.campaignSystem||typeof window.campaignSystem.startGmPendingCheck!=='function')return false;
     var rollTargetEl=document.getElementById('campaignSceneRollTarget');
+    var statEl=document.getElementById('campaignSceneStat');
     var outcomeTargetEl=document.getElementById('campaignSceneOutcomeTarget');
-    var successRewardTypeEl=document.getElementById('campaignSceneSuccessRewardType');
-    var successRewardAmountEl=document.getElementById('campaignSceneSuccessRewardAmount');
     var penaltyTypeEl=document.getElementById('campaignScenePenaltyType');
-    var penaltyAmountEl=document.getElementById('campaignScenePenaltyAmount');
     var failTmwEl=document.getElementById('campaignSceneFailTmw');
     var rollTargetValue=String((rollTargetEl&&rollTargetEl.value)||'party').trim()||'party';
+    var requestedStat=String((statEl&&statEl.value)||cfg.stat||'valor').trim().toLowerCase()||'valor';
     var outcomeTargetValue=String((outcomeTargetEl&&outcomeTargetEl.value)||'acting').trim()||'acting';
     var resolvedOutcomeTarget=resolveCampaignSceneOutcomeTarget(outcomeTargetValue,rollTargetValue);
-    var successRewardType=String((successRewardTypeEl&&successRewardTypeEl.value)||cfg.successRewardType||'none').trim()||'none';
-    var successRewardAmount=Math.max(0,parseInt((successRewardAmountEl&&successRewardAmountEl.value)||cfg.successRewardAmount,10)||0);
     var failurePenaltyType=String((penaltyTypeEl&&penaltyTypeEl.value)||cfg.failurePenaltyType||'none');
-    var failurePenaltyAmount=Math.max(0,parseInt((penaltyAmountEl&&penaltyAmountEl.value)||cfg.failurePenaltyAmount,10)||0);
-    var failurePenaltyScale=String(cfg.failurePenaltyScale||'flat');
+    var failurePenaltyScale='margin';
     var failTmw=Math.max(0,parseInt((failTmwEl&&failTmwEl.value)||cfg.failTmw,10)||0);
     var rollScope=rollTargetValue==='party'?'party':'individual';
     var outcomeScope=resolvedOutcomeTarget==='party'?'party':'individual';
@@ -350,8 +341,8 @@
       type:String(cfg.type||'scene-check'),
       scope:rollScope,
       label:pendingLabel,
-      stat:String(cfg.stat||'valor'),
-      statOptions:[String(cfg.stat||'valor')],
+      stat:requestedStat,
+      statOptions:[requestedStat],
       dread:Math.max(4,Number(cfg.dread||6)),
       context:String(cfg.context||pendingLabel),
       stake:String(cfg.stake||'Scene check'),
@@ -360,12 +351,10 @@
         defaultOutcomeTarget:resolvedOutcomeTarget,
         rollTarget:rollTargetValue,
         rollScope:rollScope,
-        successRewardType:successRewardType,
-        successRewardAmount:successRewardAmount,
         failurePenaltyType:failurePenaltyType,
-        failurePenaltyAmount:failurePenaltyAmount,
         failurePenaltyScale:failurePenaltyScale,
-        failTmw:failTmw
+        failTmw:failTmw,
+        autoResolveOnSubmit:rollScope==='individual'
       })
     };
     var pendingCheck=window.campaignSystem.startGmPendingCheck(pendingSpec);
@@ -377,10 +366,16 @@
     if(mode==='prompt'){
       var promptResult=await window.campaignSystem.requestRollPrompt(
         pendingLabel,
-        String(cfg.stat||'valor'),
+        requestedStat,
         Math.max(4,Number(cfg.dread||6)),
         rollScope==='individual'?rollTargetValue:'',
-        { pendingCheckId: checkId }
+        {
+          pendingCheckId: checkId,
+          autoResolveOnSubmit: rollScope==='individual',
+          defaultOutcomeTarget: resolvedOutcomeTarget,
+          failurePenaltyType: failurePenaltyType,
+          failTmw: failTmw
+        }
       );
       if(!promptResult||!promptResult.ok){
         if(typeof showNotif==='function')showNotif((promptResult&&promptResult.error)||'Could not prompt the table.','warn');
@@ -390,12 +385,12 @@
       window._pendingCampaignSceneCheck=null;
       if(typeof window.campaignSystem.sendChatMessage==='function'){
         window.campaignSystem.sendChatMessage({
-          message:'🎲 '+(rollScope==='party'?'Entire Party':rollLabel)+' rolls '+String(cfg.stat||'valor').toUpperCase()+' vs d'+Math.max(4,Number(cfg.dread||6))+(cfg.context?(' · '+String(cfg.context)):''),
+          message:'🎲 '+(rollScope==='party'?'Entire Party':rollLabel)+' rolls '+requestedStat.toUpperCase()+' vs d'+Math.max(4,Number(cfg.dread||6))+(cfg.context?(' · '+String(cfg.context)):''),
           targetToken:rollScope==='individual'?rollTargetValue:''
         });
       }
       if(typeof renderQP==='function')renderQP('campaign');
-      if(typeof showNotif==='function')showNotif((rollScope==='party'?'Table check opened.':'Player prompt sent.')+' Resolve it after submissions come in.', 'good');
+      if(typeof showNotif==='function')showNotif(rollScope==='party'?'Table check opened. Resolve after submissions come in.':'Player prompt sent. It will resolve automatically after their submission.', 'good');
       return true;
     }
 
@@ -408,13 +403,13 @@
         return false;
       }
       var actionDie=(typeof window.campaignSystem.getCampaignCharacterDie==='function')
-        ? window.campaignSystem.getCampaignCharacterDie(rollTargetValue,String(cfg.stat||'valor'),4)
+        ? window.campaignSystem.getCampaignCharacterDie(rollTargetValue,requestedStat,4)
         : 4;
       window.openProvinceManualCheckPrompt({
         title:String(cfg.title||'Campaign Check'),
         context:pendingLabel,
-        statKey:String(cfg.stat||'valor'),
-        statLabel:String(cfg.stat||'valor').toUpperCase(),
+        statKey:requestedStat,
+        statLabel:requestedStat.toUpperCase(),
         actionDie:actionDie,
         dreadDie:Math.max(4,Number(cfg.dread||6)),
         onResolve:function(outcome){
@@ -427,10 +422,7 @@
             resolvedVia:'gm-manual-scene-check',
             scope:outcomeScope,
             targetValue:resolvedOutcomeTarget,
-            successRewardType:successRewardType,
-            successRewardAmount:successRewardAmount,
             failurePenaltyType:failurePenaltyType,
-            failurePenaltyAmount:failurePenaltyAmount,
             failurePenaltyScale:failurePenaltyScale,
             failTmw:failTmw
           }).then(function(resolved){
@@ -456,10 +448,7 @@
       resolvedVia:'gm-scene-buttons',
       scope:outcomeScope,
       targetValue:resolvedOutcomeTarget,
-      successRewardType:successRewardType,
-      successRewardAmount:successRewardAmount,
       failurePenaltyType:failurePenaltyType,
-      failurePenaltyAmount:failurePenaltyAmount,
       failurePenaltyScale:failurePenaltyScale,
       failTmw:failTmw
     });
@@ -483,10 +472,7 @@
       type:'rival-outcome',
       stat:String(stat||'lead'),
       dread:dread,
-      successRewardType:'pathTokens',
-      successRewardAmount:1,
-      failurePenaltyType:'none',
-      failurePenaltyAmount:0,
+      failurePenaltyType:'mentalStress',
       failTmw:1,
       stake:'The GM assigns who acts, who receives the outcome, and whether the table rolls or resolves immediately.',
       payload:{

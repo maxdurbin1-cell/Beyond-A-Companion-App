@@ -24320,25 +24320,16 @@ function runWhenIdle(fn, timeoutMs){
   }
 
   function qpCampaignDefaultSuccessRewardType(check){
-    var payload=check&&check.payload&&typeof check.payload==='object'?check.payload:{};
-    var rewardType=qpCampaignNormalizeSuccessRewardType(payload.successRewardType||((Number(payload.successRewardAmount||payload.successPathTokens||0)>0)?'pathTokens':''));
-    if(rewardType!=='none')return rewardType;
-    return String((check&&check.scope)||'')==='party'?'none':'pathTokens';
+    return 'successRolls';
   }
 
   function qpCampaignDefaultSuccessRewardAmount(check,rewardType){
-    var payload=check&&check.payload&&typeof check.payload==='object'?check.payload:{};
-    var amount=Math.max(0,parseInt((payload.successRewardAmount!=null?payload.successRewardAmount:payload.successPathTokens),10)||0);
-    if(amount>0)return amount;
-    return rewardType==='pathTokens'&&String((check&&check.scope)||'')!=='party'?1:0;
+    return 1;
   }
 
   function qpCampaignBuildSuccessRewardSelectHtml(check,selectId){
-    var rewardType=qpCampaignDefaultSuccessRewardType(check);
     return '<select id="'+selectId+'" style="background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.7rem;">'
-      + '<option value="none"'+(rewardType==='none'?' selected':'')+'>None</option>'
-      + '<option value="successRolls"'+(rewardType==='successRolls'?' selected':'')+'>Success Rolls</option>'
-      + '<option value="pathTokens"'+(rewardType==='pathTokens'?' selected':'')+'>Path Tokens</option>'
+      + '<option value="successRolls" selected>+1 Successful Roll</option>'
       + '</select>';
   }
 
@@ -24546,9 +24537,9 @@ function runWhenIdle(fn, timeoutMs){
       var defaultSuccessRewardAmount=qpCampaignDefaultSuccessRewardAmount(check,defaultSuccessRewardType);
       var defaultPenaltyType=String(payload.failurePenaltyType||'mentalStress').trim()||'mentalStress';
       if(defaultPenaltyType.toLowerCase()==='mentalstress'||defaultPenaltyType.toLowerCase()==='mental-stress'||defaultPenaltyType.toLowerCase()==='mental_stress')defaultPenaltyType='mentalStress';
-      var defaultPenaltyAmount=Math.max(0,parseInt((payload.failurePenaltyAmount!=null?payload.failurePenaltyAmount:1),10)||0);
+      var defaultPenaltyAmount=Math.max(1,parseInt((payload.failurePenaltyAmount!=null?payload.failurePenaltyAmount:1),10)||1);
       var defaultFailTmw=Math.max(0,parseInt((payload.failTmw!=null?payload.failTmw:1),10)||0);
-      var failurePenaltyScale=String(payload.failurePenaltyScale||'flat').trim().toLowerCase();
+      var failurePenaltyScale='margin';
       var gmResolveControls=isGm
         ? '<div style="margin-top:.24rem;padding:.26rem .28rem;border:1px solid rgba(255,255,255,.08);background:rgba(8,10,14,.26);">'
           + '<div style="font-family:Cinzel,serif;font-size:.5rem;letter-spacing:.09em;color:var(--gold2);text-transform:uppercase;">GM Resolve</div>'
@@ -24566,7 +24557,7 @@ function runWhenIdle(fn, timeoutMs){
               + '<select id="'+penaltyTypeId+'" style="width:100%;margin-top:.08rem;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.2rem .24rem;font-size:.72rem;">'
                 + '<option value="mentalStress"'+(defaultPenaltyType==='mentalStress'?' selected':'')+'>Mental Stress</option>'
                 + '<option value="health"'+(defaultPenaltyType==='health'?' selected':'')+'>Damage</option>'
-                + '<option value="none"'+(defaultPenaltyType==='none'?' selected':'')+'>None</option>'
+                + '<option value="radiation"'+(defaultPenaltyType==='radiation'?' selected':'')+'>Radiation</option>'
               + '</select>'
             + '</label>'
             + '<label style="font-size:.64rem;color:var(--muted2);">Amount'
@@ -24663,12 +24654,12 @@ function runWhenIdle(fn, timeoutMs){
     var domId=qpCampaignDomId(checkId);
     var targetValue=String((((document.getElementById('qpResolveTarget_'+domId)||{}).value)||qpCampaignDefaultResolveTarget(check))||'party').trim();
     var targetTokens=qpCampaignGetResolveTargetTokens(check,targetValue);
-    var successRewardType=String(((document.getElementById('qpResolveSuccessRewardType_'+domId)||{}).value)||qpCampaignDefaultSuccessRewardType(check)).trim()||'none';
-    var successRewardAmount=Math.max(0,parseInt(((document.getElementById('qpResolveSuccessAmount_'+domId)||{}).value)||0,10)||0);
+    var successRewardType='successRolls';
+    var successRewardAmount=1;
     var penaltyType=String(((document.getElementById('qpResolvePenaltyType_'+domId)||{}).value)||'mentalStress').trim();
     var penaltyAmount=Math.max(0,parseInt(((document.getElementById('qpResolvePenaltyAmount_'+domId)||{}).value)||0,10)||0);
     var failTmw=Math.max(0,parseInt(((document.getElementById('qpResolveFailTmw_'+domId)||{}).value)||0,10)||0);
-    var failurePenaltyScale=String((((check&&check.payload)||{}).failurePenaltyScale)||'flat').trim();
+    var failurePenaltyScale='margin';
     var resolved=await window.campaignSystem.resolveSceneCheckOutcome({
       checkId:String(checkId||''),
       success:approved,

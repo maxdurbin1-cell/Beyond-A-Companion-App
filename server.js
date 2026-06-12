@@ -942,6 +942,10 @@ function serializeCampaign(campaign) {
           dread: campaign.activeRollRequest.dread,
           label: campaign.activeRollRequest.label,
           pendingCheckId: String(campaign.activeRollRequest.pendingCheckId || ""),
+          autoResolveOnSubmit: !!campaign.activeRollRequest.autoResolveOnSubmit,
+          defaultOutcomeTarget: String(campaign.activeRollRequest.defaultOutcomeTarget || ""),
+          failurePenaltyType: String(campaign.activeRollRequest.failurePenaltyType || ""),
+          failTmw: Math.max(0, parseInt(campaign.activeRollRequest.failTmw, 10) || 0),
           targetToken: String(campaign.activeRollRequest.targetToken || ""),
           targetName: String(campaign.activeRollRequest.targetName || ""),
           createdAt: campaign.activeRollRequest.createdAt,
@@ -1149,7 +1153,10 @@ function snapshotCampaign(campaign, requesterToken) {
             mentalStress: Math.max(0, Number((typeof member.character.mentalStress === "number" ? member.character.mentalStress : member.character.stress) || 0)),
             maxMentalStress: Math.max(1, Number(member.character.maxMentalStress || member.character.mentalStressCap || member.character.stressCap || 20)),
             stress: Math.max(0, Number((typeof member.character.mentalStress === "number" ? member.character.mentalStress : member.character.stress) || 0)),
+            rads: Math.max(0, Number(member.character.rads || member.character.radiation || 0)),
             pathTokens: Math.max(0, Number(member.character.pathTokens || 0)),
+            successRolls: Math.max(0, Number(member.character.successRolls || member.character.successRollCount || 0)),
+            successRollCount: Math.max(0, Number(member.character.successRolls || member.character.successRollCount || 0)),
             look: String(member.character.look || "").slice(0, 180),
             stats: member.character.stats && typeof member.character.stats === "object" ? member.character.stats : {},
             loadout: member.character.loadout && typeof member.character.loadout === "object" ? member.character.loadout : {},
@@ -1238,6 +1245,10 @@ function snapshotCampaign(campaign, requesterToken) {
           dread: campaign.activeRollRequest.dread,
           label: campaign.activeRollRequest.label,
           pendingCheckId: String(campaign.activeRollRequest.pendingCheckId || ""),
+          autoResolveOnSubmit: !!campaign.activeRollRequest.autoResolveOnSubmit,
+          defaultOutcomeTarget: String(campaign.activeRollRequest.defaultOutcomeTarget || ""),
+          failurePenaltyType: String(campaign.activeRollRequest.failurePenaltyType || ""),
+          failTmw: Math.max(0, parseInt(campaign.activeRollRequest.failTmw, 10) || 0),
           targetToken: String(campaign.activeRollRequest.targetToken || ""),
           targetName: String(campaign.activeRollRequest.targetName || ""),
           createdAt: campaign.activeRollRequest.createdAt,
@@ -1420,6 +1431,7 @@ function normalizeCharacter(input, fallbackName) {
   const c = input && typeof input === "object" ? input : {};
   const stats = c.stats && typeof c.stats === "object" ? c.stats : {};
   const mentalStress = Math.max(0, Number((typeof c.mentalStress === "number" ? c.mentalStress : c.stress) || 0));
+  const rads = Math.max(0, Number(c.rads || c.radiation || 0));
   const pathTokens = Math.max(0, Number(c.pathTokens || 0));
   const successRolls = Math.max(0, Number(c.successRolls || c.successRollCount || 0));
   const maxHealthFromStats = Math.max(1, Number((stats.defend || stats.body || stats.valor || 4)) * 2);
@@ -1441,6 +1453,7 @@ function normalizeCharacter(input, fallbackName) {
     mentalStress,
     maxMentalStress,
     stress: mentalStress,
+    rads,
     pathTokens,
     successRolls,
     successRollCount: successRolls,
@@ -1452,6 +1465,301 @@ function normalizeCharacter(input, fallbackName) {
       ? c.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
       : [],
     updatedAt: Date.now()
+  };
+}
+
+function ensurePendingChecksState(sharedState) {
+  const state = sharedState && typeof sharedState === "object" ? sharedState : {};
+  if (!state.pendingChecks || typeof state.pendingChecks !== "object" || Array.isArray(state.pendingChecks)) {
+    state.pendingChecks = { active: {}, history: [] };
+  }
+  if (!state.pendingChecks.active || typeof state.pendingChecks.active !== "object" || Array.isArray(state.pendingChecks.active)) {
+    state.pendingChecks.active = {};
+  }
+  if (!Array.isArray(state.pendingChecks.history)) {
+    state.pendingChecks.history = [];
+  }
+  if (state.pendingChecks.history.length > 80) {
+    state.pendingChecks.history = state.pendingChecks.history.slice(-80);
+  }
+  return state.pendingChecks;
+}
+
+function normalizeRollFailurePenaltyType(value) {
+  const key = String(value || "mentalStress").trim().toLowerCase();
+  if (key === "damage") return "health";
+  if (key === "mentalstress" || key === "mental-stress" || key === "mental_stress") return "mentalStress";
+  if (key === "health" || key === "radiation") return key;
+  return "mentalStress";
+}
+
+function getCampaignRollTargetTokens(campaign) {
+  if (!campaign || !campaign.participants) return [];
+  return Array.from(campaign.participants.values())
+    .filter((participant) => participant && participant.role === "player" && participant.token)
+    .map((participant) => String(participant.token || "").trim())
+    .filter(Boolean);
+}
+
+function buildPendingCheckStubFromRollRequest(campaign, request, gmMember) {
+  const details = request && typeof request === "object" ? request : {};
+  const targetToken = String(details.targetToken || "").trim();
+  const targetMember = targetToken ? campaign.participants.get(targetToken) : null;
+  const scope = targetToken ? "individual" : "party";
+  const createdAt = Number(details.createdAt || Date.now()) || Date.now();
+  return {
+    id: String(details.pendingCheckId || "").trim(),
+    status: "pending",
+    type: "shared-check",
+    scope,
+    label: String(details.label || "GM Check").slice(0, 100),
+    stat: String(details.stat || "valor").trim().toLowerCase().slice(0, 32) || "valor",
+    statOptions: [String(details.stat || "valor").trim().toLowerCase().slice(0, 32) || "valor"],
+    dread: Math.max(1, Number(details.dread || 8) || 8),
+    stake: targetToken
+      ? "Individual actor check waiting on GM resolution."
+      : "Shared campaign consequence waiting on GM resolution.",
+    context: String(details.label || "GM Check").slice(0, 180),
+    payload: {
+      defaultOutcomeTarget: String(details.defaultOutcomeTarget || targetToken || "party").trim() || "party",
+      failurePenaltyType: normalizeRollFailurePenaltyType(details.failurePenaltyType),
+      failurePenaltyScale: "margin",
+      failTmw: Math.max(0, parseInt(details.failTmw, 10) || 0),
+      autoResolveOnSubmit: !!details.autoResolveOnSubmit
+    },
+    calledBy: String((gmMember && gmMember.name) || "GM").slice(0, 48),
+    calledByToken: String((gmMember && gmMember.token) || ""),
+    participants: targetToken
+      ? [{ token: targetToken, name: String((targetMember && targetMember.name) || "") }]
+      : getCampaignRollTargetTokens(campaign).map((token) => {
+          const participant = campaign.participants.get(token);
+          return { token, name: String((participant && participant.name) || "") };
+        }),
+    submissions: [],
+    createdAt,
+    createdBy: String((gmMember && gmMember.name) || "GM").slice(0, 48),
+    createdByToken: String((gmMember && gmMember.token) || ""),
+    resolvedAt: 0,
+    resolvedBy: "",
+    outcome: null,
+    effectsApplied: null
+  };
+}
+
+function mergeResolvedPendingChecks(existingPending, incomingPending) {
+  const existing = safeClone(existingPending && typeof existingPending === "object" ? existingPending : { active: {}, history: [] }) || { active: {}, history: [] };
+  const incoming = safeClone(incomingPending && typeof incomingPending === "object" ? incomingPending : { active: {}, history: [] }) || { active: {}, history: [] };
+  const existingWrapper = { pendingChecks: existing };
+  const incomingWrapper = { pendingChecks: incoming };
+  const current = ensurePendingChecksState(existingWrapper);
+  const next = ensurePendingChecksState(incomingWrapper);
+
+  const historyById = new Map();
+  const upsertHistory = (entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const id = String(entry.id || "").trim();
+    if (!id) return;
+    const prior = historyById.get(id);
+    const nextResolvedAt = Number(entry.resolvedAt || 0) || 0;
+    const priorResolvedAt = Number(prior && prior.resolvedAt || 0) || 0;
+    if (!prior || nextResolvedAt >= priorResolvedAt) {
+      historyById.set(id, entry);
+    }
+  };
+
+  (Array.isArray(current.history) ? current.history : []).forEach(upsertHistory);
+  (Array.isArray(next.history) ? next.history : []).forEach(upsertHistory);
+
+  const resolvedIds = new Set(Array.from(historyById.keys()));
+  const active = {};
+  const incomingActive = next.active && typeof next.active === "object" ? next.active : {};
+  Object.keys(incomingActive).forEach((id) => {
+    if (!id || resolvedIds.has(id)) return;
+    active[id] = incomingActive[id];
+  });
+
+  const history = Array.from(historyById.values())
+    .sort((a, b) => {
+      const aAt = Number((a && (a.resolvedAt || a.createdAt)) || 0);
+      const bAt = Number((b && (b.resolvedAt || b.createdAt)) || 0);
+      return aAt - bAt;
+    })
+    .slice(-80);
+
+  return { active, history };
+}
+
+function applyAutoResolvedRollRequestOutcome(campaign, request, response) {
+  if (!campaign || !request || !response) {
+    return { ok: false, error: "Missing auto-resolve context." };
+  }
+
+  const success = !!response.success;
+  const targetValue = String(request.defaultOutcomeTarget || request.targetToken || "party").trim() || "party";
+  const targetTokens = targetValue === "party"
+    ? getCampaignRollTargetTokens(campaign)
+    : [targetValue].filter((token) => campaign.participants.has(token));
+  if (!targetTokens.length) {
+    return { ok: false, error: "Auto-resolve could not find a valid target." };
+  }
+
+  const failedBy = success
+    ? 0
+    : Math.max(1, Number(response.dreadTotal || 0) - Number(response.total || 0) || 1);
+  const characterDelta = {
+    health: 0,
+    mentalStress: 0,
+    radiation: 0,
+    pathTokens: 0,
+    successRolls: 0
+  };
+  const sharedDelta = {
+    tmw: 0
+  };
+
+  if (success) {
+    characterDelta.successRolls = 1;
+  } else {
+    const penaltyType = normalizeRollFailurePenaltyType(request.failurePenaltyType);
+    if (penaltyType === "health") {
+      characterDelta.health = -failedBy;
+    } else if (penaltyType === "radiation") {
+      characterDelta.radiation = failedBy;
+    } else {
+      characterDelta.mentalStress = failedBy;
+    }
+    sharedDelta.tmw = Math.max(0, parseInt(request.failTmw, 10) || 0);
+  }
+
+  const targetNames = [];
+  let bonusPathTokensGranted = 0;
+  targetTokens.forEach((targetToken) => {
+    const participant = campaign.participants.get(targetToken);
+    if (!participant) return;
+    participant.character = normalizeCharacter(participant.character, participant.name);
+    if (characterDelta.health !== 0) {
+      const maxHealth = Math.max(1, Number(participant.character.maxHealth || participant.character.maxStress || 1));
+      participant.character.health = Math.max(0, Math.min(maxHealth, Number(participant.character.health || 0) + characterDelta.health));
+    }
+    if (characterDelta.mentalStress !== 0) {
+      const maxMentalStress = Math.max(1, Number(participant.character.maxMentalStress || participant.character.mentalStressCap || participant.character.stressCap || 20));
+      const nextStress = Math.max(0, Math.min(maxMentalStress, Number((typeof participant.character.mentalStress === "number" ? participant.character.mentalStress : participant.character.stress) || 0) + characterDelta.mentalStress));
+      participant.character.mentalStress = nextStress;
+      participant.character.stress = nextStress;
+    }
+    if (characterDelta.radiation !== 0) {
+      participant.character.rads = Math.max(0, Number(participant.character.rads || participant.character.radiation || 0) + characterDelta.radiation);
+    }
+    if (characterDelta.pathTokens !== 0) {
+      participant.character.pathTokens = Math.max(0, Number(participant.character.pathTokens || 0) + characterDelta.pathTokens);
+    }
+    if (characterDelta.successRolls !== 0) {
+      let nextSuccessRolls = Math.max(0, Number(participant.character.successRolls || participant.character.successRollCount || 0) + characterDelta.successRolls);
+      if (nextSuccessRolls >= 3) {
+        const granted = Math.floor(nextSuccessRolls / 3);
+        nextSuccessRolls = nextSuccessRolls % 3;
+        participant.character.pathTokens = Math.max(0, Number(participant.character.pathTokens || 0) + granted);
+        bonusPathTokensGranted += granted;
+      }
+      participant.character.successRolls = nextSuccessRolls;
+      participant.character.successRollCount = nextSuccessRolls;
+    }
+    participant.character.updatedAt = Date.now();
+    targetNames.push(String(participant.name || participant.character.name || "Wayfarer"));
+  });
+
+  if (sharedDelta.tmw !== 0) {
+    campaign.shared.tmw = Math.max(0, Number(campaign.shared.tmw || 0) + sharedDelta.tmw);
+  }
+
+  const sharedState = campaign.shared && campaign.shared.state && typeof campaign.shared.state === "object"
+    ? campaign.shared.state
+    : {};
+  campaign.shared.state = sharedState;
+  const pending = ensurePendingChecksState(sharedState);
+  const checkId = String(request.pendingCheckId || "").trim();
+  const existingRecord = checkId && pending.active && pending.active[checkId] && typeof pending.active[checkId] === "object"
+    ? pending.active[checkId]
+    : null;
+  const record = existingRecord || buildPendingCheckStubFromRollRequest(campaign, request, campaign.participants.get(campaign.gmToken || ""));
+
+  if (checkId) {
+    if (!Array.isArray(record.submissions)) record.submissions = [];
+    const normalizedSubmission = {
+      token: String(response.token || "").trim(),
+      name: String(response.name || "Wayfarer").slice(0, 48),
+      role: String(response.role || "player") === "gm" ? "gm" : "player",
+      total: Math.max(0, Number(response.total || 0) || 0),
+      dreadTotal: Math.max(0, Number(response.dreadTotal || 0) || 0),
+      die: Math.max(1, Number(response.die || 4) || 4),
+      success,
+      method: String(response.method || "auto").slice(0, 24),
+      notes: String(response.notes || "").slice(0, 180),
+      at: Number(response.at || Date.now()) || Date.now()
+    };
+    const submissionIdx = record.submissions.findIndex((entry) => String(entry && entry.token || "") === normalizedSubmission.token);
+    if (submissionIdx >= 0) record.submissions[submissionIdx] = normalizedSubmission;
+    else record.submissions.push(normalizedSubmission);
+
+    record.status = "resolved";
+    record.resolvedAt = Date.now();
+    record.resolvedBy = "Server Auto-Resolve";
+    record.outcome = {
+      success,
+      actionTotal: Math.max(0, Number(response.total || 0) || 0),
+      dreadTotal: Math.max(0, Number(response.dreadTotal || 0) || 0),
+      margin: success ? Math.max(0, Number(response.total || 0) - Number(response.dreadTotal || 0)) : failedBy,
+      failedBy,
+      manual: String(response.method || "auto") === "manual",
+      resolvedVia: "server-auto-player-submit",
+      effectsApplied: {
+        checkId,
+        label: String(request.label || "GM Check"),
+        outcome: success ? "success" : "failure",
+        scope: targetValue === "party" ? "party" : "individual",
+        targetTokens: targetTokens.slice(),
+        targetNames: targetNames.slice(),
+        characterDelta: Object.assign({}, characterDelta),
+        sharedDelta: Object.assign({}, sharedDelta),
+        bonusPathTokensGranted
+      }
+    };
+    record.effectsApplied = record.outcome.effectsApplied;
+    delete pending.active[checkId];
+    pending.history.push(record);
+    if (pending.history.length > 80) pending.history = pending.history.slice(-80);
+    campaign.shared.stateVersion = Math.max(0, Number(campaign.shared.stateVersion || 0)) + 1;
+  }
+
+  const effectParts = [];
+  if (characterDelta.pathTokens !== 0) effectParts.push(`${characterDelta.pathTokens > 0 ? "+" : ""}${characterDelta.pathTokens} Path Token${Math.abs(characterDelta.pathTokens) === 1 ? "" : "s"}`);
+  if (characterDelta.successRolls !== 0) effectParts.push(`${characterDelta.successRolls > 0 ? "+" : ""}${characterDelta.successRolls} Successful Roll${Math.abs(characterDelta.successRolls) === 1 ? "" : "s"}`);
+  if (bonusPathTokensGranted !== 0) effectParts.push(`+${bonusPathTokensGranted} Bonus Path Token${Math.abs(bonusPathTokensGranted) === 1 ? "" : "s"}`);
+  if (characterDelta.mentalStress !== 0) effectParts.push(`${characterDelta.mentalStress > 0 ? "+" : ""}${characterDelta.mentalStress} Mental Stress`);
+  if (characterDelta.radiation !== 0) effectParts.push(`${characterDelta.radiation > 0 ? "+" : ""}${characterDelta.radiation} Radiation`);
+  if (characterDelta.health !== 0) {
+    effectParts.push(characterDelta.health < 0 ? `${Math.abs(characterDelta.health)} Damage` : `+${characterDelta.health} Health`);
+  }
+  if (sharedDelta.tmw !== 0) effectParts.push(`${sharedDelta.tmw > 0 ? "+" : ""}${sharedDelta.tmw} TMW`);
+
+  campaign.activeRollRequest = null;
+  campaign.updatedAt = Date.now();
+  schedulePersist();
+
+  return {
+    ok: true,
+    applied: {
+      checkId,
+      label: String(request.label || "GM Check"),
+      outcome: success ? "success" : "failure",
+      scope: targetValue === "party" ? "party" : "individual",
+      targetTokens: targetTokens.slice(),
+      targetNames: targetNames.slice(),
+      characterDelta,
+      sharedDelta,
+      bonusPathTokensGranted,
+      effectText: effectParts.join(", ")
+    }
   };
 }
 
@@ -2418,6 +2726,9 @@ io.on("connection", (socket) => {
           : {};
         merged.missionTokens = Object.assign({}, existingTokens, safeClone(incoming.missionTokens) || {});
       }
+      if (incoming.pendingChecks && typeof incoming.pendingChecks === "object") {
+        merged.pendingChecks = mergeResolvedPendingChecks(existingState.pendingChecks, incoming.pendingChecks);
+      }
     }
     if (Array.isArray(incoming.economyLedger)) {
       const existingLedger = Array.isArray(existingState.economyLedger) ? existingState.economyLedger : [];
@@ -2736,12 +3047,14 @@ io.on("connection", (socket) => {
 
     const healthDeltaRaw = Number(characterDelta.health || 0);
     const mentalStressDeltaRaw = Number(characterDelta.mentalStress || 0);
+    const radiationDeltaRaw = Number(characterDelta.radiation || characterDelta.rads || 0);
     const pathTokensDeltaRaw = Number(characterDelta.pathTokens || 0);
     const successRollsDeltaRaw = Number(characterDelta.successRolls || characterDelta.successRollCount || 0);
     const tmwDeltaRaw = Number(sharedDelta.tmw || 0);
 
     const healthDelta = Number.isFinite(healthDeltaRaw) ? Math.trunc(healthDeltaRaw) : 0;
     const mentalStressDelta = Number.isFinite(mentalStressDeltaRaw) ? Math.trunc(mentalStressDeltaRaw) : 0;
+    const radiationDelta = Number.isFinite(radiationDeltaRaw) ? Math.trunc(radiationDeltaRaw) : 0;
     const pathTokensDelta = Number.isFinite(pathTokensDeltaRaw) ? Math.trunc(pathTokensDeltaRaw) : 0;
     const successRollsDelta = Number.isFinite(successRollsDeltaRaw) ? Math.trunc(successRollsDeltaRaw) : 0;
     const tmwDelta = Number.isFinite(tmwDeltaRaw) ? Math.trunc(tmwDeltaRaw) : 0;
@@ -2776,6 +3089,9 @@ io.on("connection", (socket) => {
         participant.character.mentalStress = nextStress;
         participant.character.stress = nextStress;
       }
+      if (radiationDelta !== 0) {
+        participant.character.rads = Math.max(0, Number(participant.character.rads || participant.character.radiation || 0) + radiationDelta);
+      }
       if (pathTokensDelta !== 0) {
         participant.character.pathTokens = Math.max(0, Number(participant.character.pathTokens || 0) + pathTokensDelta);
       }
@@ -2803,6 +3119,7 @@ io.on("connection", (socket) => {
     if (successRollsDelta !== 0) effectParts.push(`${successRollsDelta > 0 ? "+" : ""}${successRollsDelta} Successful Roll${Math.abs(successRollsDelta) === 1 ? "" : "s"}`);
     if (bonusPathTokensGranted !== 0) effectParts.push(`+${bonusPathTokensGranted} Bonus Path Token${Math.abs(bonusPathTokensGranted) === 1 ? "" : "s"}`);
     if (mentalStressDelta !== 0) effectParts.push(`${mentalStressDelta > 0 ? "+" : ""}${mentalStressDelta} Mental Stress`);
+    if (radiationDelta !== 0) effectParts.push(`${radiationDelta > 0 ? "+" : ""}${radiationDelta} Radiation`);
     if (healthDelta !== 0) {
       effectParts.push(
         healthDelta < 0
@@ -2829,6 +3146,7 @@ io.on("connection", (socket) => {
         characterDelta: {
           health: healthDelta,
           mentalStress: mentalStressDelta,
+          radiation: radiationDelta,
           pathTokens: pathTokensDelta,
           successRolls: successRollsDelta
         },
@@ -2855,6 +3173,7 @@ io.on("connection", (socket) => {
           characterDelta: {
             health: healthDelta,
             mentalStress: mentalStressDelta,
+            radiation: radiationDelta,
             pathTokens: pathTokensDelta,
             successRolls: successRollsDelta
           },
@@ -2963,6 +3282,10 @@ io.on("connection", (socket) => {
     const stat = String((payload && payload.stat) || "valor").trim().slice(0, 32) || "valor";
     const label = String((payload && payload.label) || "GM Check").trim().slice(0, 80) || "GM Check";
     const pendingCheckId = String((payload && payload.pendingCheckId) || "").trim();
+    const autoResolveOnSubmit = !!(payload && payload.autoResolveOnSubmit);
+    const defaultOutcomeTarget = String((payload && payload.defaultOutcomeTarget) || "").trim();
+    const failurePenaltyType = normalizeRollFailurePenaltyType(payload && payload.failurePenaltyType);
+    const failTmw = Math.max(0, parseInt(payload && payload.failTmw, 10) || 0);
     const targetToken = String((payload && payload.targetToken) || "").trim();
     const targetMember = targetToken ? campaign.participants.get(targetToken) : null;
     if (targetToken && (!targetMember || targetMember.role !== "player")) {
@@ -2976,11 +3299,27 @@ io.on("connection", (socket) => {
       dread,
       label,
       pendingCheckId,
+      autoResolveOnSubmit,
+      defaultOutcomeTarget: defaultOutcomeTarget || targetToken || "party",
+      failurePenaltyType,
+      failTmw,
       targetToken: targetToken || "",
       targetName: targetMember ? String(targetMember.name || "") : "",
       createdAt: Date.now(),
       responses: []
     };
+
+    if (pendingCheckId) {
+      const sharedState = campaign.shared && campaign.shared.state && typeof campaign.shared.state === "object"
+        ? campaign.shared.state
+        : {};
+      campaign.shared.state = sharedState;
+      const pendingChecks = ensurePendingChecksState(sharedState);
+      if (!pendingChecks.active[pendingCheckId] || typeof pendingChecks.active[pendingCheckId] !== "object") {
+        pendingChecks.active[pendingCheckId] = buildPendingCheckStubFromRollRequest(campaign, campaign.activeRollRequest, campaign.participants.get(token));
+        campaign.shared.stateVersion = Math.max(0, Number(campaign.shared.stateVersion || 0)) + 1;
+      }
+    }
 
     const gm = campaign.participants.get(token);
     addLog(campaign, "roll", `${gm ? gm.name : "GM"} called ${label}: ${stat.toUpperCase()} vs Dread d${dread}${targetMember ? ` for ${targetMember.name}` : ""}.`, {
@@ -3011,6 +3350,10 @@ io.on("connection", (socket) => {
     const total = Math.max(0, Number((payload && payload.total) || 0));
     const dreadTotal = Math.max(0, Number((payload && payload.dreadTotal) || 0));
     const die = Math.max(1, Number((payload && payload.die) || 4));
+    const method = String((payload && payload.method) || ((payload && payload.manual) ? "manual" : "auto")).slice(0, 24) || "auto";
+    const pushLuck = !!(payload && payload.pushLuck);
+    const conditionApplied = String((payload && payload.conditionApplied) || "").trim().slice(0, 40);
+    const notes = String((payload && payload.notes) || "").trim().slice(0, 180);
 
     const token = socket.data.token || "";
     const rollTargetToken = String((campaign.activeRollRequest && campaign.activeRollRequest.targetToken) || "");
@@ -3026,7 +3369,11 @@ io.on("connection", (socket) => {
       total,
       dreadTotal,
       die,
+      method,
       success: total >= dreadTotal,
+      pushLuck,
+      conditionApplied,
+      notes,
       at: Date.now()
     };
 
@@ -3040,12 +3387,42 @@ io.on("connection", (socket) => {
     addLog(
       campaign,
       "roll-result",
-      `${response.name} rolled ${campaign.activeRollRequest.stat.toUpperCase()} d${response.die}: ${response.total} vs ${response.dreadTotal} (${response.success ? "success" : "fail"}).`,
+      `${response.name} rolled ${campaign.activeRollRequest.stat.toUpperCase()} d${response.die}: ${response.total} vs ${response.dreadTotal} (${response.success ? "success" : "fail"})${response.pushLuck ? " [Push Luck]" : ""}${response.conditionApplied ? ` -> ${response.conditionApplied}` : ""}.`,
       response
     );
+
+    let autoResolved = null;
+    const activeRequest = campaign.activeRollRequest ? safeClone(campaign.activeRollRequest) || campaign.activeRollRequest : null;
+    if (
+      activeRequest
+      && activeRequest.autoResolveOnSubmit
+      && activeRequest.pendingCheckId
+      && rollTargetToken
+      && token === rollTargetToken
+    ) {
+      autoResolved = applyAutoResolvedRollRequestOutcome(campaign, activeRequest, response);
+      if (autoResolved && autoResolved.ok) {
+        addLog(
+          campaign,
+          "roll-result",
+          `Auto-resolved ${activeRequest.label || "GM Check"} (${response.success ? "success" : "failure"}) for ${autoResolved.applied && autoResolved.applied.targetNames && autoResolved.applied.targetNames.length ? autoResolved.applied.targetNames.join(", ") : response.name}: ${autoResolved.applied && autoResolved.applied.effectText ? autoResolved.applied.effectText : "no applied effect"}.`,
+          {
+            checkId: autoResolved.applied ? autoResolved.applied.checkId : "",
+            outcome: autoResolved.applied ? autoResolved.applied.outcome : (response.success ? "success" : "failure"),
+            scope: autoResolved.applied ? autoResolved.applied.scope : "individual",
+            targetTokens: autoResolved.applied ? autoResolved.applied.targetTokens : [token],
+            targetNames: autoResolved.applied ? autoResolved.applied.targetNames : [response.name],
+            characterDelta: autoResolved.applied ? autoResolved.applied.characterDelta : null,
+            sharedDelta: autoResolved.applied ? autoResolved.applied.sharedDelta : null,
+            bonusPathTokensGranted: autoResolved.applied ? autoResolved.applied.bonusPathTokensGranted : 0
+          }
+        );
+      }
+    }
+
     emitCampaignState(campaign.code);
 
-    if (typeof ack === "function") ack({ ok: true, response });
+    if (typeof ack === "function") ack({ ok: true, response, autoResolved: !!(autoResolved && autoResolved.ok), applied: autoResolved && autoResolved.applied ? autoResolved.applied : null });
   });
 
   socket.on("campaign:closeRoll", (_payload, ack) => {
