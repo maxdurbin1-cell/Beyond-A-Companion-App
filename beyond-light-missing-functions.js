@@ -4411,7 +4411,7 @@ function showRollOutcomePanel(success, isCrit, delta) {
     buttons.push({ label: '+ Successful Roll', cls: 'btn btn-sm btn-teal', action: 'successRoll', delta: 1 });
     buttons.push({ label: 'No effect', cls: 'btn btn-sm', action: 'none', delta: 0 });
   } else {
-    buttons.push({ label: 'Damage (+' + delta + ' Stress)', cls: 'btn btn-sm btn-red', action: 'stress', delta: delta });
+    buttons.push({ label: 'Damage (+' + delta + ' HP)', cls: 'btn btn-sm btn-red', action: 'stress', delta: delta });
     buttons.push({ label: 'Mental Stress (+' + delta + ')', cls: 'btn btn-sm btn-red', action: 'mentalStress', delta: delta });
     buttons.push({ label: 'Radiation (+' + delta + ')', cls: 'btn btn-sm', action: 'radiation', delta: delta, style: 'color:var(--gold2);border-color:var(--gold2);' });
     if (isCrit) {
@@ -4434,7 +4434,7 @@ function applyRollOutcome(action, delta) {
   switch (action) {
     case 'stress':
       changeHealth(delta);
-      msg = '+' + delta + ' Stress applied.';
+      msg = '+' + delta + ' HP damage applied.';
       break;
     case 'mentalStress':
       if (typeof changeMentalStress === 'function') changeMentalStress(delta);
