@@ -1994,7 +1994,7 @@
           if (typeof openModal === "function") {
             openModal(
               "Barrier Check Required",
-              "<div style='font-size:.82rem;color:var(--text2);line-height:1.6;'><strong>⛔ " + String(hex.hazard.name || "Barrier") + "</strong><br>Crossing this boundary requires <strong>Body vs DD6</strong>.<br><br><button class='btn btn-xs btn-warn' onclick='resolveWtwBarrierCrossing(\"" + String(hex.id) + "\");if(typeof closeModal===\"function\")closeModal();'>⚄ Attempt Crossing</button></div>"
+              "<div style='font-size:.82rem;color:var(--text2);line-height:1.6;'><strong>⛔ " + String(hex.hazard.name || "Barrier") + "</strong><br>Crossing this boundary requires <strong>Body vs DD6</strong>.<br><br><button class='btn btn-xs btn-warn' onclick='resolveWtwBarrierCrossing(\"" + String(hex.id) + "\");if(typeof closeModal===\"function\")closeModal();'>⚄ Attempt Crossing (Body vs DD6)</button></div>"
             );
           } else if (typeof showNotif === "function") {
             showNotif("Barrier check required before crossing.", "warn");
@@ -3474,13 +3474,13 @@
           taskId: taskId,
           task: t,
           check: check,
-          adventureDie: adventureDie,
+          adventureDie: valorDie,
           dreadDie: dreadDie,
           rollSummary: rollSummary,
           hexId: selected.id,
           zone: selected.zone
         };
-        openTaskResultModal(t, check, rollSummary, false, adventureDie, dreadDie);
+        openTaskResultModal(t, check, rollSummary, false, valorDie, dreadDie);
         return;
       }
 
@@ -3740,14 +3740,16 @@
         + "<div class='title'>" + t.title + dangerTag + "</div>"
         + "<div class='meta'>Power: " + t.power + " · Target: " + (taskHex ? (taskHex.zone + " / " + taskHex.district) : "Any district") + "</div>"
         + "<div class='meta' style='color:var(--gold2);'>"
-        + "⚄ Valor vs Dread " + dieLabel
-        + " · Reward: " + (t.rewardCredits || 150) + "₵ + Loot + +1 Teamwork"
+        + "⚄ Roll: Valor vs " + dieLabel
+        + " · Reward: " + (t.rewardCredits || 150) + "₵ + Loot + 1 Data Drive + 1 Fuel Cell"
         + "</div>"
-        + "<div class='meta' style='color:var(--muted2);font-size:.72rem;'>Failure: gain Path Token · "+
-        statLabel(t.rollStat || "valor") + " die used</div>"
+        + "<div class='meta' style='color:var(--muted2);font-size:.72rem;'>"
+        + "Success: +1 Successful Roll + 1 " + t.power + " renown + 2 Zone Reputation"
+        + "<br>Failure: accept for +1 Teamwork and a skirmish, spend 3 Teamwork to convert, or Push Luck vs " + dreadLabel(stepDreadDie(t.dread || 6, 1))
+        + "</div>"
         + "<div class='actions'>"
         + "<button class='btn btn-xs' onclick='wtwTrackTask(\"" + t.id + "\")'>Track</button>"
-        + "<button class='btn btn-xs btn-teal' onclick='wtwCompleteTask(\"" + t.id + "\")'" + (atLocation ? "" : " title='Travel to task district first' disabled") + ">Complete Task</button>"
+        + "<button class='btn btn-xs btn-teal' onclick='wtwCompleteTask(\"" + t.id + "\")'" + (atLocation ? "" : " title='Travel to task district first' disabled") + ">Roll Valor vs " + dieLabel + "</button>"
         + "</div>"
         + "</div>";
     }).join("");
@@ -3984,7 +3986,7 @@
     const encounterActions = hex.encounter
       ? (hex.encounter.mode === "combat"
         ? ("<button class='btn btn-xs btn-red' onclick='wtwResolveEncounter()'>Open Combat + Quick Access</button><button class='btn btn-xs btn-teal' onclick='wtwWinCombatEncounter(\"" + hex.id + "\")'>Victory</button><button class='btn btn-xs btn-warn' onclick='wtwFailCombatEncounter(\"" + hex.id + "\")'>Defeat</button>")
-        : ("<button class='btn btn-xs btn-teal' onclick='wtwResolveEncounter()'>Resolve Encounter</button><button class='btn btn-xs btn-primary' onclick='wtwResolveEncounterAs(\"success\")'>Manual Success</button><button class='btn btn-xs btn-warn' onclick='wtwResolveEncounterAs(\"failure\")'>Manual Failure</button>" + gmEncounterControls))
+        : ("<button class='btn btn-xs btn-teal' onclick='wtwResolveEncounter()'>Roll " + statLabel(hex.encounter.stat || "valor") + " vs DD" + normalizeDreadDie(hex.encounter.dread || 8, 8) + "</button><button class='btn btn-xs btn-primary' onclick='wtwResolveEncounterAs(\"success\")'>Manual Success</button><button class='btn btn-xs btn-warn' onclick='wtwResolveEncounterAs(\"failure\")'>Manual Failure</button>" + gmEncounterControls))
       : "";
     const encounterHtml = hex.encounter
       ? ("<div class='wtw-card'><div class='wtw-card-title'>Rolled Encounter" + (gmMode ? " <span style='font-size:.62rem;color:var(--purple);'>(GM)</span>" : "") + "</div><div class='wtw-card-text'><strong>" + hex.encounter.title + "</strong><br>" + hex.encounter.text + "<br>" + encounterSummary + "<br><strong>Weather Pressure:</strong> " + encounterPressure.weatherLabel + (encounterPressure.weatherHazard ? " (hazardous)" : "") + "<br><strong>Rival Pressure:</strong> " + encounterPressure.rivalLabel + "</div><div class='wtw-card-actions'>" + encounterActions + "</div></div>")
@@ -4084,7 +4086,7 @@
     const hazardHtml = hex.hazard
       ? (hex.hazard.type === 'barrier'
         ? ("<div class='wtw-card' style='border-color:#ff9066;'><div class='wtw-card-title' style='color:#ff8a72;'>⛔ BARRIER: " + hex.hazard.name + "</div><div class='wtw-card-text'><strong>Description:</strong> " + hex.hazard.desc + "<br><strong>To Cross:</strong> Body vs DD6<br><strong>On fail:</strong> gain Weakened and cannot cross this phase</div><div class='wtw-card-actions'><button class='btn btn-xs btn-warn' onclick='resolveWtwBarrierCrossing(\"" + hex.id + "\")'>⚄ Attempt Crossing (Body vs DD6)</button></div></div>")
-        : ("<div class='wtw-card'><div class='wtw-card-title' style='color:#ff8a72;'>" + (hex.hazard.type || "hazard").toUpperCase() + ": " + hex.hazard.name + "</div><div class='wtw-card-text'><strong>Risk:</strong> " + hex.hazard.desc + "<br><strong>Check:</strong> " + statLabel(hex.hazard.stat || "body") + " vs DD" + (hex.hazard.dread || 8) + "<br><strong>On fail:</strong> gain " + (hex.hazard.condition || "weakened") + "</div><div class='wtw-card-actions'><button class='btn btn-xs btn-red' onclick='wtwResolveHazard(\"" + hex.id + "\")'>Face Hazard</button></div></div>"))
+        : ("<div class='wtw-card'><div class='wtw-card-title' style='color:#ff8a72;'>" + (hex.hazard.type || "hazard").toUpperCase() + ": " + hex.hazard.name + "</div><div class='wtw-card-text'><strong>Risk:</strong> " + hex.hazard.desc + "<br><strong>Check:</strong> " + statLabel(hex.hazard.stat || "body") + " vs DD" + (hex.hazard.dread || 8) + "<br><strong>On fail:</strong> gain " + (hex.hazard.condition || "weakened") + "</div><div class='wtw-card-actions'><button class='btn btn-xs btn-red' onclick='wtwResolveHazard(\"" + hex.id + "\")'>Roll " + statLabel(hex.hazard.stat || "body") + " vs DD" + (hex.hazard.dread || 8) + "</button></div></div>"))
       : "<div class='wtw-muted'>No active district hazard in this hex.</div>";
 
     const wayfarerHtml = hex.wayfarer
@@ -4139,7 +4141,7 @@
       + "<div class='wtw-card-actions'>"
       + (evt.mode === "combat"
         ? ("<button class='btn btn-xs btn-red' onclick='wtwResolveEvent(\"" + hex.id + "\")'>Open Combat + Quick Access</button><button class='btn btn-xs btn-teal' onclick='wtwWinCombatEvent(\"" + hex.id + "\")'>Victory</button><button class='btn btn-xs btn-warn' onclick='wtwFailCombatEvent(\"" + hex.id + "\")'>Defeat</button>")
-        : ("<button class='btn btn-xs btn-primary' onclick='wtwResolveEvent(\"" + hex.id + "\")'>Resolve Event</button>"))
+        : ("<button class='btn btn-xs btn-primary' onclick='wtwResolveEvent(\"" + hex.id + "\")'>Roll Valor vs DD" + eventDread + "</button>"))
       + "<button class='btn btn-xs' onclick='wtwRollEncounter()'>Roll Encounter</button></div>"
       + "</div>";
 
@@ -4184,6 +4186,47 @@
     const backstoryAnchorHtml = (typeof window.buildBackstoryAnchorActionPanelHtml === "function")
       ? window.buildBackstoryAnchorActionPanelHtml("wtw", String(hex.id))
       : "";
+    const celebrationStats = ["lead", "mind", "body", "spirit", "control", "strike", "shoot", "defend"];
+    const celebrationHtml = hex.pendingServiceCelebration
+      ? ("<div class='wtw-card'>"
+          + "<div class='wtw-card-title'>District Celebration</div>"
+          + "<div class='wtw-card-text'><strong>" + hex.pendingServiceCelebration.name + "</strong><br>"
+          + "<strong>Success:</strong> " + hex.pendingServiceCelebration.success + "<br>"
+          + "<strong>Failure:</strong> " + hex.pendingServiceCelebration.failure + "</div>"
+          + "<div class='wtw-card-actions'>"
+          + celebrationStats.map(function (key) {
+              return "<button class='btn btn-xs btn-teal' onclick='wtwResolveCelebration(\"" + hex.id + "\",\"" + key + "\")'>" + statLabel(key) + " vs DD" + Number(hex.pendingServiceCelebration.dd || 6) + "</button>";
+            }).join("")
+          + "</div>"
+        + "</div>")
+      : (hex.serviceNode
+        ? ("<div class='wtw-card'>"
+            + "<div class='wtw-card-title'>District Celebration</div>"
+            + "<div class='wtw-card-text'>Roll a downtime celebration for this district when the table wants an extra social beat, wager, or local complication.</div>"
+            + "<div class='wtw-card-actions'><button class='btn btn-xs btn-primary' onclick='wtwRollCelebration(\"" + hex.id + "\")'>Roll Celebration Event</button></div>"
+          + "</div>")
+        : "");
+    const serviceCards = hex.serviceNode
+      ? (services.length
+          ? services.map(function (svc, idx) {
+              return ""
+                + "<div class='wtw-list-card' style='border-color:rgba(126,224,178,.35);'>"
+                + "<div class='title'>" + svc.name + " <span style='font-size:.62rem;color:#7ee0b2;text-transform:uppercase;letter-spacing:.06em;'>Service</span></div>"
+                + "<div class='meta'>" + svc.desc + "</div>"
+                + "<div class='meta' style='color:var(--gold2);'>Cost: " + Number(svc.cost || 0) + "₵</div>"
+                + "<div class='actions'><button class='btn btn-xs btn-primary' onclick='wtwBuyService(\"" + hex.id + "\"," + idx + ")'>Buy Service</button></div>"
+                + "</div>";
+            }).join("")
+          : "<div class='wtw-muted'>This district has a service hub, but no services are available right now.</div>")
+      : "<div class='wtw-muted'>No district service hub in this hex.</div>";
+    const servicesSection = ""
+      + "<div class='wtw-card-text' style='margin-bottom:.3rem;'>"
+      + (hex.serviceNode
+        ? "Service hub active here. Service bonuses and district celebrations are resolved from this panel."
+        : "Travel to a district marked with the Service icon to access service purchases and celebrations.")
+      + "</div>"
+      + serviceCards
+      + celebrationHtml;
 
     const worldSystems = hazardHtml + wayfarerHtml + structureHtml + travelHtml + renderSkirmishWidget(hex);
     const powerSection = ""
@@ -4200,12 +4243,13 @@
       + "<div class='wtw-headline'>" + hex.zone + " - " + hex.district + "</div>"
       + "<div class='wtw-summary'>" + n.location + " • " + n.sight + " • " + n.weather + " • " + n.feature + "</div>"
       + "</div>"
-      + (campaignSceneAvailable ? "<div class='wtw-chip-wrap' style='margin-bottom:.32rem;'><button class='btn btn-xs btn-primary' onclick='openWorldThatWasCampaignSceneCheck(\"" + String(hex.id) + "\")'>GM Scene Check</button></div>" : "")
+      + (campaignSceneAvailable ? "<div class='wtw-chip-wrap' style='margin-bottom:.32rem;'><button class='btn btn-xs btn-primary' onclick='openWorldThatWasCampaignSceneCheck(\"" + String(hex.id) + "\")'>GM Scene Check (Lead vs DD8)</button></div>" : "")
       + summaryGrid
       + buildWtwTravelSceneCard(hex)
       + eventCard
         + buildWtwAccordionStateful("Encounter & Markers", activityHtml + encounterHtml + markerHtml + wtwWorldStateHtml + backstoryAnchorHtml, true, "encounter")
         + buildWtwAccordionStateful("Hazards, Wayfarers, Exploration & Travel", worldSystems, false, "worldsystems")
+        + buildWtwAccordionStateful("District Services", servicesSection, false, "services")
         + buildWtwAccordionStateful("Cyberpunk Holdings", singleHoldingEntryHtml + (holdingsHtml || "<div class='wtw-muted'>No holdings discovered in this district.</div>"), false, "holdings")
         + buildWtwAccordionStateful("Zone Power & Tasks", powerSection, false, "powertasks")
       + "</div>";

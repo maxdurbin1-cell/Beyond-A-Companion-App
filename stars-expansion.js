@@ -9231,7 +9231,7 @@ function renderGalaxyTaskPanel(taskId) {
       ${task.text}
     </div>
     <div style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem;">
-      <button class="btn btn-xs btn-teal" onclick="rollGalaxyTaskCheck('${task.id}',true)">Roll to Succeed</button>
+      <button class="btn btn-xs btn-teal" onclick="rollGalaxyTaskCheck('${task.id}',true)">Roll Valor vs DD8</button>
       <button class="btn btn-xs" onclick="resolveGalaxyTaskOutcome('${task.id}',false)">Mark Failed</button>
     </div>`;
 }
@@ -9240,22 +9240,39 @@ function rollGalaxyTaskCheck(taskId, attempt) {
   ensureStarsState();
   const task = getGalaxyTaskById(taskId);
   if (!task || task.resolved) return;
-  const valorDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : ((S.stats && S.stats.valor) || 6);
-  const dreadRoll = roll(8);
-  const playerRoll = roll(valorDie);
-  const success = playerRoll >= dreadRoll;
-  task.lastCheck = { actionTotal: playerRoll, dreadTotal: dreadRoll, failedBy: Math.max(1, dreadRoll - playerRoll), actionDie: valorDie, dreadDie: 8 };
-  const resultText = success 
-    ? `Rolled d${valorDie}: ${playerRoll} vs Dread d8: ${dreadRoll} — SUCCESS!` 
-    : `Rolled d${valorDie}: ${playerRoll} vs Dread d8: ${dreadRoll} — failure.`;
-  const out = document.getElementById('starExplorationDetail');
-  if (out) {
-    out.innerHTML = `<div style="font-size:.88rem;color:var(--gold2);margin-bottom:.2rem;">${task.title}</div>
-      <div style="font-size:.84rem;color:var(--muted2);line-height:1.6;">${resultText}</div>
-      <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;">
-        <button class="btn btn-xs btn-teal" onclick="resolveGalaxyTaskOutcome('${task.id}',${success})">Accept Result</button>
-      </div>`;
-  }
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Galaxy Task',
+    context: task.title,
+    label: 'Galaxy Task',
+    statKey: 'valor',
+    statLabel: 'Valor',
+    dreadDie: 8,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : ((S.stats && S.stats.valor) || 6))));
+      task.lastCheck = {
+        actionTotal: actionTotal,
+        dreadTotal: dreadTotal,
+        failedBy: Math.max(1, dreadTotal - actionTotal),
+        actionDie: actionDie,
+        dreadDie: 8,
+        manual: !!(outcome && outcome.manual)
+      };
+      const resultText = success
+        ? `Valor d${actionDie}=${actionTotal} vs Dread d8=${dreadTotal} — SUCCESS!`
+        : `Valor d${actionDie}=${actionTotal} vs Dread d8=${dreadTotal} — failure by ${Math.max(1, dreadTotal - actionTotal)}.`;
+      const out = document.getElementById('starExplorationDetail');
+      if (out) {
+        out.innerHTML = `<div style="font-size:.88rem;color:var(--gold2);margin-bottom:.2rem;">${task.title}</div>
+          <div style="font-size:.84rem;color:var(--muted2);line-height:1.6;">${resultText}</div>
+          <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;">
+            <button class="btn btn-xs btn-teal" onclick="resolveGalaxyTaskOutcome('${task.id}',${success})">Accept Result</button>
+          </div>`;
+      }
+    }
+  });
 }
 
 function resolveGalaxyTaskOutcome(taskId, success) {
@@ -10180,6 +10197,14 @@ function resolveGalaxySkillCheck(primaryKey, secondaryKey, dd, label) {
   const p = (typeof getEffectiveDie === 'function') ? getEffectiveDie(primaryKey) : ((S.stats && S.stats[primaryKey]) || 4);
   const s = secondaryKey ? ((typeof getEffectiveDie === 'function') ? getEffectiveDie(secondaryKey) : ((S.stats && S.stats[secondaryKey]) || 4)) : 0;
   const die = Math.max(p || 4, s || 0, 4);
+  const primaryLabel = String(primaryKey || 'action').charAt(0).toUpperCase() + String(primaryKey || 'action').slice(1);
+  const secondaryLabel = secondaryKey ? (String(secondaryKey).charAt(0).toUpperCase() + String(secondaryKey).slice(1)) : '';
+  let actionLabel = primaryLabel;
+  if (secondaryKey) {
+    if (Number(p || 0) > Number(s || 0)) actionLabel = primaryLabel;
+    else if (Number(s || 0) > Number(p || 0)) actionLabel = secondaryLabel;
+    else actionLabel = primaryLabel + '/' + secondaryLabel;
+  }
   const invBonus = (typeof collectInventoryBonusesForStat === 'function') ? collectInventoryBonusesForStat(primaryKey) : { advDice: [], flat: 0, addValor: 0 };
   const action = (typeof rollWithAdvantage === 'function' && invBonus.advDice && invBonus.advDice.length)
     ? rollWithAdvantage(die, invBonus.advDice)
@@ -10198,8 +10223,65 @@ function resolveGalaxySkillCheck(primaryKey, secondaryKey, dd, label) {
     dreadTotal: dread.total,
     actionDie: die,
     dreadDie: dd,
-    text: `${label}: d${die}=${actionTotal} vs DD${dd}=${dread.total}`,
+    text: `${label}: ${actionLabel} d${die}=${actionTotal} vs Dread d${dd}=${dread.total}`,
   };
+}
+
+function formatStarsCheckLabel(label) {
+  return String(label || 'Lead')
+    .split('/')
+    .map(function(part) {
+      return String(part || '')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(function(word) {
+          return word.charAt(0).toUpperCase() + word.slice(1);
+        })
+        .join(' ');
+    })
+    .join('/');
+}
+
+function runStarsActionDreadCheck(config) {
+  const cfg = config && typeof config === 'object' ? config : {};
+  const statKey = String(cfg.statKey || 'valor').toLowerCase();
+  const secondaryKey = cfg.secondaryKey ? String(cfg.secondaryKey).toLowerCase() : null;
+  const statLabel = String(cfg.statLabel || (statKey.charAt(0).toUpperCase() + statKey.slice(1) + (secondaryKey ? ('/' + secondaryKey.charAt(0).toUpperCase() + secondaryKey.slice(1)) : '')));
+  const dreadDie = Math.max(4, Number(cfg.dreadDie || 6));
+  const primaryDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie(statKey) : ((S.stats && S.stats[statKey]) || 4);
+  const secondaryDie = secondaryKey ? ((typeof getEffectiveDie === 'function') ? getEffectiveDie(secondaryKey) : ((S.stats && S.stats[secondaryKey]) || 4)) : 0;
+  const actionDie = Math.max(4, Number(primaryDie || 4), Number(secondaryDie || 0));
+  const onResolve = (typeof cfg.onResolve === 'function') ? cfg.onResolve : null;
+  if (isGlobalManualRollMode()) {
+    openGlobalManualActionDreadPrompt({
+      title: String(cfg.title || ('Manual Roll - ' + statLabel)),
+      context: String(cfg.context || cfg.label || (statLabel + ' vs DD' + dreadDie)),
+      statKey: statKey,
+      statLabel: statLabel,
+      actionDie: actionDie,
+      dreadDie: dreadDie,
+      onResolve: onResolve
+    });
+    return true;
+  }
+  const check = resolveGalaxySkillCheck(statKey, secondaryKey, dreadDie, String(cfg.label || (statLabel + ' Check')));
+  if (onResolve) {
+    onResolve({
+      success: !!check.success,
+      text: check.text,
+      manual: false,
+      pushLuck: false,
+      statKey: statKey,
+      statLabel: statLabel,
+      actionDie: Number(check.actionDie || actionDie),
+      dreadDie: Number(check.dreadDie || dreadDie),
+      actionTotal: Number(check.actionTotal || 0),
+      dreadTotal: Number(check.dreadTotal || 0),
+      delta: Math.max(1, Number(check.delta || 1))
+    });
+  }
+  return true;
 }
 
 const STAR_SPACE_ENCOUNTERS = [
@@ -13223,7 +13305,7 @@ function openPlanetLostCityHexcrawl() {
       + '</div>')
     : '';
   const actionBtn = active && !active.explored
-    ? '<button class="btn btn-xs btn-teal" onclick="resolvePlanetLostCityHexNode(\'' + String(active.id) + '\')">Scout Node</button>'
+    ? '<button class="btn btn-xs btn-teal" onclick="resolvePlanetLostCityHexNode(\'' + String(active.id) + '\')">Scout Node (Valor vs DD' + Number(active.dd || 6) + ')</button>'
     : '<span style="font-size:.7rem;color:var(--green2);">Node already explored.</span>';
 
   openModal('Lost City District Hexcrawl', '<div style="font-size:.82rem;color:var(--text2);line-height:1.56;">'
@@ -13352,7 +13434,7 @@ function openPlanetLostCityBuildingExploration() {
   }
   if (generatedRooms) syncCampaignSharedWorldSoon('planet-lostcity-generated');
   const roomsHtml = selected.data.lostCityRooms.map((room) => {
-    return `<div style='padding:.24rem .35rem;border:1px solid var(--border2);margin-bottom:.25rem;'><strong>${room.id}. ${room.area}</strong><br>${room.detail}<br>${room.cleared ? `Loot: ${room.loot} ✓` : `<button class='btn btn-xs btn-teal' onclick='resolvePlanetLostCityRoom(${selected.id},${room.id})'>Explore Room (VD vs d4)</button>`}</div>`;
+    return `<div style='padding:.24rem .35rem;border:1px solid var(--border2);margin-bottom:.25rem;'><strong>${room.id}. ${room.area}</strong><br>${room.detail}<br>${room.cleared ? `Loot: ${room.loot} ✓` : `<button class='btn btn-xs btn-teal' onclick='resolvePlanetLostCityRoom(${selected.id},${room.id})'>Explore Room (Valor vs DD${Number(room.dread || 4)})</button>`}</div>`;
   }).join('');
   if (typeof openModal === 'function') {
     openModal('Lost City Building Exploration', `<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">
@@ -15145,7 +15227,8 @@ function resolvePlanetWeatherCheck() {
     showNotif('Traversal gear bypassed weather danger effects.', 'good');
     return;
   }
-  const stat = state.currentWeather.check || 'lead';
+  const stat = String(state.currentWeather.check || 'lead').toLowerCase();
+  const statLabel = formatStarsCheckLabel(state.currentWeather.checkLabel || stat);
   const dd = state.currentWeather.dd || 6;
   const pendingCheck = startCampaignGmCheckRecord({
     type: 'weather',
@@ -15163,7 +15246,7 @@ function resolvePlanetWeatherCheck() {
       title: 'Manual Roll - Planet Weather Check',
       context: String(state.currentWeather.label || 'Weather') + ' weather pressure',
       statKey: stat,
-      statLabel: String(stat).charAt(0).toUpperCase() + String(stat).slice(1),
+      statLabel: statLabel,
       actionDie: die,
       dreadDie: dd,
       onResolve: function (outcome) {
@@ -15191,7 +15274,7 @@ function resolvePlanetWeatherCheck() {
     });
     return;
   }
-  const result = resolveGalaxySkillCheck('valor', stat, dd, `Planet Weather: ${state.currentWeather.label}`);
+  const result = resolveGalaxySkillCheck(stat, null, dd, `Planet Weather: ${state.currentWeather.label}`);
   resolveCampaignGmCheckRecord(pendingCheckId, {
     success: !!result.success,
     stat: stat,
@@ -16826,77 +16909,116 @@ function yessodExploreRuins(cellId) {
   const state = ensureYessodState();
   const strataIdx = Math.max(0, Math.min(5, Number(state.currentStrata || 1) - 1));
   const dd = YESSOD_STRATA_FLAVOR[strataIdx].threat + 4;
-  const result = roll(12);
-  const success = result >= dd;
-  const outcomes = success ? [
-    'Sealed data cache cracked. Relic schematics recovered.',
-    'Pre-Sundering arms cache — weapons and a coded map.',
-    'Oracle archive fragment with death-toll records and old transit codes.',
-    'Medicinal stash from the last occupants. Restore 1d4 Health.',
-  ] : [
-    'Structural collapse during descent. Take 1 Health damage.',
-    'Ancient security drone activates. Roll Monster Encounter.',
-    'Spore trap from fungal colonists. Gain 1 Stress.',
-    'Nothing recoverable. The ruins are thoroughly scoured.',
-  ];
-  const outcome = pick(outcomes);
-  if (success && typeof addSuccessRoll === 'function') addSuccessRoll();
-  if (success && outcome.includes('Restore')) { if (typeof changeHealth === 'function') changeHealth(-roll(4)); }
-  const failedBy = Math.max(1, dd - result);
-  if (!success && outcome.includes('Health damage')) { if (typeof changeHealth === 'function') changeHealth(failedBy); }
-  if (!success && outcome.includes('Gain 1 Stress')) { if (typeof changeStress === 'function') changeStress(failedBy); }
-  if (!success && typeof addTMWOnFail === 'function') addTMWOnFail('yessod-ruins-failure', { failedBy: failedBy, actionDie: 12, dreadDie: dd });
-  if (!success && outcome.includes('drone')) rollYessodMonsterEncounter(cellId);
-  state.lastEncounter = `Ruin Exploration (d12: ${result} vs DD${dd}): ${success ? 'SUCCESS' : 'FAILURE'} — ${outcome}`;
-  const out = document.getElementById('yessodEncResult');
-  if (out) out.innerHTML = `<div class="venture-result"><div class="vr-type">Ruin Exploration</div>${state.lastEncounter}</div>`;
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Yessod Ruins',
+    context: 'Ruin Exploration',
+    label: 'Yessod Ruins',
+    statKey: 'valor',
+    statLabel: 'Valor',
+    dreadDie: dd,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : 6)));
+      const rollText = `Valor d${actionDie}=${actionTotal} vs Dread d${dd}=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      const outcomes = success ? [
+        'Sealed data cache cracked. Relic schematics recovered.',
+        'Pre-Sundering arms cache — weapons and a coded map.',
+        'Oracle archive fragment with death-toll records and old transit codes.',
+        'Medicinal stash from the last occupants. Restore 1d4 Health.',
+      ] : [
+        'Structural collapse during descent. Take 1 Health damage.',
+        'Ancient security drone activates. Roll Monster Encounter.',
+        'Spore trap from fungal colonists. Gain 1 Stress.',
+        'Nothing recoverable. The ruins are thoroughly scoured.',
+      ];
+      const resultLine = pick(outcomes);
+      const failedBy = Math.max(1, dreadTotal - actionTotal);
+      if (success && typeof addSuccessRoll === 'function') addSuccessRoll();
+      if (success && resultLine.includes('Restore') && typeof changeHealth === 'function') changeHealth(-roll(4));
+      if (!success && resultLine.includes('Health damage') && typeof changeHealth === 'function') changeHealth(failedBy);
+      if (!success && resultLine.includes('Gain 1 Stress') && typeof changeStress === 'function') changeStress(failedBy);
+      if (!success && typeof addTMWOnFail === 'function') addTMWOnFail('yessod-ruins-failure', { failedBy: failedBy, actionDie: actionDie, dreadDie: dd });
+      if (!success && resultLine.includes('drone')) rollYessodMonsterEncounter(cellId);
+      state.lastEncounter = `Ruin Exploration (${rollText}): ${success ? 'SUCCESS' : 'FAILURE'} — ${resultLine}`;
+      const out = document.getElementById('yessodEncResult');
+      if (out) out.innerHTML = `<div class="venture-result"><div class="vr-type">Ruin Exploration</div>${state.lastEncounter}</div>`;
+    }
+  });
 }
 
 function yessodExploreLostCity(cellId) {
   const state = ensureYessodState();
-  const rollValue = roll(6);
-  const result = rollValue >= 4;
-  const outcomes = result ? [
-    'Sealed archive room found — air intact, books dry, chair empty. A new hex is revealed.',
-    'Pre-Sundering civic records recovered. All adjacent hexes are marked explored.',
-    'A hidden Ironway station discovered beneath the water. New travel route opened.',
-  ] : [
-    'Flooded corridor collapsed. Take 2 Health damage.',
-    'Encountered a marsh seraph guardian. Roll Monster Encounter.',
-    'Disoriented in the submerged ruins. Gain 1 Trauma.',
-  ];
-  const outcome = pick(outcomes);
-  if (result && typeof addSuccessRoll === 'function') addSuccessRoll();
-  const failedBy = Math.max(1, 4 - rollValue);
-  if (!result && outcome.includes('Health')) { if (typeof changeHealth === 'function') changeHealth(failedBy); }
-  if (!result && outcome.includes('Trauma')) { if (typeof addTrauma === 'function') addTrauma(failedBy); }
-  if (!result && typeof addTMWOnFail === 'function') addTMWOnFail('yessod-lost-city-failure', { failedBy: failedBy, actionDie: 6, dreadDie: 4 });
-  if (!result && outcome.includes('seraph')) rollYessodMonsterEncounter(cellId);
-  state.lastEncounter = `Lost City Exploration (d6: ${rollValue} vs DD4): ${result ? 'SUCCESS' : 'FAILURE'} — ${outcome}`;
-  const out = document.getElementById('yessodEncResult');
-  if (out) out.innerHTML = `<div class="venture-result"><div class="vr-type">Lost City</div>${state.lastEncounter}</div>`;
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Lost City Entry',
+    context: 'Lost City Entry',
+    label: 'Lost City Entry',
+    statKey: 'body',
+    statLabel: 'Body',
+    dreadDie: 8,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('body') : 6)));
+      const rollText = `Body d${actionDie}=${actionTotal} vs Dread d8=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      const outcomes = success ? [
+        'Sealed archive room found — air intact, books dry, chair empty. A new hex is revealed.',
+        'Pre-Sundering civic records recovered. All adjacent hexes are marked explored.',
+        'A hidden Ironway station discovered beneath the water. New travel route opened.',
+      ] : [
+        'Flooded corridor collapsed. Take 2 Health damage.',
+        'Encountered a marsh seraph guardian. Roll Monster Encounter.',
+        'Disoriented in the submerged ruins. Gain 1 Trauma.',
+      ];
+      const resultLine = pick(outcomes);
+      const failedBy = Math.max(1, dreadTotal - actionTotal);
+      if (success && typeof addSuccessRoll === 'function') addSuccessRoll();
+      if (!success && resultLine.includes('Health') && typeof changeHealth === 'function') changeHealth(failedBy);
+      if (!success && resultLine.includes('Trauma') && typeof addTrauma === 'function') addTrauma(failedBy);
+      if (!success && typeof addTMWOnFail === 'function') addTMWOnFail('yessod-lost-city-failure', { failedBy: failedBy, actionDie: actionDie, dreadDie: 8 });
+      if (!success && resultLine.includes('seraph')) rollYessodMonsterEncounter(cellId);
+      state.lastEncounter = `Lost City Exploration (${rollText}): ${success ? 'SUCCESS' : 'FAILURE'} — ${resultLine}`;
+      const out = document.getElementById('yessodEncResult');
+      if (out) out.innerHTML = `<div class="venture-result"><div class="vr-type">Lost City</div>${state.lastEncounter}</div>`;
+    }
+  });
 }
 
 function yessodTravelThroughGate(cellId) {
   const state = ensureYessodState();
-  const dd = 12;
-  const result = roll(12);
-  if (result >= 6) {
-    if (typeof addSuccessRoll === 'function') addSuccessRoll();
-    showNotif(`Gate transit success (d12: ${result}). You emerge in a new region.`, 'good');
-    const wilderness = state.cells.filter((c) => c.marker === 'wilderness' && !c.explored);
-    if (wilderness.length) {
-      const dest = pick(wilderness);
-      dest.explored = true;
-      state.selectedCellId = dest.id;
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Yessod Gate Transit',
+    context: 'Yessod gate transit',
+    label: 'Yessod Gate Transit',
+    statKey: 'spirit',
+    statLabel: 'Spirit',
+    dreadDie: 12,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('spirit') : 6)));
+      const rollText = `Spirit d${actionDie}=${actionTotal} vs Dread d12=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      if (success) {
+        if (typeof addSuccessRoll === 'function') addSuccessRoll();
+        const wilderness = state.cells.filter((c) => c.marker === 'wilderness' && !c.explored);
+        if (wilderness.length) {
+          const dest = pick(wilderness);
+          dest.explored = true;
+          state.selectedCellId = dest.id;
+        }
+        showNotif(`Gate transit succeeded. ${rollText}.`, 'good');
+      } else {
+        const failedBy = Math.max(1, dreadTotal - actionTotal);
+        if (typeof changeStress === 'function') changeStress(failedBy);
+        if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-gate-transit-failure', { failedBy: failedBy, actionDie: actionDie, dreadDie: 12 });
+        showNotif(`Gate transit failed. ${rollText}. Temporal backlash: +${failedBy} Stress.`, 'warn');
+      }
+      renderYessodPanel();
     }
-  } else {
-    const failedBy = Math.max(1, 6 - result);
-    if (typeof changeStress === 'function') changeStress(failedBy);
-    if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-gate-transit-failure', { failedBy: failedBy, actionDie: 12, dreadDie: 6 });
-    showNotif(`Gate transit failed (d12: ${result} vs Spirit DD6). Temporal backlash. +${failedBy} Stress.`, 'warn');
-  }
-  renderYessodPanel();
+  });
 }
 
 function yessodUseLift(delta) {
@@ -16918,35 +17040,63 @@ function yessodTraverseBarrier(cellId) {
   const state = ensureYessodState();
   const strataIdx = Math.max(0, Math.min(5, Number(state.currentStrata || 1) - 1));
   const dd = YESSOD_STRATA_FLAVOR[strataIdx].threat + 3;
-  const result = roll(12);
-  if (result >= dd) {
-    if (typeof addSuccessRoll === 'function') addSuccessRoll();
-    showNotif(`Barrier crossed (d12: ${result} vs DD${dd}). Path is clear.`, 'good');
-  } else {
-    const failedBy = Math.max(1, dd - result);
-    if (typeof addTrauma === 'function') addTrauma(failedBy);
-    if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-barrier-failure', { failedBy: failedBy, actionDie: 12, dreadDie: dd });
-    showNotif(`Barrier crossing failed (d12: ${result} vs DD${dd}). Veil fracture. +${failedBy} Trauma.`, 'warn');
-  }
-  renderYessodPanel();
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Cross Barrier',
+    context: 'Yessod barrier crossing',
+    label: 'Yessod Barrier Crossing',
+    statKey: 'valor',
+    statLabel: 'Valor',
+    dreadDie: dd,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : 6)));
+      const failedBy = Math.max(1, dreadTotal - actionTotal);
+      const rollText = `Valor d${actionDie}=${actionTotal} vs Dread d${dd}=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      if (success) {
+        if (typeof addSuccessRoll === 'function') addSuccessRoll();
+        showNotif(`Barrier crossed. ${rollText}.`, 'good');
+      } else {
+        if (typeof addTrauma === 'function') addTrauma(failedBy);
+        if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-barrier-failure', { failedBy: failedBy, actionDie: actionDie, dreadDie: dd });
+        showNotif(`Barrier crossing failed. ${rollText}. Veil fracture: +${failedBy} Trauma.`, 'warn');
+      }
+      renderYessodPanel();
+    }
+  });
 }
 
 function yessodTraversePeril(cellId) {
   const state = ensureYessodState();
   const strataIdx = Math.max(0, Math.min(5, Number(state.currentStrata || 1) - 1));
   const dd = YESSOD_STRATA_FLAVOR[strataIdx].threat + 4;
-  const result = roll(12);
-  if (result >= dd) {
-    if (typeof addSuccessRoll === 'function') addSuccessRoll();
-    showNotif(`Peril traversed (d12: ${result} vs DD${dd}). You are through.`, 'good');
-  } else {
-    const failedBy = Math.max(1, dd - result);
-    if (typeof changeHealth === 'function') changeHealth(failedBy);
-    if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-peril-failure', { failedBy: failedBy, actionDie: 12, dreadDie: dd });
-    showNotif(`Peril check failed (d12: ${result} vs DD${dd}). -${failedBy} Health from hazard exposure.`, 'warn');
-    rollYessodMonsterEncounter(cellId);
-  }
-  renderYessodPanel();
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Traverse Peril',
+    context: 'Yessod peril traversal',
+    label: 'Yessod Peril Traversal',
+    statKey: 'valor',
+    statLabel: 'Valor',
+    dreadDie: dd,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : 6)));
+      const failedBy = Math.max(1, dreadTotal - actionTotal);
+      const rollText = `Valor d${actionDie}=${actionTotal} vs Dread d${dd}=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      if (success) {
+        if (typeof addSuccessRoll === 'function') addSuccessRoll();
+        showNotif(`Peril traversed. ${rollText}.`, 'good');
+      } else {
+        if (typeof changeHealth === 'function') changeHealth(failedBy);
+        if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-peril-failure', { failedBy: failedBy, actionDie: actionDie, dreadDie: dd });
+        showNotif(`Peril traversal failed. ${rollText}. -${failedBy} Health from hazard exposure.`, 'warn');
+        rollYessodMonsterEncounter(cellId);
+      }
+      renderYessodPanel();
+    }
+  });
 }
 
 function yessodRollIronwayEncounter(cellId) {
@@ -16996,11 +17146,13 @@ function yessodRollWeatherCheck() {
   const state = ensureYessodState();
   const weather = state.currentWeather;
   if (!weather || !weather.dd) return showNotif('No dangerous weather active.', 'info');
+  const statKey = String(weather.check || 'lead').toLowerCase();
+  const statLabel = formatStarsCheckLabel(weather.checkLabel || statKey);
   const pendingCheck = startCampaignGmCheckRecord({
     type: 'weather',
     scope: 'yessod',
     label: 'Yessod Weather Check',
-    stat: 'traversal',
+    stat: statKey,
     dread: Number(weather.dd || 6),
     context: String(weather.name || 'Yessod Weather') + ' weather pressure'
   });
@@ -17029,69 +17181,39 @@ function yessodRollWeatherCheck() {
     if (typeof changeStress === 'function') changeStress(diff);
     return 'Stress';
   };
-  if (isGlobalManualRollMode()) {
-    openGlobalManualActionDreadPrompt({
-      title: 'Manual Roll - Yessod Weather Check',
-      context: String(weather.name || 'Yessod Weather') + ' weather pressure',
-      statKey: 'valor',
-      statLabel: 'Traversal',
-      actionDie: 12,
-      dreadDie: Number(weather.dd || 6),
-      onResolve: function (outcome) {
-        const success = !!(outcome && outcome.success);
-        const actionTotal = Number((outcome && outcome.actionTotal) || 0);
-        const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
-        const failedBy = Math.max(1, dreadTotal - actionTotal);
-        resolveCampaignGmCheckRecord(pendingCheckId, {
-          success,
-          stat: 'traversal',
-          actionTotal,
-          dreadTotal,
-          margin: success ? Math.max(0, actionTotal - dreadTotal) : failedBy,
-          failedBy: success ? 0 : failedBy,
-          manual: true
-        });
-        if (success) {
-          if (typeof addSuccessRoll === 'function') addSuccessRoll();
-          showNotif(`Weather check passed (${actionTotal} vs ${dreadTotal}). Margin +${Math.max(0, actionTotal - dreadTotal)}. Safe passage.`, 'good');
-        } else {
-          const diff = failedBy;
-          const label = applyYessodFailure(diff);
-          if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-weather-failure', { failedBy: diff, actionDie: 12, dreadDie: Number(weather.dd || 6) });
-          showNotif(`Weather check failed (${actionTotal} vs ${dreadTotal}). Failure Margin ${diff}: +${diff} ${label}. ${weather.failure || ''}`.trim(), 'warn');
-        }
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Yessod Weather Check',
+    context: String(weather.name || 'Yessod Weather') + ' weather pressure',
+    label: 'Yessod Weather Check',
+    statKey: statKey,
+    statLabel: statLabel,
+    dreadDie: Number(weather.dd || 6),
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const failedBy = Math.max(1, dreadTotal - actionTotal);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie(statKey) : 6)));
+      const rollText = `${statLabel} d${actionDie}=${actionTotal} vs Dread d${Number(weather.dd || 6)}=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      resolveCampaignGmCheckRecord(pendingCheckId, {
+        success,
+        stat: statKey,
+        actionTotal,
+        dreadTotal,
+        margin: success ? Math.max(0, actionTotal - dreadTotal) : failedBy,
+        failedBy: success ? 0 : failedBy,
+        manual: !!(outcome && outcome.manual)
+      });
+      if (success) {
+        if (typeof addSuccessRoll === 'function') addSuccessRoll();
+        showNotif(`Weather check passed. ${rollText}.`, 'good');
+      } else {
+        const label = applyYessodFailure(failedBy);
+        if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-weather-failure', { failedBy: failedBy, actionDie: actionDie, dreadDie: Number(weather.dd || 6) });
+        showNotif(`Weather check failed. ${rollText}. +${failedBy} ${label}. ${weather.failure || ''}`.trim(), 'warn');
       }
-    });
-    return;
-  }
-  const result = roll(12);
-  if (result >= weather.dd) {
-    resolveCampaignGmCheckRecord(pendingCheckId, {
-      success: true,
-      stat: 'traversal',
-      actionTotal: result,
-      dreadTotal: Number(weather.dd || 0),
-      margin: Math.max(0, result - weather.dd),
-      failedBy: 0,
-      manual: false
-    });
-    if (typeof addSuccessRoll === 'function') addSuccessRoll();
-    showNotif(`Weather check passed (d12: ${result} vs DD${weather.dd}). Margin +${Math.max(0, result - weather.dd)}. Safe passage.`, 'good');
-  } else {
-    const diff = weather.dd - result;
-    resolveCampaignGmCheckRecord(pendingCheckId, {
-      success: false,
-      stat: 'traversal',
-      actionTotal: result,
-      dreadTotal: Number(weather.dd || 0),
-      margin: diff,
-      failedBy: diff,
-      manual: false
-    });
-    const label = applyYessodFailure(diff);
-    if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-weather-failure', { failedBy: diff, actionDie: 12, dreadDie: Number(weather.dd || 6) });
-    showNotif(`Weather check failed (d12: ${result} vs DD${weather.dd}). Failure Margin ${diff}: +${diff} ${label}. ${weather.failure || ''}`.trim(), 'warn');
-  }
+    }
+  });
 }
 
 // ── YESSOD MONSTER ENCOUNTER ──────────────────────────────────────────────────
@@ -17233,16 +17355,31 @@ function yessodAvoidMonster() {
   const monster = state.pendingMonster;
   if (!monster) return showNotif('No active monster encounter.', 'warn');
   const dd = monster.dd || 8;
-  const result = roll(12);
-  if (result >= dd) {
-    state.pendingMonster = null;
-    showNotif(`Monster avoided (d12: ${result} vs DD${dd}). Margin +${Math.max(0, result - dd)}. You slip past unseen.`, 'good');
-  } else {
-    const diff = Math.max(1, dd - result);
-    if (typeof changeStress === 'function') changeStress(diff);
-    showNotif(`Failed to avoid (d12: ${result} vs DD${dd}). Failure Margin ${diff}: +${diff} Stress. Monster is still here.`, 'warn');
-  }
-  renderYessodHexInfo(yessodGetCell(state, state.selectedCellId));
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Avoid Monster',
+    context: String(monster.name || 'Monster') + ' avoidance',
+    label: 'Yessod Monster Avoidance',
+    statKey: 'lead',
+    statLabel: 'Lead',
+    dreadDie: dd,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('lead') : 6)));
+      const diff = Math.max(1, dreadTotal - actionTotal);
+      const rollText = `Lead d${actionDie}=${actionTotal} vs Dread d${dd}=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      if (success) {
+        state.pendingMonster = null;
+        showNotif(`Monster avoided. ${rollText}.`, 'good');
+      } else {
+        if (typeof changeStress === 'function') changeStress(diff);
+        if (typeof addTMWOnFail === 'function') addTMWOnFail('yessod-monster-avoid-failure', { failedBy: diff, actionDie: actionDie, dreadDie: dd });
+        showNotif(`Failed to avoid. ${rollText}. +${diff} Stress. Monster is still here.`, 'warn');
+      }
+      renderYessodHexInfo(yessodGetCell(state, state.selectedCellId));
+    }
+  });
 }
 
 function yessodResolveMonsterCombat(success) {
@@ -17744,7 +17881,7 @@ function renderYessodHexInfo(cell) {
     <div class="weather-block ${weatherClass}" style="margin-bottom:.35rem;">
       <div class="weather-label" style="color:${weatherColor};">🌦 ${seasonLabel} Weather: ${weatherLabel}</div>
       <div style="font-size:.8rem;color:var(--text2);">${weather.desc}</div>
-      ${isRough ? `<div style="font-size:.78rem;color:var(--red2);margin-top:.2rem;">Dangerous weather: ${weather.check || 'lead'} vs DD${weather.dd || 6}. Failure: ${weather.failure || '+1 Stress'}</div>${weather.special ? `<div style="font-size:.72rem;color:var(--gold2);margin-top:.15rem;">⚠ Special: ${weather.special === 'gravity_flux' ? 'Movement becomes vertical or sideways for one Phase.' : weather.special === 'eclipse_dark' ? 'Monsters are aggressive. Forced encounter check.' : 'Divine whispers cause Stress. Hear false orders.'}</div>` : ''}<div style="margin-top:.25rem;"><button class="btn btn-xs btn-warn" onclick="yessodRollWeatherCheck()">⚄ Weather Check</button></div>` : ''}
+      ${isRough ? `<div style="font-size:.78rem;color:var(--red2);margin-top:.2rem;">Dangerous weather: ${formatStarsCheckLabel(weather.checkLabel || weather.check || 'Lead')} vs DD${weather.dd || 6}. Failure: ${weather.failure || '+1 Stress'}</div>${weather.special ? `<div style="font-size:.72rem;color:var(--gold2);margin-top:.15rem;">⚠ Special: ${weather.special === 'gravity_flux' ? 'Movement becomes vertical or sideways for one Phase.' : weather.special === 'eclipse_dark' ? 'Monsters are aggressive. Forced encounter check.' : 'Divine whispers cause Stress. Hear false orders.'}</div>` : ''}<div style="margin-top:.25rem;"><button class="btn btn-xs btn-warn" onclick="yessodRollWeatherCheck()">⚄ Roll ${formatStarsCheckLabel(weather.checkLabel || weather.check || 'Lead')} vs DD${weather.dd || 6}</button></div>` : ''}
     </div>
 
     ${featureHtml}
@@ -17935,17 +18072,27 @@ function rollPlanetTaskCheck(taskId) {
   if (!state) return;
   const task = state.tasks.find((entry) => entry.id === taskId && !entry.resolved);
   if (!task) return;
-  const vdDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : ((S.stats && S.stats.valor) || 4);
-  const vdRoll = explodingRoll(vdDie);
-  const dreadRoll = explodingRoll(6);
-  const success = vdRoll.total >= dreadRoll.total;
-  const failedBy = Math.max(1, dreadRoll.total - vdRoll.total);
-  const rollText = `Task roll: VD d${vdDie}=${vdRoll.total} vs Dread d6=${dreadRoll.total}`;
-  task.lastRollText = rollText;
-  if (typeof openModal === 'function') {
-    openModal('Selected Hex Task', `<div style="font-size:.85rem;color:var(--text2);line-height:1.6;">${rollText}<br><strong style="color:${success ? 'var(--green2)' : 'var(--red2)'};">${success ? 'Success' : 'Failure'}</strong></div>`);
-  }
-  resolvePlanetTask(taskId, success, failedBy);
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Planet Task',
+    context: task.title,
+    label: 'Planet Task',
+    statKey: 'valor',
+    statLabel: 'Valor',
+    dreadDie: 6,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : 4)));
+      const failedBy = Math.max(1, dreadTotal - actionTotal);
+      const rollText = `Task roll: Valor d${actionDie}=${actionTotal} vs Dread d6=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      task.lastRollText = rollText;
+      if (typeof openModal === 'function') {
+        openModal('Selected Hex Task', `<div style="font-size:.85rem;color:var(--text2);line-height:1.6;">${rollText}<br><strong style="color:${success ? 'var(--green2)' : 'var(--red2)'};">${success ? 'Success' : 'Failure'}</strong></div>`);
+      }
+      resolvePlanetTask(taskId, success, failedBy);
+    }
+  });
 }
 
 function explorePlanetCell(cellId) {
@@ -18210,6 +18357,8 @@ function renderPlanetExplorationPanel() {
   const availableContacts = availableWayfarers.filter((wf) => !wf.acceptedTaskId);
   const bypass = isPlanetHazardBypassed(state);
   const weather = (selected && selected.localWeather) ? selected.localWeather : state.currentWeather;
+  const weatherCheckLabel = weather ? formatStarsCheckLabel(weather.checkLabel || weather.check || 'Lead') : 'Lead';
+  const terrainCheck = getPlanetTerrainCheckConfig(selected);
   const isStoryObjectiveSelected = !!(selected && state.storyObjectiveCellId === selected.id);
   const holdingInfoHtml = buildPlanetHoldingInfoHtml(state, selected);
   const dwellingInfoHtml = buildPlanetDwellingInfoHtml(state, selected);
@@ -18253,7 +18402,7 @@ function renderPlanetExplorationPanel() {
     <div class="sea-summary">
       <div class="info-cell"><span class="ic-label">Surface Scan</span>${observedCompact}<br>${atmosphereCompact}</div>
       <div class="info-cell"><span class="ic-label">Weather Pressure</span>${weatherCompact}</div>
-      <div class="info-cell"><span class="ic-label">Terrain Effect</span>${(selected && selected.terrainEffect) ? selected.terrainEffect : state.profile.terrainEffect}<div style="margin-top:.25rem;"><button class="btn btn-xs btn-warn" onclick="rollPlanetTerrainEffectCheck()">⚄ Roll Terrain Effect</button></div></div>
+      <div class="info-cell"><span class="ic-label">Terrain Effect</span>${(selected && selected.terrainEffect) ? selected.terrainEffect : state.profile.terrainEffect}<div style="margin-top:.25rem;"><button class="btn btn-xs btn-warn" onclick="rollPlanetTerrainEffectCheck()">⚄ Roll Valor vs DD${terrainCheck.dread}</button></div></div>
     </div>
     <details class="planet-legend-drawer">
       <summary>Map Legend + Surface Markers</summary>
@@ -18303,19 +18452,19 @@ function renderPlanetExplorationPanel() {
           ${weather ? `<div class="weather-block ${weather.rough ? 'rough' : 'clear'}" style="margin-bottom:.35rem;">
             <div class="weather-label" style="color:${weather.rough ? 'var(--red2)' : 'var(--teal)'};">🌦 ${(typeof capitalize === 'function' ? capitalize(S.currentSeason || 'spring') : (S.currentSeason || 'spring'))} Weather: ${weather.label}</div>
             <div style="font-size:.81rem;color:var(--text2);">${weather.desc}</div>
-            ${weather.rough ? `<div style="font-size:.76rem;color:var(--red2);margin-top:.2rem;">Dangerous weather: ${weather.check || 'lead'} vs DD${weather.dd || 6}. Failure: ${weather.failure || '+1 Stress'}</div><div style="margin-top:.25rem;"><button class="btn btn-xs btn-warn" onclick="resolvePlanetWeatherCheck()">⚄ Weather Check</button></div>` : ''}
+            ${weather.rough ? `<div style="font-size:.76rem;color:var(--red2);margin-top:.2rem;">Dangerous weather: ${weatherCheckLabel} vs DD${weather.dd || 6}. Failure: ${weather.failure || '+1 Stress'}</div><div style="margin-top:.25rem;"><button class="btn btn-xs btn-warn" onclick="resolvePlanetWeatherCheck()">⚄ Roll ${weatherCheckLabel} vs DD${weather.dd || 6}</button></div>` : ''}
           </div>` : ''}
 
           ${isStoryObjectiveSelected ? `<div class="sea-site" style="margin-bottom:.35rem;border-color:rgba(240,208,112,.45);background:rgba(240,208,112,.08);"><div class="ss-title">Story Objective</div><div class="ss-text">This surface cell is your active storyline target.</div><div style="margin-top:.3rem;"><button class="btn btn-xs btn-primary" onclick="if(typeof openStorylineTab==='function')openStorylineTab();">Continue Storyline</button></div></div>` : ''}
 
           ${selectedFactionBase ? `<div class="sea-site" style="margin-bottom:.35rem;border-color:rgba(70,196,182,.55);background:rgba(70,196,182,.08);"><div class="ss-title">🏰 Faction Base</div><div class="ss-text">${selectedFactionBase.baseName || 'Faction base'} is established in this surface cell.</div><div style="margin-top:.3rem;"><button class="btn btn-xs btn-primary" onclick="if(window.factionSystem&&typeof window.factionSystem.openBaseFromMarker==='function')window.factionSystem.openBaseFromMarker('planet',${planetHex.id},${selected.id});">Enter Base</button></div></div>` : ''}
 
-          ${selectedFactionTask ? `<div class="sea-site" style="margin-bottom:.35rem;border-color:${selectedFactionTask.status==='combat_pending'?'rgba(224,80,80,.55)':'rgba(232,192,80,.5)'};background:${selectedFactionTask.status==='combat_pending'?'rgba(224,80,80,.08)':'rgba(232,192,80,.08)'};"><div class="ss-title">${selectedFactionTask.monsterTask?'⚔ Monster Wayfarer Task':'✦ Wayfarer Task'}</div><div class="ss-text">${selectedFactionTask.title}${selectedFactionTask.monsterSummary?`<br><em>${selectedFactionTask.monsterSummary}</em>`:''}</div><div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;">${!selectedFactionTask.monsterTask&&selectedFactionTask.status==='open'?`<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.resolveMapTask('planet',${planetHex.id},${selected.id});renderPlanetExplorationPanel();">Roll VD vs Dread d6</button>`:''}${selectedFactionTask.monsterTask&&selectedFactionTask.status==='open'?`<button class="btn btn-xs btn-warn" onclick="if(window.factionSystem)window.factionSystem.startMonsterTask('planet',${planetHex.id},${selected.id});renderPlanetExplorationPanel();">Generate Monsters / Combat</button>`:''}${selectedFactionTask.monsterTask&&selectedFactionTask.status==='combat_pending'?`<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.finalizeMonsterTask('planet',${planetHex.id},${selected.id},true);renderPlanetExplorationPanel();">Slayed Monsters</button><button class="btn btn-xs btn-red" onclick="if(window.factionSystem)window.factionSystem.finalizeMonsterTask('planet',${planetHex.id},${selected.id},false);renderPlanetExplorationPanel();">Failed Encounter</button>`:''}</div></div>` : ''}
+          ${selectedFactionTask ? `<div class="sea-site" style="margin-bottom:.35rem;border-color:${selectedFactionTask.status==='combat_pending'?'rgba(224,80,80,.55)':'rgba(232,192,80,.5)'};background:${selectedFactionTask.status==='combat_pending'?'rgba(224,80,80,.08)':'rgba(232,192,80,.08)'};"><div class="ss-title">${selectedFactionTask.monsterTask?'⚔ Monster Wayfarer Task':'✦ Wayfarer Task'}</div><div class="ss-text">${selectedFactionTask.title}${selectedFactionTask.monsterSummary?`<br><em>${selectedFactionTask.monsterSummary}</em>`:''}</div><div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;">${!selectedFactionTask.monsterTask&&selectedFactionTask.status==='open'?`<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.resolveMapTask('planet',${planetHex.id},${selected.id});renderPlanetExplorationPanel();">Roll Valor vs DD6</button>`:''}${selectedFactionTask.monsterTask&&selectedFactionTask.status==='open'?`<button class="btn btn-xs btn-warn" onclick="if(window.factionSystem)window.factionSystem.startMonsterTask('planet',${planetHex.id},${selected.id});renderPlanetExplorationPanel();">Generate Monsters / Combat</button>`:''}${selectedFactionTask.monsterTask&&selectedFactionTask.status==='combat_pending'?`<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.finalizeMonsterTask('planet',${planetHex.id},${selected.id},true);renderPlanetExplorationPanel();">Slayed Monsters</button><button class="btn btn-xs btn-red" onclick="if(window.factionSystem)window.factionSystem.finalizeMonsterTask('planet',${planetHex.id},${selected.id},false);renderPlanetExplorationPanel();">Failed Encounter</button>`:''}</div></div>` : ''}
 
           ${(selected && typeof window.buildBackstoryAnchorActionPanelHtml === 'function') ? window.buildBackstoryAnchorActionPanelHtml('planet', String(planetHex.id) + ':' + String(selected.id)) : ''}
 
           <div class="info-cell" style="margin-bottom:.3rem;"><span class="ic-label">Planet Intel</span>${isWildernessIntel ? `${narrative.wonder}` : 'Location dossier active. Wonder intel populates in Wilderness hexes.'}</div>
-          <div class="info-cell" style="margin-bottom:.3rem;"><span class="ic-label">Terrain Effect</span>${narrative.terrainEffect || state.profile.terrainEffect}<div style="margin-top:.22rem;"><button class="btn btn-xs btn-warn" onclick="rollPlanetTerrainEffectCheck()">⚄ Roll Terrain Effect</button></div></div>
+          <div class="info-cell" style="margin-bottom:.3rem;"><span class="ic-label">Terrain Effect</span>${narrative.terrainEffect || state.profile.terrainEffect}<div style="margin-top:.22rem;"><button class="btn btn-xs btn-warn" onclick="rollPlanetTerrainEffectCheck()">⚄ Roll Valor vs DD${terrainCheck.dread}</button></div></div>
           <div class="info-cell" style="margin-bottom:.3rem;"><span class="ic-label">Status</span>${selected && selected.explored ? 'Explored' : 'Unexplored'}</div>
           <div class="hex-desc" style="margin-bottom:.4rem;">${selected && selected.note ? selected.note : 'No report yet. Click a hex to explore and reveal outcomes.'}</div>
 
@@ -18362,7 +18511,7 @@ function renderPlanetExplorationPanel() {
             <div style="display:flex;gap:.25rem;flex-wrap:wrap;">${planetMissionMarkers.map((task) => `<button class="btn btn-xs btn-warn" onclick="openPlanetMissionMarker('${task.id}')">🐉 ${task.title} · Cell ${Number(task.planetCellId || 0) || '?'} (${task.missionStep || 'site'})</button>`).join('')}</div>
           </div>` : ''}
 
-          ${selectedTask ? `<div class="sea-result"><div class="sea-result-title">Selected Task</div><div class="planet-micro"><strong style="color:var(--gold2);">${selectedTask.title}${selectedTask.source === 'wayfarer' ? ' ✦' : ''}</strong><br>${selectedTask.text}${selectedTask.lastRollText ? `<br><span style="color:var(--muted2);">${selectedTask.lastRollText}</span>` : ''}</div><div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;"><button class="btn btn-xs btn-teal" onclick="rollPlanetTaskCheck('${selectedTask.id}')">⚄ Roll to Succeed (VD vs Dread d6)</button></div></div>` : ''}
+          ${selectedTask ? `<div class="sea-result"><div class="sea-result-title">Selected Task</div><div class="planet-micro"><strong style="color:var(--gold2);">${selectedTask.title}${selectedTask.source === 'wayfarer' ? ' ✦' : ''}</strong><br>${selectedTask.text}${selectedTask.lastRollText ? `<br><span style="color:var(--muted2);">${selectedTask.lastRollText}</span>` : ''}</div><div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;"><button class="btn btn-xs btn-teal" onclick="rollPlanetTaskCheck('${selectedTask.id}')">⚄ Roll Valor vs DD6</button></div></div>` : ''}
 
           <div style="margin-top:.55rem;border-top:1px solid var(--border);padding-top:.55rem;">
             <div class="sub-label">📝 Hex Notes</div>
@@ -18965,7 +19114,7 @@ function buildStarExplorationDetail(ring, outcome) {
     const peril = getHexPersistentState(hex, 'peril', function() { return createGalaxyPerilState(ring); });
     return `<div style="font-size:.75rem;color:var(--gold2);">⚠ ${peril.title}</div>
       <div style="font-size:.74rem;color:var(--muted2);line-height:1.55;margin-top:.15rem;">${peril.text}<br><strong>⚔ Traversal Check</strong><br>Roll ${peril.check.map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(' or ')} vs DD${peril.dd}. Failure: Stress/Radiation/Health/Condition/Trauma risk and lose 1 Phase.</div>
-      <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;"><button class="btn btn-xs btn-teal" onclick="resolveGalaxyPerilTraversal()">Traverse Peril</button></div>`;
+      <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;"><button class="btn btn-xs btn-teal" onclick="resolveGalaxyPerilTraversal()">Roll ${peril.check.map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(' or ')} vs DD${peril.dd}</button></div>`;
   }
   if (outcome === 'Galactic Facility') {
     const hex = getCurrentStarHex();
@@ -19970,7 +20119,7 @@ function updateStarSystemReadouts() {
         galaxyWorldActions.push('<button class="btn btn-xs btn-teal" onclick="if(typeof resolveWorldStateActionAtKeyForRegion===\'function\')resolveWorldStateActionAtKeyForRegion(\'galaxy\',\'' + String(current.id) + '\',\'reopen\');renderStarSystemMap();updateStarSystemReadouts();">🛣 Reopen Routes</button>');
       }
       if (factionBase) actionButtons.push('<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem&&typeof window.factionSystem.openBaseFromMarker===\'function\')window.factionSystem.openBaseFromMarker(\'galaxy\',' + current.id + ')">Enter Faction Base</button>');
-      if (factionTask && !factionTask.monsterTask && factionTask.status === 'open') actionButtons.push('<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.resolveMapTask(\'galaxy\',' + current.id + ');renderStarSystemMap();updateStarSystemReadouts();">Resolve Wayfarer Task (VD vs d6)</button>');
+      if (factionTask && !factionTask.monsterTask && factionTask.status === 'open') actionButtons.push('<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.resolveMapTask(\'galaxy\',' + current.id + ');renderStarSystemMap();updateStarSystemReadouts();">Roll Valor vs DD6</button>');
       if (factionTask && factionTask.monsterTask && factionTask.status === 'open') actionButtons.push('<button class="btn btn-xs btn-warn" onclick="if(window.factionSystem)window.factionSystem.startMonsterTask(\'galaxy\',' + current.id + ');renderStarSystemMap();updateStarSystemReadouts();">Generate Monsters / Combat</button>');
       if (factionTask && factionTask.monsterTask && factionTask.status === 'combat_pending') actionButtons.push('<button class="btn btn-xs btn-primary" onclick="if(window.factionSystem)window.factionSystem.finalizeMonsterTask(\'galaxy\',' + current.id + ',null,true);renderStarSystemMap();updateStarSystemReadouts();">Slayed Monsters</button><button class="btn btn-xs btn-red" onclick="if(window.factionSystem)window.factionSystem.finalizeMonsterTask(\'galaxy\',' + current.id + ',null,false);renderStarSystemMap();updateStarSystemReadouts();">Failed Encounter</button>');
       panel.innerHTML = `
@@ -19978,8 +20127,8 @@ function updateStarSystemReadouts() {
           ${S.starSystem.currentWeather ? `<div class="weather-block ${S.starSystem.currentWeather.rough ? 'rough' : 'clear'}" style="padding:.35rem;border:1px solid var(--border2);background:rgba(255,255,255,.02);">
             <div style="font-size:.9rem;color:${S.starSystem.currentWeather.rough ? 'var(--red2)' : 'var(--teal)'};"><strong>Weather:</strong> ${S.starSystem.currentWeather.name}</div>
             <div style="font-size:.82rem;color:var(--muted2);line-height:1.5;">${S.starSystem.currentWeather.desc}</div>
-            <div style="font-size:.78rem;color:var(--muted2);margin-top:.2rem;">${S.starSystem.currentWeather.dd > 0 ? `⚠ ${S.starSystem.currentWeather.checkLabel} vs DD${S.starSystem.currentWeather.dd}. Failure: ${S.starSystem.currentWeather.failure}` : 'Clear travel lane. No traversal check required.'}</div>
-            ${S.starSystem.currentWeather.dd > 0 ? '<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.25rem;"><button class="btn btn-xs" onclick="resolveGalaxyWeatherCheck()">Traverse Weather</button></div>' : ''}
+            <div style="font-size:.78rem;color:var(--muted2);margin-top:.2rem;">${S.starSystem.currentWeather.dd > 0 ? `⚠ ${formatStarsCheckLabel(S.starSystem.currentWeather.checkLabel || S.starSystem.currentWeather.check || 'Lead')} vs DD${S.starSystem.currentWeather.dd}. Failure: ${S.starSystem.currentWeather.failure}` : 'Clear travel lane. No traversal check required.'}</div>
+            ${S.starSystem.currentWeather.dd > 0 ? '<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.25rem;"><button class="btn btn-xs" onclick="resolveGalaxyWeatherCheck()">Roll ' + formatStarsCheckLabel(S.starSystem.currentWeather.checkLabel || S.starSystem.currentWeather.check || 'Lead') + ' vs DD' + Number(S.starSystem.currentWeather.dd || 6) + '</button></div>' : ''}
           </div>` : ''}
           ${buildGalaxyTravelSceneCard(current)}
           ${current.type === 'radio_task' && !current.radioTaskResolved ? `<div style="padding:.42rem;border:1px solid rgba(80,200,255,.7);background:rgba(80,200,255,.08);font-size:.84rem;color:#dff8ff;line-height:1.55;">Radio event marker active in this hex. Resolve it here before it goes cold.</div>` : ''}
@@ -20176,7 +20325,7 @@ function resolveGalaxyWeatherCheck() {
       title: 'Manual Roll - Galaxy Weather Check',
       context: String(weather.name || 'Galaxy Weather') + ' traversal',
       statKey: statKey,
-      statLabel: String(weather.checkLabel || statKey).charAt(0).toUpperCase() + String(weather.checkLabel || statKey).slice(1),
+      statLabel: formatStarsCheckLabel(weather.checkLabel || statKey),
       actionDie: Math.max(4, Number(die || 4)),
       dreadDie: Math.max(4, Number(weather.dd || 6)),
       onResolve: function (outcome) {
@@ -20280,7 +20429,7 @@ function promptRadioTaskRoll() {
     Roll your Valor Die (${valorDie}) vs Dread Die (d8)<br>
     Success = Complete the contract and gain rewards
   </div>`;
-  html += `<div style="margin-top:.5rem;"><button class="btn btn-primary" onclick="resolveGalaxyRadioTaskWithRoll()">Roll for Success</button></div>`;
+  html += `<div style="margin-top:.5rem;"><button class="btn btn-primary" onclick="resolveGalaxyRadioTaskWithRoll()">Roll Valor vs DD8</button></div>`;
   
   openModal('Radio Task Resolution', html);
 }
