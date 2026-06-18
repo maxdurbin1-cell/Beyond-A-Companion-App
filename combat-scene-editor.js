@@ -43,6 +43,7 @@
     }
   };
   var tokenContextMenuHideTimer = null;
+  var applyingSharedCombatSceneEditorState = false;
   var combatDragDebugState = {
     phase: 'idle',
     kind: '',
@@ -2200,7 +2201,9 @@
     if (window.S) {
       if (!window.S.combat || typeof window.S.combat !== 'object') window.S.combat = {};
       window.S.combat.sceneEditor = clone(synced);
-      queueCampaignCombatSceneSync('combat-scene-editor-persist');
+      if (!applyingSharedCombatSceneEditorState) {
+        queueCampaignCombatSceneSync('combat-scene-editor-persist');
+      }
     }
   }
 
@@ -14422,6 +14425,11 @@
         window.__activeNavalBoardingSceneContext = null;
       }
       store.setState(function (state) {
+        if (seed.sceneEditorState && typeof seed.sceneEditorState === 'object') {
+          var sharedSnapshot = normalizeCombatSceneState(Object.assign({}, state || {}, clone(seed.sceneEditorState) || {}));
+          persist(sharedSnapshot);
+          return sharedSnapshot;
+        }
         var next = normalizeCombatSceneState(Object.assign({}, state));
         var targetSceneId = String(seed.id || uid('scene'));
         next.activeSceneId = targetSceneId;
@@ -14570,6 +14578,92 @@
         }
       }, getCombatMotionDuration(store.getState(), 980, 520) || 40);
     }
+  }
+
+  function buildSharedCampaignCombatSceneSeed() {
+    var sharedState = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object'
+      ? (clone(window.S.combat.sceneEditor) || null)
+      : null;
+    if (!sharedState) return null;
+    var activeSceneId = String(sharedState.activeSceneId || '');
+    var scenes = Array.isArray(sharedState.scenes) ? sharedState.scenes : [];
+    var activeScene = activeSceneId
+      ? (scenes.find(function (scene) { return scene && String(scene.id || '') === activeSceneId; }) || null)
+      : null;
+    return {
+      id: activeSceneId || 'campaign-shared-scene',
+      name: String(activeScene && activeScene.name || 'Campaign Shared Scene'),
+      sceneEditorState: sharedState
+    };
+  }
+
+  function syncCombatScenesTabNavigation() {
+    var activeContext = String(window._activeContext || 'traveling');
+    if (typeof window.switchTab === 'function') {
+      var btn = document.getElementById('tabnav-scenes') || document.querySelector('#mainNav .tab-btn[data-tab="scenes"]');
+      try {
+        window.switchTab('scenes', btn || null);
+      } catch (_err) {}
+    }
+    if (!window.campaignSystem || typeof window.campaignSystem.getState !== 'function' || typeof window.campaignSystem.syncSharedPatch !== 'function') return;
+    var cs = null;
+    try {
+      cs = window.campaignSystem.getState();
+    } catch (_err2) {
+      return;
+    }
+    if (!cs || cs.role !== 'gm' || !cs.connected || !cs.code) return;
+    try {
+      var patch = {
+        campaignTravel: {
+          context: activeContext,
+          tab: 'scenes',
+          label: 'VTT',
+          region: activeContext === 'space' ? 'space' : (activeContext === 'sea' ? 'sea' : 'province'),
+          reason: 'combat-scenes-navigation',
+          phaseCost: 0,
+          updatedAt: Date.now()
+        }
+      };
+      var out = window.campaignSystem.syncSharedPatch(patch, 'combat-scenes-navigation');
+      if (out && typeof out.catch === 'function') out.catch(function () {});
+    } catch (_err3) {}
+  }
+
+  function applySharedCombatSceneEditorState(snapshot, options) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    var opts = options && typeof options === 'object' ? options : {};
+    var cloned = clone(snapshot);
+    if (!cloned) return false;
+    var overlay = document.getElementById('combatModeOverlay');
+    var overlayOpen = !!(overlay && overlay.classList.contains('open'));
+    if (opts.autoOpen && !overlayOpen) {
+      syncCombatScenesTabNavigation();
+      openOverlay({
+        id: String(cloned.activeSceneId || 'campaign-shared-scene'),
+        name: String(opts.sceneName || 'Campaign Shared Scene'),
+        sceneEditorState: cloned
+      });
+      return true;
+    }
+    applyingSharedCombatSceneEditorState = true;
+    try {
+      store.setState(function (state) {
+        var merged = normalizeCombatSceneState(Object.assign({}, state || {}, cloned));
+        merged.open = !!(state && state.open);
+        merged.entering = false;
+        persist(merged);
+        return merged;
+      });
+    } finally {
+      applyingSharedCombatSceneEditorState = false;
+    }
+    if (overlayOpen || opts.refreshUi) {
+      try { applyCombatUiState(store.getState()); } catch (_err) {}
+      try { updateUiPanels(); } catch (_err2) {}
+      try { drawBoard(); } catch (_err3) {}
+    }
+    return true;
   }
 
   function closeOverlay() {
@@ -14838,7 +14932,8 @@
   }
 
   window.openCombatSceneEditor = function (seed) {
-    openOverlay(seed || null);
+    syncCombatScenesTabNavigation();
+    openOverlay(seed || buildSharedCampaignCombatSceneSeed() || null);
   };
   
   window.closeCombatSceneEditor = function () {
@@ -14850,9 +14945,11 @@
   };
 
   window.openCombatSceneEditorFromExpedition = function () {
-    var seed = expeditionSeed() || buildLiveCombatSeed();
+    syncCombatScenesTabNavigation();
+    var seed = expeditionSeed() || buildLiveCombatSeed() || buildSharedCampaignCombatSceneSeed();
     openOverlay(seed || null);
   };
+  window.applySharedCombatSceneEditorState = applySharedCombatSceneEditorState;
 
   function wireStartCombatHook() {
     if (window.__combatSceneEditorHooked) return;

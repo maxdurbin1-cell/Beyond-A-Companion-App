@@ -13113,12 +13113,12 @@ function rollPlanetObstacleTraversal() {
 }
 
 function attemptPlanetBlackMarketAccess() {
-  const controlDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('control') : ((S.stats && S.stats.control) || 4);
-  const a = explodingRoll(controlDie);
-  const d = explodingRoll(12);
-  const success = a.total >= d.total;
-  if (!success) {
-    showNotif('Black Market access failed. You were thrown out.', 'warn');
+  const hex = getActivePlanetHex();
+  const state = ensurePlanetSurfaceState(hex);
+  if (!state) return;
+  const selected = state.cells.find((cell) => cell.id === state.selectedCellId);
+  if (!selected || selected.marker !== 'merchant_colony') {
+    showNotif('Black Market access is only available at Merchant Colonies.', 'warn');
     return;
   }
   const osList = (typeof SHOP_DATA !== 'undefined' && Array.isArray(SHOP_DATA.os_hacks)) ? SHOP_DATA.os_hacks : [];
@@ -13128,16 +13128,48 @@ function attemptPlanetBlackMarketAccess() {
   const standardHacks = osList.filter((hack) => String(hack.name || '').indexOf('(Master)') < 0);
   const featuredMasters = shufflePlanetMarkers(masterHacks).slice(0, 1 + Math.floor(Math.random() * 2));
   const featuredStandard = shufflePlanetMarkers(standardHacks).slice(0, 6);
-  if (typeof openModal === 'function') {
-    openModal('Black Market Access', `<div style="font-size:.82rem;color:var(--text2);line-height:1.6;"><strong style="color:var(--red2);">Black Market Dealer</strong><br>Control d${controlDie}=${a.total} vs DD12=${d.total}<br><br>
-      ${operatingSystem ? `<div style='padding:.28rem .35rem;border:1px solid var(--border2);margin-bottom:.25rem;'><strong style='color:var(--gold2);'>Operating System</strong><br>${operatingSystem.desc || ''}<br><button class='btn btn-xs btn-primary' onclick="buyPlanetBlackMarketItem('${String(operatingSystem.name).replace(/'/g, "\\'")}',${operatingSystem.cost || 2000},'augmentations')">Buy ${operatingSystem.cost || 2000}₵</button></div>` : ''}
-      <div style='font-size:.74rem;color:var(--muted2);margin:.2rem 0;'>Hacks</div>
-      ${featuredStandard.map((hack) => `<div style='padding:.24rem .35rem;border:1px solid var(--border2);margin-bottom:.2rem;'><strong>${hack.name}</strong><br>${hack.desc || ''}<br><button class='btn btn-xs btn-teal' onclick="buyPlanetBlackMarketItem('${String(hack.name).replace(/'/g, "\\'")}',${hack.cost || 500},'os_hacks')">Buy ${hack.cost || 500}₵</button></div>`).join('')}
-      <div style='font-size:.74rem;color:var(--muted2);margin:.25rem 0 .15rem;'>Master Hacks</div>
-      ${featuredMasters.map((hack) => `<div style='padding:.24rem .35rem;border:1px solid rgba(201,64,64,.35);margin-bottom:.2rem;background:rgba(201,64,64,.05);'><strong style='color:var(--red2);'>${hack.name}</strong><br>${hack.desc || ''}<br><button class='btn btn-xs btn-warn' onclick="buyPlanetBlackMarketItem('${String(hack.name).replace(/'/g, "\\'")}',${hack.cost || 1000},'os_hacks')">Buy ${hack.cost || 1000}₵</button></div>`).join('')}
-    </div>`);
-  }
-  showNotif('You gain access to the Black Market.', 'good');
+  runStarsActionDreadCheck({
+    title: 'Manual Roll - Black Market Access',
+    context: `Sneak into the Black Market at Hex ${selected.id}`,
+    label: 'Black Market Access',
+    statKey: 'control',
+    statLabel: 'Control',
+    dreadDie: 12,
+    onResolve: function (outcome) {
+      const success = !!(outcome && outcome.success);
+      const actionTotal = Number((outcome && outcome.actionTotal) || 0);
+      const dreadTotal = Number((outcome && outcome.dreadTotal) || 0);
+      const actionDie = Math.max(4, Number((outcome && outcome.actionDie) || ((typeof getEffectiveDie === 'function') ? getEffectiveDie('control') : 4)));
+      const rollText = `Control d${actionDie}=${actionTotal} vs DD12=${dreadTotal}${outcome && outcome.pushLuck ? ' (Push Luck)' : ''}`;
+      state.lastEvent = {
+        timestamp: Date.now(),
+        d10: 12,
+        outcome: success ? 'Black Market Access Granted' : 'Black Market Access Failed',
+        detail: success
+          ? `${rollText}. You slip past the lookouts and meet the dealer.`
+          : `${rollText}. The lookouts catch on and throw you back into the lane.`,
+        rewardItem: '',
+        cellId: selected.id,
+        eventType: 'encounter',
+      };
+      if (!success) {
+        showNotif('Black Market access failed. You were thrown out.', 'warn');
+        renderPlanetExplorationPanel();
+        return;
+      }
+      if (typeof openModal === 'function') {
+        openModal('Black Market Access', `<div style="font-size:.82rem;color:var(--text2);line-height:1.6;"><strong style="color:var(--red2);">Black Market Dealer</strong><br>${rollText}<br><br>
+          ${operatingSystem ? `<div style='padding:.28rem .35rem;border:1px solid var(--border2);margin-bottom:.25rem;'><strong style='color:var(--gold2);'>Operating System</strong><br>${operatingSystem.desc || ''}<br><button class='btn btn-xs btn-primary' onclick="buyPlanetBlackMarketItem('${String(operatingSystem.name).replace(/'/g, "\\'")}',${operatingSystem.cost || 2000},'augmentations')">Buy ${operatingSystem.cost || 2000}₵</button></div>` : ''}
+          <div style='font-size:.74rem;color:var(--muted2);margin:.2rem 0;'>Hacks</div>
+          ${featuredStandard.map((hack) => `<div style='padding:.24rem .35rem;border:1px solid var(--border2);margin-bottom:.2rem;'><strong>${hack.name}</strong><br>${hack.desc || ''}<br><button class='btn btn-xs btn-teal' onclick="buyPlanetBlackMarketItem('${String(hack.name).replace(/'/g, "\\'")}',${hack.cost || 500},'os_hacks')">Buy ${hack.cost || 500}₵</button></div>`).join('')}
+          <div style='font-size:.74rem;color:var(--muted2);margin:.25rem 0 .15rem;'>Master Hacks</div>
+          ${featuredMasters.map((hack) => `<div style='padding:.24rem .35rem;border:1px solid rgba(201,64,64,.35);margin-bottom:.2rem;background:rgba(201,64,64,.05);'><strong style='color:var(--red2);'>${hack.name}</strong><br>${hack.desc || ''}<br><button class='btn btn-xs btn-warn' onclick="buyPlanetBlackMarketItem('${String(hack.name).replace(/'/g, "\\'")}',${hack.cost || 1000},'os_hacks')">Buy ${hack.cost || 1000}₵</button></div>`).join('')}
+        </div>`);
+      }
+      showNotif('You gain access to the Black Market.', 'good');
+      renderPlanetExplorationPanel();
+    }
+  });
 }
 
 function buyPlanetBlackMarketItem(name, cost, cat) {
@@ -14076,7 +14108,6 @@ function buildPlanetHoldingInfoHtml(state, selected) {
     <div class="mood-block"><div class="mb-label">Mood: ${h.mood}</div><div style="font-size:.82rem;color:var(--text2);">${h.crisis}<br><em style="font-size:.78rem;">${h.crisisText}</em></div></div>
     <div class="wild-panel"><div class="wp-label">Settlement Status</div><div class="wp-text">${h.structure} · ${h.terrain} terrain</div></div>
     <div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.35rem;">
-      <button class="btn btn-xs" onclick="createPlanetTask()">⚄ Generate Task</button>
       <button class="btn btn-xs btn-primary" onclick="if(typeof openRegionalSettlementHexcrawl==='function')openRegionalSettlementHexcrawl('space','${String(h.title || 'Merchant Colony').replace(/'/g, "\\'")}');else if(typeof openHoldingSettlementHexcrawl==='function')openHoldingSettlementHexcrawl();">◫ Enter Settlement</button>
     </div>`;
 }
@@ -15707,6 +15738,19 @@ function applyPlanetColonyPhaseOutput(state) {
 function getPlanetWayfarerById(state, wayfarerId) {
   if (!state || !Array.isArray(state.wayfarers)) return null;
   return state.wayfarers.find((wf) => wf.id === wayfarerId) || null;
+}
+
+function focusPlanetTask(taskId) {
+  const hex = getActivePlanetHex();
+  const state = ensurePlanetSurfaceState(hex);
+  if (!state) return false;
+  const task = state.tasks.find((entry) => entry && entry.id === taskId && !entry.resolved);
+  if (!task) return false;
+  const cell = state.cells.find((entry) => entry && entry.id === task.cellId);
+  if (!cell) return false;
+  state.selectedCellId = cell.id;
+  renderPlanetExplorationPanel();
+  return true;
 }
 
 function acceptPlanetWayfarerTask(wayfarerId) {
@@ -18027,6 +18071,7 @@ function createPlanetTask(options) {
   } else {
     cell.marker = 'task';
   }
+  state.selectedCellId = cell.id;
   showNotif(`Planet task generated at hex ${cell.id}.`, 'good');
   renderPlanetExplorationPanel();
   return task;
@@ -18384,6 +18429,20 @@ function renderPlanetExplorationPanel() {
   const weatherCompact = weather ? `${weather.label} · DD${weather.dd || 6}${weather.rough ? ' · rough' : ''}` : 'Unknown';
   const isWildernessIntel = !!(selected && !isPlanetLocationHex(selected) && !selected.tradeRoute);
   const narrative = buildPlanetNarrativeLines(state, selected);
+  const openTaskButtonsHtml = taskList.slice(0, 6).map((task) => {
+    const taskCell = state.cells.find((cell) => cell && cell.id === task.cellId) || null;
+    const isSelectedTask = !!(selectedTask && selectedTask.id === task.id);
+    const prefix = task.source === 'wayfarer' ? '✦ ' : '';
+    const locationText = taskCell ? `Hex ${taskCell.id} · ${taskCell.province}` : 'Untracked hex';
+    return `<div class="sea-site" style="margin-top:.28rem;padding:.45rem .52rem;">
+      <div class="ss-title">${prefix}${task.title}</div>
+      <div class="ss-text">${locationText}<br>${task.text}</div>
+      <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.3rem;">
+        <button class="btn btn-xs ${isSelectedTask ? 'btn-primary' : ''}" onclick="focusPlanetTask('${task.id}')">${isSelectedTask ? 'Viewing' : 'View Task'}</button>
+        <button class="btn btn-xs btn-teal" onclick="focusPlanetTask('${task.id}');setTimeout(function(){rollPlanetTaskCheck('${task.id}');},0);">Roll Valor vs DD6</button>
+      </div>
+    </div>`;
+  }).join('');
 
   target.innerHTML = `<div class="planet-shell">
     <div class="ship-banner">
@@ -18482,8 +18541,11 @@ function renderPlanetExplorationPanel() {
 
           ${canRollWildernessActions ? `<div class="hex-primary-actions" style="margin-top:.45rem;"><button class="btn btn-sm btn-gold" onclick="observeAdjacentPlanetHexes()">🔍 Observe Adjacent (Lead vs DD6)</button><button class="btn btn-sm btn-teal" onclick="rollPlanetHexEncounter()">⚄ Roll Encounter</button></div>` : ''}
           <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;">
-            ${canGenerateTask && !(selected && selected.tradeRoute) && !(selected && selected.marker === 'merchant_colony') ? '<button class="btn btn-sm" onclick="createPlanetTask()">⚄ Generate Task</button>' : ''}
-            ${(selected && selected.tradeRoute) ? '<button class="btn btn-sm" onclick="rollPlanetTradeRouteEncounter()">⚄ Trade Route Encounter</button><button class="btn btn-sm" onclick="showPlanetTradeGoods()">📦 Trade Goods</button>' : ''}
+            ${canGenerateTask && !(selected && selected.tradeRoute) ? '<button class="btn btn-sm" onclick="createPlanetTask()">⚄ Generate Task</button>' : ''}
+            ${(selected && selected.tradeRoute) ? '<button class="btn btn-sm" onclick="rollPlanetTradeRouteEncounter()">⚄ Trade Route Encounter</button><button class="btn btn-sm" onclick="openPlanetMerchantMarket()">🛒 Merchant Market</button><button class="btn btn-sm" onclick="showPlanetTradeGoods()">📦 Trade Goods</button>' : ''}
+            ${canUseMerchantMarket && !(selected && selected.tradeRoute) ? '<button class="btn btn-sm" onclick="openPlanetMerchantMarket()">🛒 Merchant Market</button><button class="btn btn-sm" onclick="showPlanetTradeGoods()">📦 Trade Goods</button>' : ''}
+            ${canStealAtHolding ? '<button class="btn btn-sm btn-warn" onclick="attemptPlanetBlackMarketAccess()">🕶 Sneak Into Black Market (Control vs DD12)</button><button class="btn btn-sm" onclick="attemptPlanetHoldingSteal()">🗡 Steal (Control/Lead vs DD8)</button>' : ''}
+            ${canUseMerchantDoctor ? '<button class="btn btn-sm btn-teal" onclick="openMerchantColonyDoctorServices()">⚕ Doctor Services</button>' : ''}
             ${canTravelThroughGate && !(selected && selected.tradeRoute) ? '<button class="btn btn-sm btn-teal" onclick="travelThroughPlanetGate()">◆ Travel Through Gate (Spirit vs Dread d12)</button>' : ''}
             ${(selected && selected.marker === 'wayfarer' && !(selected && selected.tradeRoute)) ? '<button class="btn btn-sm" onclick="createPlanetTask({ source: \'wayfarer\', preferredCellId: ' + selected.id + ' })">⚄ Generate Task (Wayfarer)</button>' : ''}
             ${canTraverseObstacle && !(selected && selected.tradeRoute) ? '<button class="btn btn-sm btn-primary" onclick="rollPlanetObstacleTraversal()">⚄ Traverse Obstacle (VD vs DD6)</button>' : ''}
@@ -18531,7 +18593,7 @@ function renderPlanetExplorationPanel() {
             </div>`;
           }).join('')}</div></div>` : ''}
 
-          ${taskList.length ? `<div style="margin-top:.45rem;border-top:1px solid var(--border);padding-top:.45rem;"><div class="sub-label">Open Tasks</div><div class="planet-micro">${taskList.slice(0, 6).map((t) => `${t.source === 'wayfarer' ? '✦ ' : ''}${t.title}`).join(' · ')}</div></div>` : ''}
+          ${taskList.length ? `<div style="margin-top:.45rem;border-top:1px solid var(--border);padding-top:.45rem;"><div class="sub-label">Open Tasks</div><div class="planet-micro" style="margin-bottom:.3rem;">Generated contracts stay clickable here so you can jump straight to the assigned hex and roll from the right card.</div>${openTaskButtonsHtml}</div>` : ''}
 
           ${recentWayfarers.length ? `<div style="margin-top:.35rem;"><div class="sub-label">Recent Wayfarers</div><div class="planet-micro">${recentWayfarers.map((wf) => `${wf.name} (${wf.role})`).join(' · ')}</div></div>` : ''}
         </div>
@@ -24105,6 +24167,7 @@ window.createYessodTask = createYessodTask;
 window.resolveYessodTask = resolveYessodTask;
 window.resolveYessodMission = resolveYessodMission;
 window.explorePlanetCell = explorePlanetCell;
+window.focusPlanetTask = focusPlanetTask;
 window.createPlanetTask = createPlanetTask;
 window.resolvePlanetTask = resolvePlanetTask;
 window.renderExocraftPanel = renderExocraftPanel;

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
 
@@ -29,6 +32,30 @@ function startServer() {
   });
 
   return child;
+}
+
+function findChromiumExecutable() {
+  const homeDir = process.env.HOME || os.homedir();
+  const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+  ];
+  return candidates.find((entry) => entry && fs.existsSync(entry)) || "";
+}
+
+async function launchChromium() {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (message.indexOf("Executable doesn't exist") < 0) throw err;
+    const executablePath = findChromiumExecutable();
+    if (!executablePath) throw err;
+    return chromium.launch({ headless: true, executablePath });
+  }
 }
 
 async function waitForServer(url, timeoutMs) {
@@ -273,6 +300,58 @@ async function waitForCombatHydration(page, label, minUnits = 3) {
   }
 }
 
+async function collectSceneEditorSummary(page) {
+  return page.evaluate(() => {
+    const storeState = window.CombatSceneStore && typeof window.CombatSceneStore.getState === 'function'
+      ? window.CombatSceneStore.getState()
+      : {};
+    const scenes = Array.isArray(storeState.scenes) ? storeState.scenes : [];
+    const activeScene = scenes.find((scene) => scene && String(scene.id || '') === String(storeState.activeSceneId || '')) || null;
+    const overlay = document.getElementById('combatModeOverlay');
+    return {
+      overlayOpen: !!(overlay && overlay.classList.contains('open')),
+      activeTab: (() => {
+        const active = document.querySelector('#mainNavTablist .tab-btn.active[data-tab]');
+        return active ? String(active.getAttribute('data-tab') || '') : '';
+      })(),
+      tokenCount: Array.isArray(storeState.tokens) ? storeState.tokens.length : 0,
+      tokenNames: Array.isArray(storeState.tokens) ? storeState.tokens.map((token) => String(token && token.name || '')) : [],
+      sceneName: String(activeScene && activeScene.name || '')
+    };
+  });
+}
+
+async function waitForSceneEditorState(page, expected, label) {
+  const target = Object.assign({ minTokens: 0, requiredNames: [], overlayOpen: true }, expected || {});
+  try {
+    await page.waitForFunction(
+      (criteria) => {
+        const storeState = window.CombatSceneStore && typeof window.CombatSceneStore.getState === 'function'
+          ? window.CombatSceneStore.getState()
+          : {};
+        const scenes = Array.isArray(storeState.scenes) ? storeState.scenes : [];
+        const activeScene = scenes.find((scene) => scene && String(scene.id || '') === String(storeState.activeSceneId || '')) || null;
+        const tokenNames = Array.isArray(storeState.tokens) ? storeState.tokens.map((token) => String(token && token.name || '')) : [];
+        const active = document.querySelector('#mainNavTablist .tab-btn.active[data-tab]');
+        const activeTab = active ? String(active.getAttribute('data-tab') || '') : '';
+        const overlay = document.getElementById('combatModeOverlay');
+        return (
+          (!!(overlay && overlay.classList.contains('open')) === !!criteria.overlayOpen) &&
+          (!criteria.activeTab || activeTab === String(criteria.activeTab)) &&
+          tokenNames.length >= Number(criteria.minTokens || 0) &&
+          (!criteria.sceneName || String(activeScene && activeScene.name || '') === String(criteria.sceneName)) &&
+          (Array.isArray(criteria.requiredNames) ? criteria.requiredNames.every((name) => tokenNames.indexOf(String(name || '')) >= 0) : true)
+        );
+      },
+      target,
+      { timeout: COMBAT_SYNC_TIMEOUT_MS }
+    );
+  } catch (err) {
+    const summary = await collectSceneEditorSummary(page);
+    throw new Error(`${label} scene wait timed out: expected=${JSON.stringify(target)} actual=${JSON.stringify(summary)} error=${String(err && err.message ? err.message : err)}`);
+  }
+}
+
 async function syncSharedSilentRetry(page, reason, attempts = 6) {
   let lastResult = { ok: false, error: 'No sync attempts made.' };
   for (let i = 0; i < attempts; i += 1) {
@@ -351,6 +430,45 @@ async function runScenario(browser) {
     null,
     { timeout: STEP_TIMEOUT_MS }
   );
+
+  await gmPage.evaluate(() => {
+    window.openCombatSceneEditor({
+      id: 'smoke-shared-scene',
+      name: 'Smoke Shared Scene',
+      tokens: [
+        { id: 'smoke-player', name: 'Combat Smoke GM', faction: 'player', hp: 12, maxHp: 12, q: 0, r: 0, size: 1, isPlayer: true },
+        { id: 'smoke-enemy-a', name: 'Ash Raider', faction: 'monster', hp: 8, maxHp: 8, q: 2, r: 0, size: 1 }
+      ]
+    });
+  });
+
+  await gmPage.waitForSelector('#combatModeOverlay.open', { timeout: STEP_TIMEOUT_MS });
+  await dismissBlockingOverlays(gmPage);
+  await playerPage.waitForSelector('#combatModeOverlay.open', { timeout: COMBAT_SYNC_TIMEOUT_MS });
+  await dismissBlockingOverlays(playerPage);
+  await waitForSceneEditorState(playerPage, {
+    minTokens: 2,
+    sceneName: 'Smoke Shared Scene',
+    requiredNames: ['Combat Smoke GM', 'Ash Raider']
+  }, 'Player initial shared VTT state');
+
+  await gmPage.evaluate(() => {
+    window.openCombatSceneEditor({
+      id: 'smoke-shared-scene',
+      name: 'Smoke Shared Scene',
+      tokens: [
+        { id: 'smoke-player', name: 'Combat Smoke GM', faction: 'player', hp: 12, maxHp: 12, q: 0, r: 0, size: 1, isPlayer: true },
+        { id: 'smoke-enemy-a', name: 'Ash Raider', faction: 'monster', hp: 8, maxHp: 8, q: 1, r: 0, size: 1 },
+        { id: 'smoke-enemy-b', name: 'Pale Hound', faction: 'monster', hp: 6, maxHp: 6, q: 3, r: 0, size: 1 }
+      ]
+    });
+  });
+
+  await waitForSceneEditorState(playerPage, {
+    minTokens: 3,
+    sceneName: 'Smoke Shared Scene',
+    requiredNames: ['Combat Smoke GM', 'Ash Raider', 'Pale Hound']
+  }, 'Player refreshed shared VTT state');
 
   const seeded = await gmPage.evaluate(async () => {
     const liveState = (() => {
@@ -527,7 +645,7 @@ async function run() {
 
   try {
     await waitForServer(BASE_URL, START_TIMEOUT_MS);
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromium();
     await runScenario(browser);
   } finally {
     if (browser) {

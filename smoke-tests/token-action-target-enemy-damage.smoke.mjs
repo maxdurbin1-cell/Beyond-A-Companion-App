@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import process from "node:process";
@@ -58,6 +61,30 @@ async function dismissBlockingOverlays(page) {
   });
 }
 
+function findChromiumExecutable() {
+  const homeDir = process.env.HOME || os.homedir();
+  const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+  ];
+  return candidates.find((entry) => entry && fs.existsSync(entry)) || "";
+}
+
+async function launchChromium() {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (message.indexOf("Executable doesn't exist") < 0) throw err;
+    const executablePath = findChromiumExecutable();
+    if (!executablePath) throw err;
+    return chromium.launch({ headless: true, executablePath });
+  }
+}
+
 async function run() {
   const port = await pickAvailablePort(Number(process.env.PORT || 3000));
   const baseUrl = process.env.SMOKE_URL || `http://127.0.0.1:${port}`;
@@ -71,7 +98,7 @@ async function run() {
   child.stdout.on("data", (chunk) => { serverLog += String(chunk || ""); });
   child.stderr.on("data", (chunk) => { serverLog += String(chunk || ""); });
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium();
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
   const pageErrors = [];
   page.on("pageerror", (err) => {

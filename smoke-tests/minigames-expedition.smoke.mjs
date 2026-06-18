@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
 
@@ -8,6 +11,30 @@ const START_TIMEOUT_MS = 20000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function findChromiumExecutable() {
+  const homeDir = process.env.HOME || os.homedir();
+  const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+  ];
+  return candidates.find((entry) => entry && fs.existsSync(entry)) || "";
+}
+
+async function launchChromium() {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (message.indexOf("Executable doesn't exist") < 0) throw err;
+    const executablePath = findChromiumExecutable();
+    if (!executablePath) throw err;
+    return chromium.launch({ headless: true, executablePath });
+  }
 }
 
 async function waitForServer(url, timeoutMs) {
@@ -268,7 +295,7 @@ async function run() {
   let browser;
   try {
     await waitForServer(BASE_URL, START_TIMEOUT_MS);
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromium();
     const page = await browser.newPage();
     await runAssertions(page);
   } finally {

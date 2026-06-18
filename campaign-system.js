@@ -817,6 +817,17 @@
       } catch (_err) {}
     }
 
+    if (tab === "scenes" && typeof window.applySharedCombatSceneEditorState === "function") {
+      try {
+        if (window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object") {
+          window.applySharedCombatSceneEditorState(window.S.combat.sceneEditor, {
+            autoOpen: true,
+            sceneName: "Campaign Shared Scene"
+          });
+        }
+      } catch (_err) {}
+    }
+
     if (provinceKey && provinceKey !== activeProvinceKey && typeof window.setProvinceSelectedKey === "function") {
       try { window.setProvinceSelectedKey(provinceKey); } catch (_err) {}
     }
@@ -2508,6 +2519,11 @@
         }
         if (sharedState.combatScene.sceneEditor && typeof sharedState.combatScene.sceneEditor === "object") {
           window.S.combat.sceneEditor = deepCloneJson(sharedState.combatScene.sceneEditor) || null;
+          if (typeof window.applySharedCombatSceneEditorState === "function") {
+            try {
+              window.applySharedCombatSceneEditorState(window.S.combat.sceneEditor, { refreshUi: true });
+            } catch (_err) {}
+          }
         }
         if (sharedState.combatScene.syncMeta && typeof sharedState.combatScene.syncMeta === "object") {
           window.S.combat.sceneSyncMeta = deepCloneJson(sharedState.combatScene.syncMeta) || null;

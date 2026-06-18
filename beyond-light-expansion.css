@@ -6,8 +6,8 @@
 .sea-layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:.85rem;min-height:calc(100vh - 160px);}
 @media(max-width:960px){.sea-layout{grid-template-columns:1fr;min-height:auto;}}
 .sea-scroll{overflow:auto;background:var(--card);border:1px solid var(--border);position:relative;}
-.sea-info{background:var(--card);border:1px solid var(--border);overflow-y:auto;}
-.sea-info-inner{padding:.85rem;}
+.sea-info,.planet-info,.wtw-shell .hex-info{background:var(--card);border:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;min-height:0;max-height:none;}
+.sea-info-inner,.planet-info .hex-info-inner,.wtw-shell .hex-info-inner{padding:clamp(.62rem,1.2vw,.88rem);display:grid;gap:.4rem;}
 .sea-legend{display:flex;flex-wrap:wrap;gap:.45rem;margin:.65rem 0;}
 .sea-item{display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted2);}
 .sea-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;border:1px solid rgba(255,255,255,.15);}
@@ -35,7 +35,7 @@
 .planet-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,360px);gap:.65rem;min-height:calc(100dvh - 170px);max-width:100%;overflow:hidden;}
 @media(max-width:1180px){.planet-layout{grid-template-columns:1fr;min-height:auto;overflow:visible;}.planet-info{max-height:none;}}
 .planet-scroll{overflow:auto;background:var(--card);border:1px solid var(--border);position:relative;padding:.58rem;height:100%;min-height:0;max-width:100%;}
-.planet-info{background:var(--card);border:1px solid var(--border);overflow-y:auto;height:100%;max-height:calc(100dvh - 190px);min-height:0;}
+.planet-info{height:100%;max-height:calc(100dvh - 190px);}
 .planet-svg-wrap{overflow:auto;background:rgba(5,8,18,.72);border:1px solid var(--border);padding:.45rem;max-width:100%;}
 .planet-svg{width:100%;height:auto;max-width:100%;display:block;background:linear-gradient(180deg,rgba(5,8,18,.95),rgba(7,10,20,.72));}
 #tab-planet .planet-scroll,#tab-planet .planet-svg-wrap{overflow:hidden;}
@@ -195,7 +195,7 @@
 
 .wtw-shell .map-layout{height:min(80vh,900px);}
 .wtw-shell .hex-info{background:linear-gradient(180deg,rgba(10,14,20,.95),rgba(8,12,18,.9));}
-.wtw-shell .hex-info-inner{padding:.78rem;display:grid;gap:.45rem;}
+.wtw-shell .hex-info-inner{gap:.45rem;}
 .wtw-header{border:1px solid var(--border2);background:rgba(255,255,255,.02);padding:.5rem .58rem;}
 .wtw-headline{font-family:'Cinzel',serif;font-size:.74rem;letter-spacing:.06em;color:var(--gold2);margin:.08rem 0 .2rem;}
 .wtw-summary{font-size:.76rem;color:var(--muted3);line-height:1.45;}
