@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
 
@@ -28,6 +31,30 @@ function startServer() {
   });
 
   return child;
+}
+
+function findChromiumExecutable() {
+  const homeDir = process.env.HOME || os.homedir();
+  const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+  ];
+  return candidates.find((entry) => entry && fs.existsSync(entry)) || "";
+}
+
+async function launchChromium() {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (message.indexOf("Executable doesn't exist") < 0) throw err;
+    const executablePath = findChromiumExecutable();
+    if (!executablePath) throw err;
+    return chromium.launch({ headless: true, executablePath });
+  }
 }
 
 async function waitForServer(url, timeoutMs) {
@@ -101,8 +128,11 @@ async function collectTurnSummary(page) {
     return {
       active: !!combat.active,
       round: Number(combat.round || 0),
-      currentActorIndex: Number(combat.currentActorIndex || 0),
-      currentActorToken: turnOrder.length ? String(turnOrder[Math.max(0, Math.min(Number(combat.currentActorIndex || 0), turnOrder.length - 1))] || "") : "",
+      phase: String(combat.phase || "wayfarer"),
+      currentActorIndex: Number.isFinite(Number(combat.currentActorIndex)) ? Number(combat.currentActorIndex) : -1,
+      activeToken: String(combat.activeToken || ""),
+      pendingWayfarers: Array.isArray(combat.pendingWayfarers) ? combat.pendingWayfarers.map((entry) => String(entry || "")) : [],
+      actedWayfarers: Array.isArray(combat.actedWayfarers) ? combat.actedWayfarers.map((entry) => String(entry || "")) : [],
       turnOrder,
       participantActed: participants.reduce((acc, row) => {
         if (!row || !row.token) return acc;
@@ -117,7 +147,7 @@ async function waitForTurnSummary(page, expected, label) {
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const before = await collectTurnSummary(page);
-    process.stdout.write(`[trace] ${label} attempt=${attempt + 1} before=${JSON.stringify(before)} expected=${JSON.stringify({ round: expected.round, actor: expected.currentActorToken, idx: expected.currentActorIndex })}\n`);
+    process.stdout.write(`[trace] ${label} attempt=${attempt + 1} before=${JSON.stringify(before)} expected=${JSON.stringify({ round: expected.round, phase: expected.phase, actor: expected.activeToken, idx: expected.currentActorIndex })}\n`);
     try {
       await page.waitForFunction(
         (target) => {
@@ -129,13 +159,19 @@ async function waitForTurnSummary(page, expected, label) {
             : {};
           const turnOrder = Array.isArray(combat.turnOrder) ? combat.turnOrder : [];
           const participants = Array.isArray(combat.participants) ? combat.participants : [];
-          const actorIndex = Number(combat.currentActorIndex || 0);
-          const actorToken = turnOrder.length ? String(turnOrder[Math.max(0, Math.min(actorIndex, turnOrder.length - 1))] || "") : "";
+          const actorIndex = Number.isFinite(Number(combat.currentActorIndex)) ? Number(combat.currentActorIndex) : -1;
+          const activeToken = String(combat.activeToken || "");
+          const phase = String(combat.phase || "wayfarer");
+          const pendingWayfarers = Array.isArray(combat.pendingWayfarers) ? combat.pendingWayfarers.map((entry) => String(entry || "")) : [];
+          const actedWayfarers = Array.isArray(combat.actedWayfarers) ? combat.actedWayfarers.map((entry) => String(entry || "")) : [];
           if (!!combat.active !== !!target.active) return false;
           if (Number(combat.round || 0) !== Number(target.round || 0)) return false;
+          if (phase !== String(target.phase || "wayfarer")) return false;
           if (actorIndex !== Number(target.currentActorIndex || 0)) return false;
-          if (actorToken !== String(target.currentActorToken || "")) return false;
+          if (activeToken !== String(target.activeToken || "")) return false;
           if (target.turnOrder && JSON.stringify(turnOrder) !== JSON.stringify(target.turnOrder)) return false;
+          if (target.pendingWayfarers && JSON.stringify(pendingWayfarers) !== JSON.stringify(target.pendingWayfarers)) return false;
+          if (target.actedWayfarers && JSON.stringify(actedWayfarers) !== JSON.stringify(target.actedWayfarers)) return false;
           if (target.participantActed) {
             for (const key of Object.keys(target.participantActed)) {
               const row = participants.find((item) => item && String(item.token || "") === String(key));
@@ -173,8 +209,11 @@ async function waitForTurnSummary(page, expected, label) {
   if (
     summary.active !== expected.active ||
     summary.round !== expected.round ||
+    summary.phase !== expected.phase ||
     summary.currentActorIndex !== expected.currentActorIndex ||
-    summary.currentActorToken !== expected.currentActorToken ||
+    summary.activeToken !== expected.activeToken ||
+    JSON.stringify(summary.pendingWayfarers) !== JSON.stringify(expected.pendingWayfarers) ||
+    JSON.stringify(summary.actedWayfarers) !== JSON.stringify(expected.actedWayfarers) ||
     JSON.stringify(summary.turnOrder) !== JSON.stringify(expected.turnOrder)
   ) {
     throw new Error(`${label} mismatch: expected=${JSON.stringify(expected)} actual=${JSON.stringify(summary)}`);
@@ -287,8 +326,7 @@ async function runScenario(browser) {
       expected: {
         gmToken: String(gmMember.token || "gm-token"),
         playerToken: String(playerMember.token || "player-token"),
-        enemyTurn1: "enemy:turn-smoke-e1:turn1",
-        enemyTurn2: "enemy:turn-smoke-e1:turn2"
+        enemyTurn: "enemy:phase"
       }
     };
   });
@@ -345,87 +383,122 @@ async function runScenario(browser) {
   const turnOrder = [
     combatSetup.expected.gmToken,
     combatSetup.expected.playerToken,
-    combatSetup.expected.enemyTurn1,
-    combatSetup.expected.enemyTurn2
+    combatSetup.expected.enemyTurn
   ];
 
   await waitForTurnSummary(playerPage, {
     active: true,
     round: 1,
-    currentActorIndex: 0,
-    currentActorToken: combatSetup.expected.gmToken,
+    phase: "wayfarer",
+    currentActorIndex: -1,
+    activeToken: "",
+    pendingWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+    actedWayfarers: [],
     turnOrder,
     participantActed: {
       [combatSetup.expected.gmToken]: false,
       [combatSetup.expected.playerToken]: false,
-      [combatSetup.expected.enemyTurn1]: false,
-      [combatSetup.expected.enemyTurn2]: false
+      [combatSetup.expected.enemyTurn]: false
     }
   }, "Combat start state");
 
   for (const step of [
     {
+      actionName: "setCombatActor",
+      arg: combatSetup.expected.gmToken,
       expected: {
         active: true,
         round: 1,
-        currentActorIndex: 1,
-        currentActorToken: combatSetup.expected.playerToken,
-        turnOrder,
-        participantActed: { [combatSetup.expected.gmToken]: true }
-      }
-    },
-    {
-      expected: {
-        active: true,
-        round: 1,
-        currentActorIndex: 2,
-        currentActorToken: combatSetup.expected.enemyTurn1,
-        turnOrder,
-        participantActed: {
-          [combatSetup.expected.gmToken]: true,
-          [combatSetup.expected.playerToken]: true
-        }
-      }
-    },
-    {
-      expected: {
-        active: true,
-        round: 1,
-        currentActorIndex: 3,
-        currentActorToken: combatSetup.expected.enemyTurn2,
-        turnOrder,
-        participantActed: {
-          [combatSetup.expected.gmToken]: true,
-          [combatSetup.expected.playerToken]: true,
-          [combatSetup.expected.enemyTurn1]: true
-        }
-      }
-    },
-    {
-      expected: {
-        active: true,
-        round: 2,
+        phase: "wayfarer",
         currentActorIndex: 0,
-        currentActorToken: combatSetup.expected.gmToken,
+        activeToken: combatSetup.expected.gmToken,
+        pendingWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+        actedWayfarers: [],
         turnOrder,
         participantActed: {
           [combatSetup.expected.gmToken]: false,
           [combatSetup.expected.playerToken]: false,
-          [combatSetup.expected.enemyTurn1]: false,
-          [combatSetup.expected.enemyTurn2]: false
+          [combatSetup.expected.enemyTurn]: false
+        }
+      }
+    },
+    {
+      actionName: "nextCombatActor",
+      expected: {
+        active: true,
+        round: 1,
+        phase: "wayfarer",
+        currentActorIndex: -1,
+        activeToken: "",
+        pendingWayfarers: [combatSetup.expected.playerToken],
+        actedWayfarers: [combatSetup.expected.gmToken],
+        turnOrder,
+        participantActed: {
+          [combatSetup.expected.gmToken]: true,
+          [combatSetup.expected.playerToken]: false,
+          [combatSetup.expected.enemyTurn]: false
+        }
+      }
+    },
+    {
+      actionName: "setCombatActor",
+      arg: combatSetup.expected.playerToken,
+      expected: {
+        active: true,
+        round: 1,
+        phase: "wayfarer",
+        currentActorIndex: 1,
+        activeToken: combatSetup.expected.playerToken,
+        pendingWayfarers: [combatSetup.expected.playerToken],
+        actedWayfarers: [combatSetup.expected.gmToken],
+        turnOrder,
+        participantActed: {
+          [combatSetup.expected.gmToken]: true,
+          [combatSetup.expected.playerToken]: false,
+          [combatSetup.expected.enemyTurn]: false
+        }
+      }
+    },
+    {
+      actionName: "nextCombatActor",
+      expected: {
+        active: true,
+        round: 1,
+        phase: "enemy",
+        currentActorIndex: 2,
+        activeToken: combatSetup.expected.enemyTurn,
+        pendingWayfarers: [],
+        actedWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+        turnOrder,
+        participantActed: {
+          [combatSetup.expected.gmToken]: true,
+          [combatSetup.expected.playerToken]: true,
+          [combatSetup.expected.enemyTurn]: false
+        }
+      }
+    },
+    {
+      actionName: "nextCombatActor",
+      expected: {
+        active: true,
+        round: 2,
+        phase: "wayfarer",
+        currentActorIndex: -1,
+        activeToken: "",
+        pendingWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+        actedWayfarers: [],
+        turnOrder,
+        participantActed: {
+          [combatSetup.expected.gmToken]: false,
+          [combatSetup.expected.playerToken]: false,
+          [combatSetup.expected.enemyTurn]: false
         }
       }
     }
   ]) {
-    const advanced = await gmPage.evaluate(async () => {
-      return new Promise((resolve) => {
-        window.campaignSystem.nextCombatActor(function (res) {
-          resolve(res || { ok: false, error: "No callback result." });
-        });
-      });
-    });
+    const advanced = await callCampaignAction(gmPage, step.actionName, step.arg);
     if (!advanced || !advanced.ok) {
-      throw new Error(`Combat turn smoke failed to advance actor: ${JSON.stringify(advanced)}`);
+      throw new Error(`Combat turn smoke failed for ${step.actionName}: ${JSON.stringify(advanced)}`);
     }
     await waitForTurnSummary(playerPage, step.expected, "Combat turn progression");
   }
@@ -444,7 +517,7 @@ async function run() {
 
   try {
     await waitForServer(BASE_URL, START_TIMEOUT_MS);
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromium();
     await runScenario(browser);
   } finally {
     if (browser) {

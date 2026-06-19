@@ -352,6 +352,22 @@ async function waitForSceneEditorState(page, expected, label) {
   }
 }
 
+async function waitForSharedVttPrompt(page, label) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const overlay = document.getElementById('combatModeOverlay');
+        return !!window.joinSharedCampaignCombatModeFromPrompt && !(overlay && overlay.classList.contains('open'));
+      },
+      null,
+      { timeout: COMBAT_SYNC_TIMEOUT_MS }
+    );
+  } catch (err) {
+    const summary = await collectSceneEditorSummary(page);
+    throw new Error(`${label} shared VTT prompt timed out: actual=${JSON.stringify(summary)} error=${String(err && err.message ? err.message : err)}`);
+  }
+}
+
 async function syncSharedSilentRetry(page, reason, attempts = 6) {
   let lastResult = { ok: false, error: 'No sync attempts made.' };
   for (let i = 0; i < attempts; i += 1) {
@@ -431,25 +447,113 @@ async function runScenario(browser) {
     { timeout: STEP_TIMEOUT_MS }
   );
 
-  await gmPage.evaluate(() => {
-    window.openCombatSceneEditor({
-      id: 'smoke-shared-scene',
-      name: 'Smoke Shared Scene',
-      tokens: [
-        { id: 'smoke-player', name: 'Combat Smoke GM', faction: 'player', hp: 12, maxHp: 12, q: 0, r: 0, size: 1, isPlayer: true },
-        { id: 'smoke-enemy-a', name: 'Ash Raider', faction: 'monster', hp: 8, maxHp: 8, q: 2, r: 0, size: 1 }
+  await Promise.all([
+    gmPage.evaluate(() => {
+      if (typeof window.switchTab === "function") window.switchTab("combat");
+    }),
+    playerPage.evaluate(() => {
+      if (typeof window.switchTab === "function") window.switchTab("combat");
+    })
+  ]);
+
+  const combatSetup = await gmPage.evaluate(() => {
+    const liveState = (() => {
+      try {
+        return (typeof S !== "undefined" && S) ? S : (window.S = window.S || {});
+      } catch (_err) {
+        return (window.S = window.S || {});
+      }
+    })();
+    window.S = liveState;
+    liveState.combat = {
+      active: true,
+      enemyDread: 8,
+      spacing: "Nearby",
+      round: 1,
+      actionsLeft: 3
+    };
+    liveState.enemies = [
+      { id: "smoke-e1", name: "Ash Raider", stress: 1, maxStress: 6, ally: false, conditions: [] }
+    ];
+    liveState.combatMap = {
+      units: [
+        { id: 1, name: "Combat Smoke GM", side: "ally", zone: "Engaged", isPlayer: true },
+        { id: 2, name: "Ash Raider", side: "enemy", zone: "Nearby", fromTracker: true, trackerKey: "enemy:smoke-e1" }
+      ],
+      lastRelativeZone: "Nearby"
+    };
+    if (typeof window.updateCombatUI === "function") {
+      try { window.updateCombatUI(); } catch (_err2) {}
+    }
+    if (typeof window.renderEnemies === "function") {
+      try { window.renderEnemies(); } catch (_err3) {}
+    }
+    if (typeof window.renderCombatMap === "function") {
+      try { window.renderCombatMap(); } catch (_err4) {}
+    }
+
+    const st = window.campaignSystem.getState();
+    const members = (st && st.campaign && (st.campaign.roster || st.campaign.members)) || [];
+    const gmMember = members.find((member) => member && member.role === "gm") || members[0];
+    const playerMember = members.find((member) => member && member.role !== "gm") || members[members.length - 1];
+    return {
+      participants: [
+        {
+          token: String(gmMember && gmMember.token || "gm-token"),
+          name: String(gmMember && gmMember.name || "GM"),
+          role: "gm",
+          character: { name: String(gmMember && gmMember.name || "GM"), stats: { valor: 10 } }
+        },
+        {
+          token: String(playerMember && playerMember.token || "player-token"),
+          name: String(playerMember && playerMember.name || "Player"),
+          role: "player",
+          character: { name: String(playerMember && playerMember.name || "Player"), stats: { valor: 6 } }
+        }
       ]
+    };
+  });
+
+  const started = await gmPage.evaluate(async (payload) => {
+    return new Promise((resolve) => {
+      window.campaignSystem.startCampaignCombat(payload.participants, function (res) {
+        resolve(res || { ok: false, error: "No callback result." });
+      }, { skipReadyCheck: true });
     });
+  }, combatSetup);
+  if (!started || !started.ok) {
+    throw new Error(`Combat smoke failed to start campaign combat: ${JSON.stringify(started)}`);
+  }
+
+  await waitForSceneEditorState(playerPage, {
+    overlayOpen: false,
+    activeTab: 'combat'
+  }, 'Player remains on Combat Tab before GM opens VTT');
+
+  await gmPage.evaluate(() => {
+    const btn = document.getElementById('combatEnterModeBtn');
+    if (!btn) throw new Error('Missing combatEnterModeBtn');
+    btn.click();
   });
 
   await gmPage.waitForSelector('#combatModeOverlay.open', { timeout: STEP_TIMEOUT_MS });
-  await dismissBlockingOverlays(gmPage);
-  await playerPage.waitForSelector('#combatModeOverlay.open', { timeout: COMBAT_SYNC_TIMEOUT_MS });
-  await dismissBlockingOverlays(playerPage);
+  await waitForSharedVttPrompt(playerPage, 'Player receives shared VTT prompt');
   await waitForSceneEditorState(playerPage, {
-    minTokens: 2,
-    sceneName: 'Smoke Shared Scene',
-    requiredNames: ['Combat Smoke GM', 'Ash Raider']
+    overlayOpen: false,
+    activeTab: 'combat'
+  }, 'Player stays on Combat Tab until joining shared VTT');
+
+  await playerPage.evaluate(() => {
+    if (typeof window.joinSharedCampaignCombatModeFromPrompt !== 'function') {
+      throw new Error('Missing joinSharedCampaignCombatModeFromPrompt');
+    }
+    window.joinSharedCampaignCombatModeFromPrompt();
+  });
+  await playerPage.waitForSelector('#combatModeOverlay.open', { timeout: COMBAT_SYNC_TIMEOUT_MS });
+  await waitForSceneEditorState(playerPage, {
+    minTokens: 3,
+    sceneName: 'Live Combat Map',
+    requiredNames: ['Ash Raider']
   }, 'Player initial shared VTT state');
 
   await gmPage.evaluate(() => {
@@ -465,9 +569,9 @@ async function runScenario(browser) {
   });
 
   await waitForSceneEditorState(playerPage, {
-    minTokens: 3,
+    minTokens: 4,
     sceneName: 'Smoke Shared Scene',
-    requiredNames: ['Combat Smoke GM', 'Ash Raider', 'Pale Hound']
+    requiredNames: ['Ash Raider', 'Pale Hound']
   }, 'Player refreshed shared VTT state');
 
   const seeded = await gmPage.evaluate(async () => {

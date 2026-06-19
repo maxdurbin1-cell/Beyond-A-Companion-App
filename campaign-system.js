@@ -68,6 +68,8 @@
     },
     activeRosterSheetToken: "",
     lastCampaignCombatPromptAt: 0,
+    lastCampaignActorPromptKey: "",
+    lastCampaignVttPromptAt: 0,
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
     lastProvinceMapHash: "",
@@ -716,6 +718,69 @@
     }
   }
 
+  function resolveSharedCombatSceneName() {
+    var sceneState = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
+      ? window.S.combat.sceneEditor
+      : null;
+    if (!sceneState) return "Campaign Shared Scene";
+    var activeSceneId = String(sceneState.activeSceneId || "");
+    var scenes = Array.isArray(sceneState.scenes) ? sceneState.scenes : [];
+    var activeScene = activeSceneId
+      ? (scenes.find(function (scene) { return scene && String(scene.id || "") === activeSceneId; }) || null)
+      : null;
+    return String(activeScene && activeScene.name || "Campaign Shared Scene");
+  }
+
+  function joinSharedCampaignCombatMode() {
+    if (!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object")) {
+      safeNotif("The shared VTT is still syncing. Try again in a moment.", "warn");
+      return false;
+    }
+    if (typeof window.applySharedCombatSceneEditorState !== "function") {
+      safeNotif("Combat Mode is unavailable right now.", "warn");
+      return false;
+    }
+    try {
+      window.applySharedCombatSceneEditorState(window.S.combat.sceneEditor, {
+        autoOpen: true,
+        sceneName: resolveSharedCombatSceneName()
+      });
+      safeNotif("Joined the shared Combat Mode scene.", "good");
+      return true;
+    } catch (_err) {
+      safeNotif("Could not join the shared Combat Mode scene.", "warn");
+      return false;
+    }
+  }
+
+  function promptCampaignCombatModeInvite(vttSession) {
+    var session = vttSession && typeof vttSession === "object" ? vttSession : {};
+    var sceneName = String(session.sceneName || resolveSharedCombatSceneName() || "Campaign Shared Scene");
+    var by = String(session.by || "GM");
+    if (typeof window.openModal !== "function") {
+      safeNotif(by + " opened " + sceneName + ". Use Enter Combat Mode to join the shared VTT.", "info");
+      return;
+    }
+    window.joinSharedCampaignCombatModeFromPrompt = function () {
+      var ok = joinSharedCampaignCombatMode();
+      if (ok && typeof window.closeModal === "function") window.closeModal();
+    };
+    window.dismissSharedCampaignCombatModePrompt = function () {
+      if (typeof window.closeModal === "function") window.closeModal();
+    };
+    var html = ''
+      + '<div style="font-size:.84rem;color:var(--text2);line-height:1.6;">'
+      + '<div style="margin-bottom:.45rem;"><strong>' + escapeHtml(by) + '</strong> opened the shared VTT scene:</div>'
+      + '<div style="margin-bottom:.55rem;color:var(--teal);font-weight:700;">' + escapeHtml(sceneName) + '</div>'
+      + '<div style="margin-bottom:.65rem;color:var(--muted2);">Join now to see the same battlemap, tokens, and enemy updates.</div>'
+      + '<div style="display:flex;justify-content:flex-end;gap:.4rem;">'
+      + '<button class="btn btn-sm" onclick="window.dismissSharedCampaignCombatModePrompt&&window.dismissSharedCampaignCombatModePrompt()">Stay on Combat Tab</button>'
+      + '<button class="btn btn-sm btn-teal" onclick="window.joinSharedCampaignCombatModeFromPrompt&&window.joinSharedCampaignCombatModeFromPrompt()">Join VTT</button>'
+      + '</div>'
+      + '</div>';
+    window.openModal("Join Shared Combat Mode", html, null, { preventScroll: true, focusTrap: true });
+  }
+
   function cloneClientLocalSeaState() {
     if (typeof window.S === "undefined" || !window.S || !window.S.lastSea || typeof window.S.lastSea !== "object") return null;
     return {
@@ -888,8 +953,10 @@
     if (typeof window.switchTab === "function") {
       var baseSwitchTab = window.switchTab;
       window.switchTab = function () {
+        var suppressCampaignSync = !!window.__campaignSuppressNavigationSync;
         var out = baseSwitchTab.apply(this, arguments);
-        if (state.applyingSharedState) return out;
+        if (suppressCampaignSync) window.__campaignSuppressNavigationSync = false;
+        if (state.applyingSharedState || suppressCampaignSync) return out;
         syncCampaignNavigationState(window._activeContext || "", String(arguments[0] || ""));
         scheduleGmCameraSync("switch-tab", true);
         return out;
@@ -2547,15 +2614,46 @@
       }
       if (sharedState.campaignCombat && typeof sharedState.campaignCombat === "object") {
         var current = getCampaignSharedState() || {};
+        var previousCombat = current && current.campaignCombat && typeof current.campaignCombat === "object"
+          ? (deepCloneJson(current.campaignCombat) || {})
+          : {};
         if (!current.campaignCombat) current.campaignCombat = {};
         Object.assign(current.campaignCombat, sharedState.campaignCombat);
-        var combatStartedAt = Number(current.campaignCombat.startedAt || 0);
-        if (current.campaignCombat.active && combatStartedAt && combatStartedAt !== state.lastCampaignCombatPromptAt) {
+        var mergedCombat = ensureCampaignCombatState(current);
+        var combatStartedAt = Number(mergedCombat.startedAt || 0);
+        if (mergedCombat.active && combatStartedAt && combatStartedAt !== state.lastCampaignCombatPromptAt) {
           state.lastCampaignCombatPromptAt = combatStartedAt;
-          safeNotif("Campaign combat started. Enter the Combat tab to join initiative.", "warn");
+          safeNotif("Campaign combat started. The GM can now prompt each Wayfarer from the Combat tab.", "warn");
         }
-        if (!current.campaignCombat.active) {
+        var vttSession = mergedCombat.vttSession && typeof mergedCombat.vttSession === "object" ? mergedCombat.vttSession : null;
+        var vttAt = Number(vttSession && vttSession.enteredAt || 0);
+        if (mergedCombat.active && state.role === "player" && vttAt && vttAt !== state.lastCampaignVttPromptAt) {
+          state.lastCampaignVttPromptAt = vttAt;
+          promptCampaignCombatModeInvite(vttSession);
+        }
+        var activeToken = String(getCampaignCombatActiveToken(mergedCombat) || "");
+        var activePromptKey = [
+          String(mergedCombat.phase || "wayfarer"),
+          String(Math.max(1, Number(mergedCombat.round || 1))),
+          activeToken
+        ].join("|");
+        var previousPromptKey = [
+          String(previousCombat.phase || "wayfarer"),
+          String(Math.max(1, Number(previousCombat.round || 1))),
+          String(getCampaignCombatActiveToken(previousCombat) || "")
+        ].join("|");
+        if (mergedCombat.active && state.role === "player" && activeToken && activeToken !== getCampaignEnemyTurnToken() && activePromptKey !== previousPromptKey && activePromptKey !== state.lastCampaignActorPromptKey) {
+          state.lastCampaignActorPromptKey = activePromptKey;
+          if (String(state.token || "") === activeToken) {
+            safeNotif("The GM prompted you to act in combat.", "good");
+          }
+        } else if (!activeToken) {
+          state.lastCampaignActorPromptKey = "";
+        }
+        if (!mergedCombat.active) {
           state.lastCampaignCombatPromptAt = 0;
+          state.lastCampaignActorPromptKey = "";
+          state.lastCampaignVttPromptAt = 0;
         }
       }
       if (sharedState.campaignTravel && typeof sharedState.campaignTravel === "object") {
@@ -2956,9 +3054,23 @@
         active: false,
         round: 0,
         turnOrder: [],
-        currentActorIndex: 0,
-        participants: []
+        currentActorIndex: -1,
+        participants: [],
+        phase: "wayfarer",
+        activeToken: "",
+        pendingWayfarers: [],
+        actedWayfarers: [],
+        vttSession: null
       };
+    }
+    if (!Array.isArray(sharedState.campaignCombat.turnOrder)) sharedState.campaignCombat.turnOrder = [];
+    if (!Array.isArray(sharedState.campaignCombat.participants)) sharedState.campaignCombat.participants = [];
+    if (!Array.isArray(sharedState.campaignCombat.pendingWayfarers)) sharedState.campaignCombat.pendingWayfarers = [];
+    if (!Array.isArray(sharedState.campaignCombat.actedWayfarers)) sharedState.campaignCombat.actedWayfarers = [];
+    if (sharedState.campaignCombat.phase !== "enemy") sharedState.campaignCombat.phase = "wayfarer";
+    if (typeof sharedState.campaignCombat.activeToken !== "string") sharedState.campaignCombat.activeToken = "";
+    if (!Number.isFinite(Number(sharedState.campaignCombat.currentActorIndex))) {
+      sharedState.campaignCombat.currentActorIndex = -1;
     }
     return sharedState.campaignCombat;
   }
@@ -3042,7 +3154,99 @@
     return roster;
   }
 
-  // Start campaign combat: establish turn order based on initiative (valor roll)
+  function getCampaignEnemyTurnToken() {
+    return "enemy:phase";
+  }
+
+  function syncCampaignCombatParticipantFlags(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef || !Array.isArray(stateRef.participants)) return stateRef;
+    var actedMap = {};
+    var acted = Array.isArray(stateRef.actedWayfarers) ? stateRef.actedWayfarers : [];
+    acted.forEach(function (token) {
+      var key = String(token || "");
+      if (key) actedMap[key] = true;
+    });
+    var activeToken = String(stateRef.activeToken || "");
+    var enemyToken = getCampaignEnemyTurnToken();
+    stateRef.participants = stateRef.participants.map(function (row) {
+      if (!row) return row;
+      var token = String(row.token || "");
+      if (!token) return row;
+      var hasActed = token === enemyToken
+        ? (String(stateRef.phase || "wayfarer") === "enemy" && activeToken !== enemyToken && Number(stateRef.round || 0) > 0)
+        : !!actedMap[token];
+      return Object.assign({}, row, { hasActed: hasActed });
+    });
+    return stateRef;
+  }
+
+  function syncCampaignCombatCurrentActorIndex(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef) return stateRef;
+    var order = Array.isArray(stateRef.turnOrder) ? stateRef.turnOrder : [];
+    var activeToken = String(stateRef.activeToken || "");
+    if (!order.length || !activeToken) {
+      stateRef.currentActorIndex = -1;
+      return stateRef;
+    }
+    var idx = order.indexOf(activeToken);
+    stateRef.currentActorIndex = idx >= 0 ? idx : -1;
+    return stateRef;
+  }
+
+  function resetCampaignCombatRoundState(combatState, rosterTokens) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    var nextRoster = Array.isArray(rosterTokens)
+      ? rosterTokens.slice()
+      : ((stateRef && Array.isArray(stateRef.turnOrder))
+        ? stateRef.turnOrder.filter(function (token) { return token && token !== getCampaignEnemyTurnToken(); })
+        : []);
+    if (!stateRef) return stateRef;
+    stateRef.phase = "wayfarer";
+    stateRef.activeToken = "";
+    stateRef.pendingWayfarers = nextRoster.slice();
+    stateRef.actedWayfarers = [];
+    syncCampaignCombatParticipantFlags(stateRef);
+    syncCampaignCombatCurrentActorIndex(stateRef);
+    return stateRef;
+  }
+
+  function setCampaignCombatActorToken(combatState, token) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef) return stateRef;
+    stateRef.activeToken = String(token || "");
+    syncCampaignCombatCurrentActorIndex(stateRef);
+    syncCampaignCombatParticipantFlags(stateRef);
+    return stateRef;
+  }
+
+  function getCampaignCombatActiveToken(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : ensureCampaignCombatState();
+    if (!stateRef || !stateRef.active) return "";
+    var activeToken = String(stateRef.activeToken || "");
+    if (activeToken) return activeToken;
+    if (String(stateRef.phase || "wayfarer") === "enemy") return getCampaignEnemyTurnToken();
+    return "";
+  }
+
+  function persistCampaignCombatState(combatState, reason) {
+    var stateRef = ensureCampaignCombatState();
+    if (combatState && combatState !== stateRef) {
+      var sharedState = getMutableCampaignSharedState();
+      sharedState.campaignCombat = deepCloneJson(combatState) || combatState;
+      stateRef = sharedState.campaignCombat;
+    }
+    syncCampaignCombatParticipantFlags(stateRef);
+    syncCampaignCombatCurrentActorIndex(stateRef);
+    if (state.code && state.connected) {
+      var patchOut = syncSharedPatch({ campaignCombat: deepCloneJson(stateRef) || stateRef }, String(reason || "campaign-combat-update"));
+      if (patchOut && typeof patchOut.catch === "function") patchOut.catch(function () {});
+    }
+    return stateRef;
+  }
+
+  // Start campaign combat: GM chooses the acting Wayfarer each round, then resolves one enemy phase.
   function startCampaignCombat(participants, callback, options) {
     if (!state.role) {
       if (callback) callback({ ok: false, error: "Join a campaign first" });
@@ -3077,33 +3281,18 @@
     try {
       var sharedState = getMutableCampaignSharedState();
       var combatState = ensureCampaignCombatState(sharedState);
+      var roster = (Array.isArray(participants) ? participants : buildPartyRoster()).slice();
+      var wayfarerTokens = roster.map(function (p) { return String(p.token || ""); }).filter(Boolean);
+
       combatState.active = true;
       combatState.round = 1;
-      combatState.currentActorIndex = 0;
-
-      // Build turn order: Wayfarers first (highest Valor first), then enemies.
-      var roster = (Array.isArray(participants) ? participants : buildPartyRoster()).slice();
-      roster.sort(function(a, b) {
-        var advA = Number((a.character && a.character.stats && (a.character.stats.valor)) || 0);
-        var advB = Number((b.character && b.character.stats && (b.character.stats.valor)) || 0);
-        return advB - advA;
-      });
-
-      var enemyList = [];
-      var gameState = syncWindowStateAlias() || resolveGameState() || (typeof window !== "undefined" ? window.S : null);
-      var enemiesSource = gameState && Array.isArray(gameState.enemies) ? gameState.enemies : [];
-      enemiesSource.forEach(function (enemy, idx) {
-          if (!enemy || enemy.ally) return;
-          var enemyName = String(enemy.name || ("Enemy " + (idx + 1)));
-          var baseToken = String(enemy.id != null ? enemy.id : ("enemy-" + idx));
-          enemyList.push({ token: "enemy:" + baseToken + ":turn1", name: enemyName + " (Turn 1)" });
-          enemyList.push({ token: "enemy:" + baseToken + ":turn2", name: enemyName + " (Turn 2)" });
-      });
-
-      combatState.turnOrder = roster.map(function (p) { return String(p.token || ""); }).filter(Boolean);
-      enemyList.forEach(function (enemy) {
-        combatState.turnOrder.push(enemy.token);
-      });
+      combatState.turnOrder = wayfarerTokens.concat([getCampaignEnemyTurnToken()]);
+      combatState.phase = "wayfarer";
+      combatState.activeToken = "";
+      combatState.pendingWayfarers = wayfarerTokens.slice();
+      combatState.actedWayfarers = [];
+      combatState.currentActorIndex = -1;
+      combatState.vttSession = null;
 
       var wayfarers = roster.map(function(p) {
         return {
@@ -3116,24 +3305,21 @@
         };
       });
 
-      var enemies = enemyList.map(function (enemy) {
-        return {
-          token: enemy.token,
-          name: enemy.name,
-          role: "enemy",
-          isEnemy: true,
-          isDead: false,
-          hasActed: false
-        };
-      });
-
-      combatState.participants = wayfarers.concat(enemies);
+      combatState.participants = wayfarers.concat([{
+        token: getCampaignEnemyTurnToken(),
+        name: "Enemy Turn",
+        role: "enemy",
+        isEnemy: true,
+        isDead: false,
+        hasActed: false
+      }]);
       combatState.startedAt = Date.now();
       combatState.startedBy = String(state.playerName || ensureName() || "Wayfarer");
+      syncCampaignCombatParticipantFlags(combatState);
       sharedState.campaignCombat = deepCloneJson(combatState) || combatState;
       appendSessionTimeline("combat", "Campaign combat started.", {
         startedBy: combatState.startedBy,
-        participants: Array.isArray(combatState.turnOrder) ? combatState.turnOrder.length : 0
+        participants: wayfarerTokens.length
       });
 
       if (state.code && state.connected) {
@@ -3147,7 +3333,7 @@
         }
         broadcastRollResult(
           "Campaign Combat",
-          "Initiative opened by " + combatState.startedBy + ". Wayfarers act first; each enemy acts twice per round."
+          "Combat opened by " + combatState.startedBy + ". The GM now chooses which Wayfarer acts each round before the enemy turn."
         );
       }
       if (callback) callback({ ok: true });
@@ -3159,14 +3345,44 @@
   // Get current actor in turn order
   function getCurrentCombatActor() {
     var combatState = ensureCampaignCombatState();
-    if (!combatState.active || !Array.isArray(combatState.turnOrder) || combatState.turnOrder.length === 0) {
-      return null;
-    }
-    var idx = Math.max(0, Math.min(combatState.currentActorIndex, combatState.turnOrder.length - 1));
-    return combatState.turnOrder[idx] || null;
+    var token = getCampaignCombatActiveToken(combatState);
+    return token || null;
   }
 
-  // Advance to next actor in turn order
+  function setCombatActor(token, callback) {
+    if (!state.role || state.role !== "gm") {
+      if (callback) callback({ ok: false, error: "Only GM can choose the acting Wayfarer" });
+      return;
+    }
+    if (!guardRiskySharedAction("choose combat actor", callback)) return;
+    try {
+      var combatState = ensureCampaignCombatState();
+      if (!combatState.active) {
+        if (callback) callback({ ok: false, error: "No active combat" });
+        return;
+      }
+      if (String(combatState.phase || "wayfarer") !== "wayfarer") {
+        if (callback) callback({ ok: false, error: "Enemy phase is active" });
+        return;
+      }
+      var target = String(token || "");
+      if (!target) {
+        if (callback) callback({ ok: false, error: "Choose a Wayfarer first" });
+        return;
+      }
+      if ((combatState.pendingWayfarers || []).indexOf(target) === -1) {
+        if (callback) callback({ ok: false, error: "That Wayfarer has already acted this round" });
+        return;
+      }
+      setCampaignCombatActorToken(combatState, target);
+      persistCampaignCombatState(combatState, "set-combat-actor");
+      if (callback) callback({ ok: true });
+    } catch (err) {
+      if (callback) callback({ ok: false, error: String(err) });
+    }
+  }
+
+  // Advance campaign combat from the current acting Wayfarer to the next prompt, or from enemy phase to a new round.
   function nextCombatActor(callback) {
     if (!state.role || state.role !== "gm") {
       if (callback) callback({ ok: false, error: "Only GM can advance turns" });
@@ -3180,41 +3396,30 @@
         return;
       }
 
-      var orderSize = combatState.turnOrder.length;
-      var actorIndex = Math.max(0, Math.min(Number(combatState.currentActorIndex || 0), orderSize - 1));
-      var actorToken = String(combatState.turnOrder[actorIndex] || "");
-
-      // Mark current actor as acted
-      if (Array.isArray(combatState.participants) && actorToken) {
-        for (var pIdx = 0; pIdx < combatState.participants.length; pIdx += 1) {
-          var row = combatState.participants[pIdx];
-          if (!row || String(row.token || "") !== actorToken) continue;
-          row.hasActed = true;
-          break;
-        }
+      if (String(combatState.phase || "wayfarer") === "enemy") {
+        combatState.round = Math.max(1, Number(combatState.round || 1)) + 1;
+        resetCampaignCombatRoundState(combatState);
+        persistCampaignCombatState(combatState, "campaign-round-reset");
+        if (callback) callback({ ok: true });
+        return;
       }
 
-      combatState.currentActorIndex = actorIndex + 1;
-      if (combatState.currentActorIndex >= orderSize) {
-        combatState.currentActorIndex = 0;
-        combatState.round += 1;
-        // Reset hasActed for new round
-        if (Array.isArray(combatState.participants)) {
-          for (var i = 0; i < combatState.participants.length; i++) {
-            combatState.participants[i].hasActed = false;
-          }
+      var actorToken = String(combatState.activeToken || "");
+      if (actorToken) {
+        combatState.pendingWayfarers = (combatState.pendingWayfarers || []).filter(function (entry) {
+          return String(entry || "") !== actorToken;
+        });
+        if ((combatState.actedWayfarers || []).indexOf(actorToken) === -1) {
+          combatState.actedWayfarers = (combatState.actedWayfarers || []).concat([actorToken]);
         }
       }
-
-      var sharedState = getMutableCampaignSharedState();
-      sharedState.campaignCombat = deepCloneJson(combatState) || combatState;
-
-      if (state.code && state.connected) {
-        var patchOut = syncSharedPatch({ campaignCombat: sharedState.campaignCombat }, "next-combat-turn");
-        if (patchOut && typeof patchOut.catch === "function") {
-          patchOut.catch(function () {});
-        }
+      if (Array.isArray(combatState.pendingWayfarers) && combatState.pendingWayfarers.length > 0) {
+        setCampaignCombatActorToken(combatState, "");
+      } else {
+        combatState.phase = "enemy";
+        setCampaignCombatActorToken(combatState, getCampaignEnemyTurnToken());
       }
+      persistCampaignCombatState(combatState, "next-combat-turn");
       if (callback) callback({ ok: true });
     } catch (err) {
       if (callback) callback({ ok: false, error: String(err) });
@@ -3233,8 +3438,13 @@
       combatState.active = false;
       combatState.round = 0;
       combatState.turnOrder = [];
-      combatState.currentActorIndex = 0;
+      combatState.currentActorIndex = -1;
       combatState.participants = [];
+      combatState.phase = "wayfarer";
+      combatState.activeToken = "";
+      combatState.pendingWayfarers = [];
+      combatState.actedWayfarers = [];
+      combatState.vttSession = null;
       appendSessionTimeline("combat", "Campaign combat ended.", {});
 
       if (state.code && state.connected) {
@@ -5059,7 +5269,7 @@
           + '<div class="campaign-actions" style="margin-top:.35rem;gap:.2rem;">'
           + '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.startCampaignCombat(window.campaignSystem.buildPartyRoster())"' + riskyDisabledAttr + '>Start Combat</button>'
           + combatReadyHintHtml
-          + '<button class="btn btn-xs" onclick="window.campaignSystem.nextCombatActor()"' + riskyDisabledAttr + '>Next Actor</button>'
+          + '<button class="btn btn-xs" onclick="window.campaignSystem.nextCombatActor()"' + riskyDisabledAttr + '>Advance Step</button>'
           + '<button class="btn btn-xs btn-red" onclick="window.campaignSystem.endCampaignCombat()"' + riskyDisabledAttr + '>End Combat</button>'
           + '</div>'
           + '<div class="campaign-actions" style="margin-top:.35rem;gap:.2rem;">'
@@ -5538,23 +5748,44 @@
     if (!combatState || !combatState.active || !Array.isArray(combatState.turnOrder) || !combatState.turnOrder.length) {
       return { active: false };
     }
-    var idx = Math.max(0, Math.min(Number(combatState.currentActorIndex || 0), combatState.turnOrder.length - 1));
-    var token = String(combatState.turnOrder[idx] || "");
+    var phase = String(combatState.phase || "wayfarer");
+    var token = String(getCampaignCombatActiveToken(combatState) || "");
+    if (!token && phase === "wayfarer") {
+      var actedCount = Array.isArray(combatState.actedWayfarers) ? combatState.actedWayfarers.length : 0;
+      var wayfarerTotal = Array.isArray(combatState.turnOrder)
+        ? combatState.turnOrder.filter(function (entry) { return entry && entry !== getCampaignEnemyTurnToken(); }).length
+        : 0;
+      return {
+        active: true,
+        key: "gm-prompt:" + Math.max(1, Number(combatState.round || 1)) + ":" + actedCount,
+        token: "",
+        name: "GM chooses next Wayfarer",
+        round: Math.max(1, Number(combatState.round || 1)),
+        index: actedCount + 1,
+        total: Math.max(1, wayfarerTotal + 1),
+        isEnemy: false,
+        hasActed: false,
+        isMe: false,
+        isPrompt: true
+      };
+    }
+    var idx = Array.isArray(combatState.turnOrder) ? combatState.turnOrder.indexOf(token) : -1;
     var row = findCampaignCombatParticipant(combatState, token);
     var fallbackName = token.indexOf("enemy:") === 0
-      ? token.replace(/^enemy:/, "").replace(/:turn\d+$/, "")
+      ? "Enemy Turn"
       : (token || "Wayfarer");
     return {
       active: true,
-      key: token + ":" + Math.max(1, Number(combatState.round || 1)),
+      key: token + ":" + Math.max(1, Number(combatState.round || 1)) + ":" + phase,
       token: token,
       name: String((row && row.name) || fallbackName || "Wayfarer"),
       round: Math.max(1, Number(combatState.round || 1)),
-      index: idx + 1,
+      index: idx >= 0 ? (idx + 1) : 1,
       total: combatState.turnOrder.length,
       isEnemy: !!(row && row.isEnemy),
       hasActed: !!(row && row.hasActed),
-      isMe: !!(state.token && token && String(state.token) === token)
+      isMe: !!(state.token && token && String(state.token) === token),
+      isPrompt: false
     };
   }
 
@@ -5654,14 +5885,16 @@
           state.dockActorFlashUntil = now + 3200;
         }
         var actorCardClass = "campaign-dock-status-card" + (state.dockActorFlashUntil > now ? " is-flash" : "");
-        var actorTurnText = actor.isMe
-          ? "your call to act"
-          : (actor.isEnemy ? "storyteller resolves enemy action" : "waiting on that wayfarer");
+        var actorTurnText = actor.isPrompt
+          ? "GM is choosing who goes next"
+          : (actor.isMe
+            ? "your call to act"
+            : (actor.isEnemy ? "storyteller resolves enemy action" : "waiting on that wayfarer"));
         cards.push(''
           + '<div class="' + actorCardClass + '">'
           + '<div class="campaign-dock-status-label">Current Actor</div>'
           + '<div class="campaign-dock-status-main">' + escapeHtml(actor.name)
-          + (actor.isEnemy ? ' <span class="campaign-dock-status-tag enemy">Enemy</span>' : ' <span class="campaign-dock-status-tag ally">Wayfarer</span>')
+          + (actor.isPrompt ? ' <span class="campaign-dock-status-tag ally">Prompt</span>' : (actor.isEnemy ? ' <span class="campaign-dock-status-tag enemy">Enemy</span>' : ' <span class="campaign-dock-status-tag ally">Wayfarer</span>'))
           + (actor.isMe ? ' <span class="campaign-dock-status-tag ally">Your Turn</span>' : '')
           + '</div>'
           + '<div class="campaign-dock-status-sub">Round ' + actor.round + ' · Turn ' + actor.index + '/' + actor.total + (actor.hasActed ? ' · already acted' : ' · ' + escapeHtml(actorTurnText)) + '</div>'
@@ -7935,6 +8168,7 @@
     setGmMode: setGmMode,
     setGmCameraLock: setGmCameraLock,
     startCampaignCombat: startCampaignCombat,
+    setCombatActor: setCombatActor,
     nextCombatActor: nextCombatActor,
     endCampaignCombat: endCampaignCombat,
     getCurrentCombatActor: getCurrentCombatActor,
