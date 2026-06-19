@@ -3,11 +3,12 @@
 .exp-three{grid-template-columns:1.1fr .95fr .95fr;}
 @media(max-width:1100px){.exp-two,.exp-three{grid-template-columns:1fr;}}
 
-.sea-layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:.85rem;min-height:calc(100vh - 160px);}
-@media(max-width:960px){.sea-layout{grid-template-columns:1fr;min-height:auto;}}
-.sea-scroll{overflow:auto;background:var(--card);border:1px solid var(--border);position:relative;}
-.sea-info,.planet-info,.wtw-shell .hex-info{background:var(--card);border:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;min-height:0;max-height:none;}
+.sea-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.95fr);grid-template-rows:minmax(560px,68vh);gap:.65rem;align-items:stretch;}
+@media(max-width:1100px){.sea-layout{grid-template-columns:1fr;grid-template-rows:minmax(420px,58vh) auto;}}
+.sea-scroll{overflow:auto;background:var(--card);border:1px solid var(--border);position:relative;height:100%;min-height:0;}
+.sea-info,.planet-info,.wtw-shell .hex-info{background:var(--card);border:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;min-height:0;max-height:none;height:100%;}
 .sea-info-inner,.planet-info .hex-info-inner,.wtw-shell .hex-info-inner{padding:clamp(.62rem,1.2vw,.88rem);display:grid;gap:.4rem;}
+.sea-scroll svg{display:block;}
 .sea-legend{display:flex;flex-wrap:wrap;gap:.45rem;margin:.65rem 0;}
 .sea-item{display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted2);}
 .sea-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;border:1px solid rgba(255,255,255,.15);}

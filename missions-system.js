@@ -74,6 +74,24 @@
     return stat + ' vs Dread d' + die;
   }
 
+  function normalizeMissionStatKey(stat) {
+    var key = String(stat || 'valor').trim().toLowerCase();
+    switch (key) {
+      case 'agility':
+      case 'sneak':
+      case 'stealth':
+        return 'control';
+      case 'notice':
+      case 'observe':
+      case 'lore':
+        return 'mind';
+      case 'power':
+        return 'strike';
+      default:
+        return key || 'valor';
+    }
+  }
+
   var LOOT_COUNT_DIVISOR      = 6;
   var MAX_COMPLETED_MISSIONS  = 10;
   var MISSION_DEADLINE_DAYS   = 30;
@@ -116,22 +134,33 @@
 
   var ROOM_TRAPS = [
     'TRAP \u2014 Tripwire: Control vs DD6 or take Damage equal to the failed difference.',
-    'TRAP \u2014 Pressure Plate: Agility vs DD4 or take Damage equal to the failed difference.',
+    'TRAP \u2014 Pressure Plate: Control vs DD4 or take Damage equal to the failed difference.',
     'TRAP \u2014 Poison Canister: Body vs DD6 or gain Distracted Condition.',
-    'TRAP \u2014 Alarm Wire: Sneak vs DD6 or guards in adjacent rooms are alerted.',
-    'TRAP \u2014 Electrified Floor Plate: Notice vs DD4 to spot it; failure = Damage equal to the failed difference.',
+    'TRAP \u2014 Alarm Wire: Control vs DD6 or guards in adjacent rooms are alerted.',
+    'TRAP \u2014 Electrified Floor Plate: Mind vs DD4 to spot it; failure = Damage equal to the failed difference.',
     'TRAP \u2014 Collapsing Shelf: Lead vs DD6 to escape or take Damage equal to the failed difference and lose 1 Action.'
   ];
 
   function missionStatLabel(stat) {
-    var key = String(stat || 'valor').trim().toLowerCase();
-    return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Valor';
+    var key = normalizeMissionStatKey(stat);
+    var labels = {
+      body: 'Body',
+      strike: 'Strike',
+      shoot: 'Shoot',
+      mind: 'Mind',
+      spirit: 'Spirit',
+      defend: 'Defend',
+      control: 'Control',
+      lead: 'Lead',
+      valor: 'Valor'
+    };
+    return labels[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Valor');
   }
 
   function getMissionRoomTrapCheck(room) {
     var text = String(room && room.find && room.find.text || '');
     var match = text.match(/:\s*([A-Za-z]+)\s+vs\s+DD(\d+)/i) || text.match(/\b([A-Za-z]+)\s+vs\s+DD(\d+)/i);
-    var stat = match && match[1] ? String(match[1]).toLowerCase() : String(room && room.find && room.find.stat || 'valor').toLowerCase();
+    var stat = match && match[1] ? normalizeMissionStatKey(match[1]) : normalizeMissionStatKey(room && room.find && room.find.stat || 'valor');
     var dd = match && match[2] ? Number(match[2]) : Number(room && room.find && room.find.dd || 6);
     return {
       stat: stat || 'valor',
@@ -192,7 +221,7 @@
     'PUZZLE \u2014 Encrypted Keypad: Control vs DD8 to crack, or find a key card elsewhere.',
     'PUZZLE \u2014 Jammed Mechanism: Body vs DD4 to force open; failure makes noise.',
     'PUZZLE \u2014 Coded Message: Mind vs DD6 to decode a clue about the target\'s escape route.',
-    'PUZZLE \u2014 Biometric Lock: Requires an item from another room or Agility vs DD8.'
+    'PUZZLE \u2014 Biometric Lock: Requires an item from another room or Control vs DD8.'
   ];
 
   var SITE_PUZZLE_SPECS = [
@@ -2473,6 +2502,11 @@
       templateId: opts.templateId || '',
       templateLabel: opts.templateLabel || '',
       lore: opts.lore || '',
+      contact: opts.contact || '',
+      threat: opts.threat || '',
+      keyMarker: opts.keyMarker || '',
+      enemy: opts.enemy || '',
+      gmNotes: opts.gmNotes || '',
       arcChain: opts.arcChain || null,
       soulBoss: opts.soulBoss || '',
       soulMission: !!opts.soulMission,
@@ -2484,6 +2518,7 @@
       step1Intro: opts.step1Intro || '',
       noFactionDelta: !!opts.noFactionDelta,
       deityPact: opts.deityPact || null,
+      gmCreated: !!opts.gmCreated,
       steps:{
         1:{name:stepNames[1] || 'Gather Information',required:false,completed:false,skipped:false},
         2:{name:stepNames[2] || 'Go to Site',        required:true, completed:false},
@@ -2690,9 +2725,16 @@
       templateId: job.templateId || 'standard',
       stepNames: job.stepNames || null,
       lore: job.lore || '',
+      contact: job.contact || '',
+      threat: job.threat || '',
+      keyMarker: job.keyMarker || '',
+      enemy: job.enemy || '',
+      gmNotes: job.gmNotes || '',
       arcChain: job.arcChain || null,
       soulBoss: job.soulBoss || '',
-      soulMission: job.missionType === 'soul_mission' ? true : false
+      soulMission: job.missionType === 'soul_mission' ? true : false,
+      checkpoints: Array.isArray(job.checkpoints) ? job.checkpoints.slice() : [],
+      gmCreated: !!job.gmCreated
     });
     if (job.region === 'galaxy') {
       mission.planetHexId = job.planetHexId || null;
@@ -3133,7 +3175,7 @@
       var hellTraps = [
         { title: 'Hidden spikes erupt from the floor', stat: 'control', dd: 6, failText: 'take Stress equal to failed difference.', apply: function (amount) { var failedBy = Math.max(1, Number(amount || 1)); if (typeof changeStress === 'function') changeStress(failedBy); else if (typeof changeHealth === 'function') changeHealth(failedBy); } },
         { title: 'Poison gas hisses from stone statues', stat: 'body', dd: 6, failText: 'gain Distracted condition.', apply: function () { if (S && S.conditions && Object.prototype.hasOwnProperty.call(S.conditions, 'distracted')) S.conditions.distracted = true; if (typeof updateConditionButtons === 'function') updateConditionButtons(); if (typeof updateAllStatDisplays === 'function') updateAllStatDisplays(); } },
-        { title: 'A pitfall trap collapses underfoot', stat: 'notice', dd: 4, failText: 'take Stress equal to failed difference and get trapped below.', apply: function (amount) { var failedBy = Math.max(1, Number(amount || 1)); if (typeof changeStress === 'function') changeStress(failedBy); else if (typeof changeHealth === 'function') changeHealth(failedBy); state.floorFlags.trappedBelow = true; } }
+        { title: 'A pitfall trap collapses underfoot', stat: 'mind', dd: 4, failText: 'take Stress equal to failed difference and get trapped below.', apply: function (amount) { var failedBy = Math.max(1, Number(amount || 1)); if (typeof changeStress === 'function') changeStress(failedBy); else if (typeof changeHealth === 'function') changeHealth(failedBy); state.floorFlags.trappedBelow = true; } }
       ];
       var heavenTraps = [
         { title: 'Radiant sigils flare across the platform', stat: 'spirit', dd: 6, failText: 'take Stress equal to failed difference from judgment light.', apply: function (amount) { var failedBy = Math.max(1, Number(amount || 1)); if (typeof changeStress === 'function') changeStress(failedBy); else if (typeof changeHealth === 'function') changeHealth(failedBy); } },

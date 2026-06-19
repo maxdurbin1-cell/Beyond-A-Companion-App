@@ -412,9 +412,9 @@
         <div class="sea-group-list" id="lastSeaIslandGroups"></div>
         <div class="sea-layout">
           <div class="sea-scroll">
-            <svg id="lastSeaSvg" width="700" height="640" xmlns="http://www.w3.org/2000/svg">
-              <text x="310" y="270" text-anchor="middle" font-family="Cinzel,serif" font-size="13" fill="#254454">Generate the Last Sea to begin</text>
-              <text x="310" y="294" text-anchor="middle" font-family="Cinzel,serif" font-size="10" fill="#1a2c38">Every hex carries a description and an exploration roll.</text>
+            <svg id="lastSeaSvg" width="760" height="660" xmlns="http://www.w3.org/2000/svg">
+              <text x="380" y="318" text-anchor="middle" font-family="Cinzel,serif" font-size="13" fill="#254454">Generate the Last Sea to begin</text>
+              <text x="380" y="343" text-anchor="middle" font-family="Cinzel,serif" font-size="10" fill="#1a2c38">Every hex carries a description and an exploration roll.</text>
             </svg>
           </div>
           <div class="sea-info" id="lastSeaInfo"></div>
@@ -1240,20 +1240,22 @@
       : { hex3d: false, overlay: "none" };
 
     if (!S.lastSea.map.length) {
-      svg.setAttribute("width", "620");
-      svg.setAttribute("height", "560");
+      svg.setAttribute("width", "760");
+      svg.setAttribute("height", "660");
+      svg.setAttribute("viewBox", "0 0 760 660");
       if (typeof window.applyMapOverlayStyle === "function") window.applyMapOverlayStyle(svg, "lastsea");
       svg.innerHTML = `
-        <text x="310" y="270" text-anchor="middle" font-family="Cinzel,serif" font-size="13" fill="#254454">Generate the Last Sea to begin</text>
-        <text x="310" y="294" text-anchor="middle" font-family="Cinzel,serif" font-size="10" fill="#1a2c38">Every hex carries a description and an exploration roll.</text>
+        <text x="380" y="318" text-anchor="middle" font-family="Cinzel,serif" font-size="13" fill="#254454">Generate the Last Sea to begin</text>
+        <text x="380" y="343" text-anchor="middle" font-family="Cinzel,serif" font-size="10" fill="#1a2c38">Every hex carries a description and an exploration roll.</text>
       `;
       return;
     }
 
-    const width = LAST_SEA_COLS * Math.sqrt(3) * LAST_SEA_HEX + Math.sqrt(3) * LAST_SEA_HEX + 24;
-    const height = LAST_SEA_ROWS * LAST_SEA_HEX * 1.5 + LAST_SEA_HEX * 1.5 + 24;
+    const width = Math.max(760, LAST_SEA_COLS * Math.sqrt(3) * LAST_SEA_HEX + Math.sqrt(3) * LAST_SEA_HEX + 24);
+    const height = Math.max(660, LAST_SEA_ROWS * LAST_SEA_HEX * 1.5 + LAST_SEA_HEX * 1.5 + 24);
     svg.setAttribute("width", width);
     svg.setAttribute("height", height);
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
     svg.innerHTML = "";
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     svg.appendChild(defs);
@@ -4281,7 +4283,7 @@
     { mode: 'code', title: 'Tidal Cipher', prompt: 'The basin inscription reads: WAVE → ? The sea builders reversed words to seal their vaults. Enter the reversed word.', answer: 'evaw' },
     { mode: 'rearrange', title: 'Anchor Phrase', prompt: 'Arrange the worn stones into the correct docking mantra.', bank: ['THE', 'SEA', 'HOLDS', 'NO', 'MERCY'], answer: 'the sea holds no mercy' },
     { mode: 'memory', title: 'Depth Marker Sequence', prompt: 'The floor markers flash once, then go dark. Rebuild the order before the lock hardens.', sequence: ['REEF', 'FOAM', 'KELP', 'REEF'], bank: ['REEF', 'FOAM', 'KELP', 'TIDE'] },
-    { mode: 'crossword_grid', title: 'Navigator\'s Lattice', prompt: 'Complete the 7×7 sub-sea lattice. Black tiles blocked, white tiles must all resolve.', gridTemplate: ['##REEF#', '#A#E#O#', 'ANCHOR', '#H#F#C#', '##TIDE#', '#R#A#T#', '##SALT#'], clues: [{ clue: 'Across 1: Coral formation', answer: 'reef' }, { clue: 'Across 2: Ship tie', answer: 'anchor' }, { clue: 'Across 3: Tidal flow', answer: 'tide' }, { clue: 'Across 4: Ocean mineral', answer: 'salt' }] },
+    { mode: 'crossword_grid', title: 'Navigator\'s Lattice', prompt: 'Complete the 7×7 sub-sea lattice. Black tiles blocked, white tiles must all resolve.', gridTemplate: ['##REEF#', '#A#E#O#', 'ANCHOR#', '#H#F#C#', '##TIDE#', '#R#A#T#', '##SALT#'], clues: [{ clue: 'Across 1: Coral formation', answer: 'reef' }, { clue: 'Across 2: Ship tie', answer: 'anchor' }, { clue: 'Across 3: Tidal flow', answer: 'tide' }, { clue: 'Across 4: Ocean mineral', answer: 'salt' }] },
     { mode: 'mosaic', title: 'Current Map', prompt: 'Restore the current chart to unlock the depth hatch.', bank: ['TIDE', 'REEF', 'PORT'], answer: 'tide reef port' }
   ];
 

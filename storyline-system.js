@@ -3446,11 +3446,11 @@
   function scoreCrosswordGrid(p) {
     let total = 0;
     let correct = 0;
-    const templateRows = (p.mode === "crossword" && p.crossword && Array.isArray(p.crossword.gridTemplate))
-      ? p.crossword.gridTemplate
-      : p.gridTemplate;
     const rows = (p.mode === "crossword" && p.crossword) ? p.crossword.rows : p.gridRows;
     const cols = (p.mode === "crossword" && p.crossword) ? p.crossword.cols : p.gridCols;
+    const templateRows = (p.mode === "crossword" && p.crossword && Array.isArray(p.crossword.gridTemplate))
+      ? normalizeCrosswordGridTemplateRows(p.crossword.gridTemplate, rows, cols)
+      : normalizeCrosswordGridTemplateRows(p.gridTemplate, rows, cols);
     for (let r = 0; r < rows; r++) {
       const row = templateRows[r] || "";
       for (let c = 0; c < cols; c++) {
@@ -3468,6 +3468,87 @@
 
   function crosswordNormalizeAnswer(text) {
     return String(text || "").toUpperCase().replace(/[^A-Z]/g, "");
+  }
+
+  function normalizeCrosswordGridTemplateRows(template, rowCount, colCount) {
+    const rows = Math.max(0, Number(rowCount || (Array.isArray(template) ? template.length : 0)) || 0);
+    const cols = Math.max(0, Number(colCount || 0) || 0);
+    const out = [];
+    for (let r = 0; r < rows; r++) {
+      let row = String((Array.isArray(template) ? template[r] : "") || "").toUpperCase().replace(/\s+/g, "");
+      if (cols > 0) row = row.padEnd(cols, "#").slice(0, cols);
+      out.push(row);
+    }
+    return out;
+  }
+
+  function cleanCrosswordGridClueText(text) {
+    return String(text || "").replace(/^(Across|Down)\s+\d+\s*:\s*/i, "").trim();
+  }
+
+  function buildCrosswordGridMetadata(p) {
+    const rows = Math.max(0, Number(p && p.gridRows || 0) || 0);
+    const cols = Math.max(0, Number(p && p.gridCols || 0) || 0);
+    const templateRows = normalizeCrosswordGridTemplateRows(p && p.gridTemplate, rows, cols);
+    const rawClues = Array.isArray(p && p.clues) ? p.clues : [];
+    const directions = rawClues.map(function (clue) {
+      return crosswordClueDirection(clue) || "across";
+    });
+    const acrossOnly = !!directions.length && directions.every(function (dir) { return dir !== "down"; });
+    const downOnly = !!directions.length && directions.every(function (dir) { return dir === "down"; });
+    const cellNums = {};
+    const across = [];
+    const down = [];
+    let numCounter = 1;
+    const isOpen = function (r, c) {
+      if (r < 0 || c < 0 || r >= rows || c >= cols) return false;
+      return (templateRows[r][c] || "#") !== "#";
+    };
+    const readWord = function (r, c, dir) {
+      let out = "";
+      if (dir === "down") {
+        let rr = r;
+        while (rr < rows && isOpen(rr, c)) {
+          out += templateRows[rr][c] || "";
+          rr += 1;
+        }
+        return out;
+      }
+      let cc = c;
+      while (cc < cols && isOpen(r, cc)) {
+        out += templateRows[r][cc] || "";
+        cc += 1;
+      }
+      return out;
+    };
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!isOpen(r, c)) continue;
+        const startsAcross = (!isOpen(r, c - 1)) && isOpen(r, c + 1);
+        const startsDown = (!isOpen(r - 1, c)) && isOpen(r + 1, c);
+        const shouldNumber = acrossOnly ? startsAcross : (downOnly ? startsDown : (startsAcross || startsDown));
+        if (shouldNumber) {
+          cellNums[r + ":" + c] = numCounter;
+          numCounter += 1;
+        }
+      }
+    }
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!isOpen(r, c)) continue;
+        const number = Number(cellNums[r + ":" + c] || 0);
+        const startsAcross = (!isOpen(r, c - 1)) && isOpen(r, c + 1);
+        const startsDown = (!isOpen(r - 1, c)) && isOpen(r + 1, c);
+        if (startsAcross) across.push({ number: number || 0, answer: readWord(r, c, "across"), row: r, col: c });
+        if (startsDown) down.push({ number: number || 0, answer: readWord(r, c, "down"), row: r, col: c });
+      }
+    }
+
+    across.sort(function (a, b) { return a.number - b.number; });
+    down.sort(function (a, b) { return a.number - b.number; });
+    return { rows: rows, cols: cols, templateRows: templateRows, cellNums: cellNums, across: across, down: down, acrossOnly: acrossOnly, downOnly: downOnly };
   }
 
   function crosswordClueDirection(clue) {
@@ -4121,30 +4202,16 @@
           + "</div>";
       }
     } else if (p.mode === "crossword_grid") {
-      // Compute cell numbers: a cell gets a number if it starts an Across or Down word
-      const cellNums = {};
-      let numCounter = 1;
-      for (let r = 0; r < p.gridRows; r++) {
-        for (let c = 0; c < p.gridCols; c++) {
-          const ch = ((p.gridTemplate[r] || "")[c] || "#").toUpperCase();
-          if (ch === "#") continue;
-          const startsAcross = (c === 0 || ((p.gridTemplate[r] || "")[c - 1] || "#").toUpperCase() === "#")
-            && c + 1 < p.gridCols && ((p.gridTemplate[r] || "")[c + 1] || "#").toUpperCase() !== "#";
-          const startsDown = (r === 0 || ((p.gridTemplate[r - 1] || "")[c] || "#").toUpperCase() === "#")
-            && r + 1 < p.gridRows && ((p.gridTemplate[r + 1] || "")[c] || "#").toUpperCase() !== "#";
-          if (startsAcross || startsDown) {
-            cellNums[r + ":" + c] = numCounter++;
-          }
-        }
-      }
+      const gridMeta = buildCrosswordGridMetadata(p);
+      const templateRows = gridMeta.templateRows;
       const cells = [];
-      for (let r = 0; r < p.gridRows; r++) {
-        for (let c = 0; c < p.gridCols; c++) {
-          const ch = ((p.gridTemplate[r] || "")[c] || "#").toUpperCase();
+      for (let r = 0; r < gridMeta.rows; r++) {
+        for (let c = 0; c < gridMeta.cols; c++) {
+          const ch = (templateRows[r][c] || "#").toUpperCase();
           if (ch === "#") {
             cells.push("<div style='width:30px;height:30px;background:#000;border:1px solid #111;'></div>");
           } else {
-            const num = cellNums[r + ":" + c];
+            const num = gridMeta.cellNums[r + ":" + c];
             cells.push("<div style='position:relative;width:30px;height:30px;'>"
               + (num ? "<span style='position:absolute;top:1px;left:2px;font-size:7px;color:#111;line-height:1;pointer-events:none;z-index:1;'>" + num + "</span>" : "")
               + "<input id='storyGrid_" + r + "_" + c + "' maxlength='1' class='input' style='width:30px;height:30px;text-align:center;padding:0;text-transform:uppercase;font-size:.8rem;background:#fff;color:#000;border:1px solid #111;' />"
@@ -4152,12 +4219,45 @@
           }
         }
       }
-      controls = ""
-        + "<div style='font-size:.74rem;color:var(--muted2);margin-bottom:.35rem;'>Grid crossword: fill all open cells. Numbered cells start an Across or Down word. # blocks are locked.</div>"
-        + "<div style='display:grid;grid-template-columns:repeat(" + p.gridCols + ",28px);gap:2px;justify-content:start;margin-bottom:.45rem;'>" + cells.join("") + "</div>"
-        + p.clues.map(function (c, i) {
-          return "<div style='font-size:.74rem;color:var(--muted2);margin-bottom:.12rem;'>" + (i + 1) + ". " + c.clue + "</div>";
+      const rawClues = Array.isArray(p.clues) ? p.clues : [];
+      const acrossClues = rawClues.filter(function (clue) {
+        return crosswordClueDirection(clue) !== "down";
+      });
+      const downClues = rawClues.filter(function (clue) {
+        return crosswordClueDirection(clue) === "down";
+      });
+      const renderClueList = function (entries, clues) {
+        return entries.map(function (entry, idx) {
+          const clue = clues[idx] || {};
+          const clueText = cleanCrosswordGridClueText(clue.clue || clue.text || "");
+          const answerLen = crosswordNormalizeAnswer(clue.answer || entry.answer || "").length || String(entry.answer || "").length || 0;
+          const label = entry.number > 0 ? entry.number : (idx + 1);
+          return "<div style='font-size:.74rem;color:var(--muted2);margin-bottom:.12rem;'>" + label + ". " + escapeHtml(clueText || "Cross-check entry") + (answerLen ? " (" + answerLen + ")" : "") + "</div>";
         }).join("");
+      };
+      const clueIntro = (gridMeta.acrossOnly && !downClues.length)
+        ? "Grid crossword: fill all open cells. Across clues are numbered on the grid; intersections resolve the rest."
+        : (gridMeta.downOnly && !acrossClues.length)
+          ? "Grid crossword: fill all open cells. Down clues are numbered on the grid; intersections resolve the rest."
+          : "Grid crossword: fill all open cells. Numbered cells start an Across or Down word.";
+      let clueHtml = "";
+      if (acrossClues.length) {
+        clueHtml += "<div style='font-family:\"Cinzel\",serif;font-size:.7rem;font-weight:700;color:var(--text2);letter-spacing:.12em;text-transform:uppercase;border-bottom:2px solid var(--text2);padding-bottom:.1rem;margin:.18rem 0 .28rem;'>Across</div>"
+          + renderClueList(gridMeta.across, acrossClues);
+      }
+      if (downClues.length) {
+        clueHtml += "<div style='font-family:\"Cinzel\",serif;font-size:.7rem;font-weight:700;color:var(--text2);letter-spacing:.12em;text-transform:uppercase;border-bottom:2px solid var(--text2);padding-bottom:.1rem;margin:.28rem 0 .28rem;'>Down</div>"
+          + renderClueList(gridMeta.down, downClues);
+      }
+      if (!clueHtml) {
+        clueHtml = rawClues.map(function (clue, idx) {
+          return "<div style='font-size:.74rem;color:var(--muted2);margin-bottom:.12rem;'>" + (idx + 1) + ". " + escapeHtml(cleanCrosswordGridClueText(clue && clue.clue || "")) + "</div>";
+        }).join("");
+      }
+      controls = ""
+        + "<div style='font-size:.74rem;color:var(--muted2);margin-bottom:.35rem;'>" + clueIntro + " # blocks are locked.</div>"
+        + "<div style='display:grid;grid-template-columns:repeat(" + gridMeta.cols + ",28px);gap:2px;justify-content:start;margin-bottom:.45rem;'>" + cells.join("") + "</div>"
+        + clueHtml;
     } else if (p.mode === "maze") {
       const trace = traceStoryMazePath(p);
       const cells = [];
