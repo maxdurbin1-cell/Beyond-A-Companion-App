@@ -17205,6 +17205,22 @@
     return 'var(--purple)';
   }
 
+  function safeMissionPrepText(value) {
+    return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function buildMissionPrepLines(entity, includeGMNotes) {
+    var src = entity && typeof entity === 'object' ? entity : {};
+    var lines = [];
+    if (src.contact) lines.push('<div style="font-size:.68rem;color:var(--text2);line-height:1.45;"><strong style="color:var(--gold2);">Contact:</strong> ' + safeMissionPrepText(src.contact) + '</div>');
+    if (src.threat) lines.push('<div style="font-size:.68rem;color:var(--text2);line-height:1.45;"><strong style="color:var(--red2);">Threat:</strong> ' + safeMissionPrepText(src.threat) + '</div>');
+    if (src.keyMarker) lines.push('<div style="font-size:.68rem;color:var(--text2);line-height:1.45;"><strong style="color:var(--teal);">Key Marker:</strong> ' + safeMissionPrepText(src.keyMarker) + '</div>');
+    if (src.enemy) lines.push('<div style="font-size:.68rem;color:var(--text2);line-height:1.45;"><strong style="color:var(--red2);">Enemy Pressure:</strong> ' + safeMissionPrepText(src.enemy) + '</div>');
+    if (Array.isArray(src.checkpoints) && src.checkpoints.length) lines.push('<div style="font-size:.68rem;color:var(--muted2);line-height:1.45;"><strong style="color:var(--gold2);">Checkpoints:</strong> ' + src.checkpoints.map(safeMissionPrepText).join(' · ') + '</div>');
+    if (includeGMNotes && src.gmNotes) lines.push('<div style="font-size:.68rem;color:var(--muted2);line-height:1.5;border-left:2px solid rgba(201,162,39,.35);padding-left:.4rem;"><strong style="color:var(--gold2);">GM Notes:</strong> ' + safeMissionPrepText(src.gmNotes) + '</div>');
+    return lines.length ? ('<div style="display:grid;gap:.14rem;margin:.18rem 0 .1rem;">' + lines.join('') + '</div>') : '';
+  }
+
   /* ── RENDER: MISSION BOARD ── */
   function renderMissionBoard() {
     var container=document.getElementById('jobsGrid'); if (!container) return;
@@ -17237,7 +17253,8 @@
         +'</div>'
         +'<div style="font-size:.68rem;color:var(--teal);margin:.08rem 0;">'+(job.factionGainName||'Faction')+' +1 \u00B7 '+(job.factionLoseName||'Faction')+' -1</div>'
         +'<div style="font-size:.78rem;color:var(--muted3);flex:1;margin:.2rem 0;line-height:1.45;">'+job.location+'</div>'
-        +'<div style="font-size:.68rem;color:var(--muted3);margin-bottom:.1rem;">'+(job.region==='sea'?'⛵ Sea Region':job.region==='galaxy'?'🌌 Planet Route':'🏕 Province')+'</div>'
+        +buildMissionPrepLines(job, false)
+        +'<div style="font-size:.68rem;color:var(--muted3);margin-bottom:.1rem;">'+(job.region==='sea'?'⛵ Sea Region':job.region==='galaxy'?'🌌 Planet Route':job.region==='wtw'?'🌆 World That Was':'🏕 Province')+'</div>'
         +(job.region==='galaxy'&&job.planetName?'<div style="font-size:.66rem;color:var(--gold2);margin-bottom:.1rem;">🌍 '+job.planetName+'</div>':'')
         +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.4rem;padding-top:.3rem;border-top:1px solid var(--border);">'
           +'<span style="font-family:\'Rajdhani\',sans-serif;font-weight:700;font-size:.95rem;color:var(--gold);">'+job.reward+' \u20B5</span>'
@@ -17393,8 +17410,8 @@
             +(mission.region==='galaxy'&&mission.planetName?'<div style="font-size:.74rem;color:var(--gold2);margin-top:.1rem;line-height:1.45;">🌍 Planet Route: '+mission.planetName+'</div>':'')
             +'<div style="font-size:.74rem;color:var(--teal);margin-top:.14rem;line-height:1.45;">'+(mission.factionGainName||'Faction')+' +1 \u00B7 '+(mission.factionLoseName||'Faction')+' -1</div>'
             +'<div style="font-size:.74rem;color:'+deadlineTone+';margin-top:.1rem;line-height:1.45;">Deadline: '+(daysLeft >= 0 ? (daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' left') : 'Expired')+'</div>'
+            +buildMissionPrepLines(mission, isGMModeActive())
             +(badges?'<div style="margin-top:.24rem;">'+badges+'</div>':'')
-            +(Array.isArray(mission.checkpoints)&&mission.checkpoints.length&&shouldRevealHiddenInfo()?('<div style="margin-top:.2rem;font-size:.72rem;color:var(--text2);line-height:1.5;">Checkpoints: '+mission.checkpoints.join(' \u00B7 ')+'</div>'):'')
           +'</div>'
           +'<button class="btn btn-xs btn-red" onclick="abandonMission('+mission.id+')">Abandon</button>'
         +'</div>'

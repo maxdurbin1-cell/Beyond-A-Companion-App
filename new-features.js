@@ -41,7 +41,7 @@
     { id: "chains",      name: "Chains",             base: "Draw an enemy Transporter from Close to Engaged during combat." },
     { id: "techroom",    name: "Tech Room",          base: "With a Control, Tinker check, craft items worth 100₵ of resources." },
     { id: "browse",      name: "Browse",             base: "Compares local stock, prices, and settlement supplies." },
-    { id: "stealth",     name: "Stealth Coating",    base: "Grants +d4 to Control, Stealth Rolls to avoid detection." },
+    { id: "stealth",     name: "Stealth Coating",    base: "Grants +d4 to Control rolls to avoid detection." },
     { id: "jammer",      name: "Signal Jammer",      base: "Interferes with enemy communications within a Zone." }
   ];
 
@@ -7968,7 +7968,7 @@
       'Source Attuned: Sense nearby Arcana, Mutants, and unstable mutations',
       'Momentum: Failed rolls grant +2 Teamwork Points instead of +1',
       'Moves like the Wind: +1 Action during Combat Scenes',
-      'Feats of Strength: Ad10 to Body and Power checks',
+      'Feats of Strength: Ad10 to Body and Strike checks',
       'Phase Walker: Pass through walls',
       'Teleportation: Teleport to any location you can see',
       'Mindshield: Immune to Trauma',
@@ -8030,7 +8030,7 @@
       'Ghoststride: Movement does not trigger simple traps',
       'Iridescent Blood: Roll Spirit vs Enemy Dread — on success, control their actions for a Scene',
       'Field Quartermaster: You cannot be surprised',
-      'Cave Ears: +Valor Die bonus to Notice and Lead checks in enclosed spaces',
+      'Cave Ears: +Valor Die bonus to Mind and Lead checks in enclosed spaces',
       'Ghoul: On a killing blow, disappear and gain Hidden. Gain Advantage d10 to next Attack. Reappear on next attack or after one Round',
       'Bone Sculptor: Shape and animate small bones for various purposes',
       'Ashen Halo: You inspire allies, allowing them to Move without AP cost until your next Turn',

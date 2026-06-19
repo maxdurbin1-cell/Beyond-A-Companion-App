@@ -44,6 +44,13 @@
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
   function isGM() { return !!(window.settingsSystem && window.settingsSystem.isGMMode()); }
   function getS() { return (typeof S !== 'undefined') ? S : null; }
+  function parseMissionCheckpointInput(text) {
+    return String(text || '')
+      .split(/\n|,/)
+      .map(function(entry) { return String(entry || '').trim(); })
+      .filter(Boolean)
+      .slice(0, 8);
+  }
 
   /* ── REFERENCE CONTENT ── */
   var REFERENCE_SECTIONS = [
@@ -77,7 +84,7 @@
       title: '🧑 Character Sheet',
       body: `<p>Each character has the following tracked values:</p>
 <ul>
-  <li><strong>Stats:</strong> Body, Mind, Spirit, Agility, Control, Valor, Defend, Strike, Shoot, Sneak, Lead, Notice. Each is represented by a die (d4→d6→d8→d10→d12→d20). The Valor Die (V.D.) is an additive bonus die, not an advantage mechanic.</li>
+  <li><strong>Stats:</strong> Body, Strike, Shoot, Mind, Spirit, Defend, Control, Lead, and Valor. Each core stat is represented by a die (d4→d6→d8→d10→d12→d20). The Valor Die (V.D.) is an additive bonus die, not an advantage mechanic.</li>
   <li><strong>Stress:</strong> Rises from failed rolls, combat damage, and hostile conditions. Max = derived from stats. At max, future rolls take penalties.</li>
   <li><strong>Credits (₵):</strong> The economy. Earned from mission rewards, trading, and loot.</li>
   <li><strong>Backpack / Inventory:</strong> Items carried during missions. Some items grant bonuses to specific rolls.</li>
@@ -291,9 +298,16 @@
     var region = _missionDraft.region || 'province';
     var loc    = _missionDraft.loc    || pick(MISSION_LOCS);
     var fp     = _missionDraft.fp !== undefined ? _missionDraft.fp : 0;
+    var briefing = _missionDraft.briefing || '';
+    var contact = _missionDraft.contact || '';
+    var threat = _missionDraft.threat || '';
+    var keyMarker = _missionDraft.keyMarker || '';
+    var enemy = _missionDraft.enemy || '';
+    var checkpoints = _missionDraft.checkpoints || '';
+    var gmNotes = _missionDraft.gmNotes || '';
     var fPair  = GUILD_PAIRS[Math.min(fp, GUILD_PAIRS.length - 1)];
 
-    _missionDraft = { title, diff, region, loc, fp };
+    _missionDraft = { title, diff, region, loc, fp, briefing, contact, threat, keyMarker, enemy, checkpoints, gmNotes };
 
     var diffHTML = Object.keys(DIFFICULTIES).map(function(k) {
       var d = DIFFICULTIES[k];
@@ -340,6 +354,41 @@
       </div>
 
       <div class="gmd-ctrl-section">
+        <div class="gmd-ctrl-heading">📜 Briefing</div>
+        <textarea id="gmdMissionBriefing" class="gmd-input" rows="3" maxlength="360"
+          oninput="window.gmDashboard.setBriefing(this.value)"
+          placeholder="What do the players know up front?">${briefing}</textarea>
+      </div>
+
+      <div class="gmd-ctrl-section">
+        <div class="gmd-ctrl-heading">🧭 GM Prep</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;">
+          <input type="text" id="gmdMissionContact" class="gmd-input" value="${contact}" maxlength="100"
+            oninput="window.gmDashboard.setContact(this.value)" placeholder="Key contact / NPC">
+          <input type="text" id="gmdMissionThreat" class="gmd-input" value="${threat}" maxlength="100"
+            oninput="window.gmDashboard.setThreat(this.value)" placeholder="Pressure / faction threat">
+          <input type="text" id="gmdMissionMarker" class="gmd-input" value="${keyMarker}" maxlength="100"
+            oninput="window.gmDashboard.setKeyMarker(this.value)" placeholder="Key marker / clue / objective">
+          <input type="text" id="gmdMissionEnemy" class="gmd-input" value="${enemy}" maxlength="100"
+            oninput="window.gmDashboard.setEnemy(this.value)" placeholder="Enemy / boss / patrol">
+        </div>
+      </div>
+
+      <div class="gmd-ctrl-section">
+        <div class="gmd-ctrl-heading">✅ Story Beats / Checkpoints</div>
+        <textarea id="gmdMissionCheckpoints" class="gmd-input" rows="3" maxlength="320"
+          oninput="window.gmDashboard.setCheckpoints(this.value)"
+          placeholder="One per line or comma-separated. Example: Reach rift rim, Meet smuggler scout, Secure fallen sky marker">${checkpoints}</textarea>
+      </div>
+
+      <div class="gmd-ctrl-section">
+        <div class="gmd-ctrl-heading">🕯️ GM Notes</div>
+        <textarea id="gmdMissionNotes" class="gmd-input" rows="3" maxlength="420"
+          oninput="window.gmDashboard.setGMNotes(this.value)"
+          placeholder="Private prep notes, twists, escalation, mercy hooks, rival reveals...">${gmNotes}</textarea>
+      </div>
+
+      <div class="gmd-ctrl-section">
         <div class="gmd-ctrl-heading">⚖️ Guild Conflict</div>
         <select id="gmdFactionPair" class="gmd-select" onchange="window.gmDashboard.setFP(this.value)">${fpHTML}</select>
       </div>
@@ -350,12 +399,23 @@
           <div><strong>${escHtml(title)}</strong></div>
           <div style="color:var(--muted2);font-size:.8rem;">${escHtml(loc)} · ${DIFFICULTIES[diff].name} · d${DIFFICULTIES[diff].dread} Dread · ${DIFFICULTIES[diff].reward}₵</div>
           <div style="color:var(--muted2);font-size:.75rem;margin-top:.15rem;">Gain: ${fPair.gainName} · Lose: ${fPair.loseName}</div>
+          ${briefing ? `<div style="color:var(--text2);font-size:.75rem;line-height:1.5;margin-top:.2rem;border-left:2px solid var(--border2);padding-left:.45rem;">${escHtml(briefing)}</div>` : ''}
+          ${(contact || threat || keyMarker || enemy)
+            ? `<div style="display:grid;gap:.12rem;color:var(--muted2);font-size:.72rem;line-height:1.45;margin-top:.22rem;">
+                ${contact ? `<div><strong style="color:var(--gold2);">Contact:</strong> ${escHtml(contact)}</div>` : ''}
+                ${threat ? `<div><strong style="color:var(--red2);">Threat:</strong> ${escHtml(threat)}</div>` : ''}
+                ${keyMarker ? `<div><strong style="color:var(--teal);">Marker:</strong> ${escHtml(keyMarker)}</div>` : ''}
+                ${enemy ? `<div><strong style="color:var(--red2);">Enemy:</strong> ${escHtml(enemy)}</div>` : ''}
+              </div>`
+            : ''}
+          ${parseMissionCheckpointInput(checkpoints).length ? `<div style="color:var(--muted2);font-size:.72rem;line-height:1.45;margin-top:.2rem;">Checkpoints: ${parseMissionCheckpointInput(checkpoints).map(escHtml).join(' · ')}</div>` : ''}
         </div>
       </div>
 
       <div class="gmd-ctrl-section" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem;">
         <button class="btn btn-sm btn-teal" onclick="window.gmDashboard.deployToBoard()">📌 Post to Mission Board</button>
         <button class="btn btn-sm" onclick="window.gmDashboard.deployToActive()">▶ Activate Immediately</button>
+        <button class="btn btn-xs" onclick="window.gmDashboard.seedRiftPatrol()">🌀 Rift Patrol Seed</button>
         <button class="btn btn-xs" style="margin-left:auto;" onclick="window.gmDashboard.randomAll()">🎲 Full Randomize</button>
       </div>
 
@@ -511,6 +571,13 @@
   function setDiff(k) { _missionDraft.diff = k; renderDashboard(); }
   function setRegion(r) { _missionDraft.region = r; _missionDraft.loc = _randomLoc(r); renderDashboard(); }
   function setFP(v) { _missionDraft.fp = parseInt(v, 10); }
+  function setBriefing(v) { _missionDraft.briefing = v; }
+  function setContact(v) { _missionDraft.contact = v; }
+  function setThreat(v) { _missionDraft.threat = v; }
+  function setKeyMarker(v) { _missionDraft.keyMarker = v; }
+  function setEnemy(v) { _missionDraft.enemy = v; }
+  function setCheckpoints(v) { _missionDraft.checkpoints = v; }
+  function setGMNotes(v) { _missionDraft.gmNotes = v; }
 
   function randomTitle() {
     var t = pick(MISSION_VERBS) + ' ' + pick(MISSION_TARGETS);
@@ -539,6 +606,29 @@
     _missionDraft.region = pick(['province','province','province','sea','galaxy','wtw']);
     _missionDraft.loc    = _randomLoc(_missionDraft.region);
     _missionDraft.fp     = Math.floor(Math.random() * GUILD_PAIRS.length);
+    _missionDraft.briefing = '';
+    _missionDraft.contact = '';
+    _missionDraft.threat = '';
+    _missionDraft.keyMarker = '';
+    _missionDraft.enemy = '';
+    _missionDraft.checkpoints = '';
+    _missionDraft.gmNotes = '';
+    renderDashboard();
+  }
+
+  function seedRiftPatrol() {
+    _missionDraft.title = 'Investigate the Rift Patrol';
+    _missionDraft.diff = 'hard';
+    _missionDraft.region = 'province';
+    _missionDraft.loc = 'Skyfall Rift';
+    _missionDraft.fp = 2;
+    _missionDraft.briefing = 'Autarch Star Wardens have been spotted near the settlement, patrolling a rift where locals swear a Lost City fell from the sky. Terrors have been heard screeching from within at night.';
+    _missionDraft.contact = 'Mira Ashwake, settlement outrider';
+    _missionDraft.threat = 'Autarch patrols lock down the rift while irradiated terrors stalk the lower breach.';
+    _missionDraft.keyMarker = 'Collapsed sky-marker pointing toward the buried city gate';
+    _missionDraft.enemy = 'Star Warden patrol captain with terror pack support';
+    _missionDraft.checkpoints = 'Reach the rift rim\nIdentify who controls the patrol route\nFind the fallen city marker\nDecide whether to sneak, bargain, or fight for entry';
+    _missionDraft.gmNotes = 'Use the patrol to show political pressure first, then reveal the terrors as the real countdown. Offer mercy, faction leverage, or a stealth route through the skyfall wreckage.';
     renderDashboard();
   }
 
@@ -546,12 +636,26 @@
     var inp = document.getElementById('gmdMissionTitle');
     var locInp = document.getElementById('gmdMissionLoc');
     var fpSel = document.getElementById('gmdFactionPair');
+    var briefingInp = document.getElementById('gmdMissionBriefing');
+    var contactInp = document.getElementById('gmdMissionContact');
+    var threatInp = document.getElementById('gmdMissionThreat');
+    var markerInp = document.getElementById('gmdMissionMarker');
+    var enemyInp = document.getElementById('gmdMissionEnemy');
+    var checkpointsInp = document.getElementById('gmdMissionCheckpoints');
+    var notesInp = document.getElementById('gmdMissionNotes');
 
     var title  = (inp  ? inp.value.trim()  : null) || _missionDraft.title || (pick(MISSION_VERBS) + ' ' + pick(MISSION_TARGETS));
     var loc    = (locInp ? locInp.value.trim() : null) || _missionDraft.loc || pick(MISSION_LOCS);
     var diff   = _missionDraft.diff || 'medium';
     var region = _missionDraft.region || 'province';
     var fp     = fpSel ? parseInt(fpSel.value, 10) : (_missionDraft.fp || 0);
+    var briefing = (briefingInp ? briefingInp.value.trim() : null);
+    var contact = (contactInp ? contactInp.value.trim() : null);
+    var threat = (threatInp ? threatInp.value.trim() : null);
+    var keyMarker = (markerInp ? markerInp.value.trim() : null);
+    var enemy = (enemyInp ? enemyInp.value.trim() : null);
+    var checkpointsText = (checkpointsInp ? checkpointsInp.value : null);
+    var gmNotes = (notesInp ? notesInp.value.trim() : null);
     var fPair  = GUILD_PAIRS[Math.min(fp, GUILD_PAIRS.length - 1)];
     var d      = DIFFICULTIES[diff] || DIFFICULTIES.medium;
 
@@ -566,7 +670,15 @@
       factionGain: fPair.gain,
       factionLose: fPair.lose,
       factionGainName: fPair.gainName,
-      factionLoseName: fPair.loseName
+      factionLoseName: fPair.loseName,
+      lore: briefing || (_missionDraft.briefing || '').trim(),
+      contact: contact || (_missionDraft.contact || '').trim(),
+      threat: threat || (_missionDraft.threat || '').trim(),
+      keyMarker: keyMarker || (_missionDraft.keyMarker || '').trim(),
+      enemy: enemy || (_missionDraft.enemy || '').trim(),
+      checkpoints: parseMissionCheckpointInput(checkpointsText !== null ? checkpointsText : _missionDraft.checkpoints),
+      gmNotes: gmNotes || (_missionDraft.gmNotes || '').trim(),
+      gmCreated: true
     };
   }
 
@@ -609,6 +721,13 @@
         factionLose: job2.factionLose,
         factionGainName: job2.factionGainName,
         factionLoseName: job2.factionLoseName,
+        lore: job2.lore || '',
+        contact: job2.contact || '',
+        threat: job2.threat || '',
+        keyMarker: job2.keyMarker || '',
+        enemy: job2.enemy || '',
+        checkpoints: Array.isArray(job2.checkpoints) ? job2.checkpoints.slice() : [],
+        gmNotes: job2.gmNotes || '',
         loot: [],
         rooms: [],
         guards: [],
@@ -667,9 +786,17 @@
     setDiff,
     setRegion,
     setFP,
+    setBriefing,
+    setContact,
+    setThreat,
+    setKeyMarker,
+    setEnemy,
+    setCheckpoints,
+    setGMNotes,
     randomTitle,
     randomLoc,
     randomAll,
+    seedRiftPatrol,
     deployToBoard,
     deployToActive
   };

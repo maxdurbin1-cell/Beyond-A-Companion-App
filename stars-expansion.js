@@ -111,7 +111,7 @@ const ENCOUNTER_REACTIONS_D10 = [
 ];
 
 const ENEMY_ACTIVITY_D6 = [
-  'Patrol — moving through the area; will notice you on a Notice check failure.',
+  'Patrol — moving through the area; will catch you on a Mind check failure.',
   'Ambush — already aware of you; +2 to their first attack this Scene.',
   'Foraging — distracted; you have Surprise if you act first (see below).',
   'Guard Post — stationary; alert. They called for reinforcements 2 rounds ago.',
@@ -4501,12 +4501,13 @@ function snapToValidDreadDie(n) {
 }
 
 function rollSolarCycleContest(stat, dreadDie) {
-  var die = getSolarCycleActionDie(stat);
+  var normalizedStat = normalizeSolarCycleActionStat(stat);
+  var die = getSolarCycleActionDie(normalizedStat);
   var actionRoll = (typeof explodingRoll === 'function') ? explodingRoll(die) : { total: roll(die), exploded: false };
   var dreadRoll = (typeof explodingRoll === 'function') ? explodingRoll(dreadDie) : { total: roll(dreadDie), exploded: false };
   var success = getSolarCycleRollTotal(actionRoll) >= getSolarCycleRollTotal(dreadRoll);
   return {
-    stat: stat,
+    stat: normalizedStat,
     actionDie: die,
     dreadDie: dreadDie,
     actionRoll: actionRoll,
@@ -5595,6 +5596,22 @@ function getSolarCyclePhaseLabelByIndex(idx) {
 
 function normalizeSolarCycleActionStat(stat) {
   var key = String(stat || '').toLowerCase();
+  switch (key) {
+    case 'agility':
+    case 'sneak':
+    case 'stealth':
+      key = 'control';
+      break;
+    case 'notice':
+    case 'observe':
+      key = 'mind';
+      break;
+    case 'power':
+      key = 'strike';
+      break;
+    default:
+      break;
+  }
   if (SOLAR_CYCLE_ACTION_STATS.indexOf(key) >= 0) return key;
   return 'mind';
 }
@@ -5614,11 +5631,12 @@ function isSolarCycleManualRollMode() {
 }
 
 function buildSolarCycleManualContest(stat, dreadDie, success) {
-  var die = getSolarCycleActionDie(stat);
+  var normalizedStat = normalizeSolarCycleActionStat(stat);
+  var die = getSolarCycleActionDie(normalizedStat);
   var dd = snapToValidDreadDie(dreadDie);
   var actionTotal = success ? (dd + 1) : Math.max(0, dd - 1);
   return {
-    stat: stat,
+    stat: normalizedStat,
     actionDie: die,
     dreadDie: dd,
     actionRoll: { total: actionTotal, exploded: false, manual: true },
@@ -7295,7 +7313,7 @@ function applySolarCycleQuestChallengeOutcome(quest, rollResult, misled) {
   } else if (type === 'stealth') {
     var stealthRoll = manualMode
       ? { success: !misled }
-      : rollSolarCycleContest('agility', Math.max(6, Number(rollResult && rollResult.dreadDie || 8)));
+      : rollSolarCycleContest('control', Math.max(6, Number(rollResult && rollResult.dreadDie || 8)));
     if (misled || !stealthRoll.success) {
       if (typeof changeCounter === 'function') changeCounter('credits', -30);
       if (typeof changeMentalStress === 'function') changeMentalStress(1);
@@ -9857,7 +9875,7 @@ const PLANET_WEATHER_TABLE = ['Dust storms', 'Clear skies', 'Metallic fog', 'Ele
 const PLANET_SIGHTS_TABLE = ['Broken cities', 'Comet tails', 'Nebula glow', 'Ancient monoliths', 'Strange cloud arches', 'Orbital ring ruins', 'Flickering starlight', 'Passing shuttles', 'Drifting satellites', 'Crystal towers'];
 
 const PLANET_TERRAIN_TABLE = [
-  { name: 'Hazardous', effect: 'Steep cliffs take +1 Phase of the Day. Pass Body+Agility vs DD20 or take the difference as damage.' },
+  { name: 'Hazardous', effect: 'Steep cliffs take +1 Phase of the Day. Pass Body/Control vs DD20 or take the difference as damage.' },
   { name: 'Convoluted', effect: 'Unclear pathways slow movement. Crossing takes +1 Phase of Day.' },
   { name: 'Biome-Exotic', effect: 'A hazardous river blocks the way. Crossing or detouring costs +3 Phase of the Day.' },
   { name: 'Biome-Irradiated', effect: 'Radiation storm: all characters suffer 200 Rads unless shelter is found.' },
@@ -10202,18 +10220,20 @@ function loseGamePhases(count) {
 }
 
 function resolveGalaxySkillCheck(primaryKey, secondaryKey, dd, label) {
-  const p = (typeof getEffectiveDie === 'function') ? getEffectiveDie(primaryKey) : ((S.stats && S.stats[primaryKey]) || 4);
-  const s = secondaryKey ? ((typeof getEffectiveDie === 'function') ? getEffectiveDie(secondaryKey) : ((S.stats && S.stats[secondaryKey]) || 4)) : 0;
+  const normalizedPrimary = normalizeSolarCycleActionStat(primaryKey);
+  const normalizedSecondary = secondaryKey ? normalizeSolarCycleActionStat(secondaryKey) : null;
+  const p = (typeof getEffectiveDie === 'function') ? getEffectiveDie(normalizedPrimary) : ((S.stats && S.stats[normalizedPrimary]) || 4);
+  const s = normalizedSecondary ? ((typeof getEffectiveDie === 'function') ? getEffectiveDie(normalizedSecondary) : ((S.stats && S.stats[normalizedSecondary]) || 4)) : 0;
   const die = Math.max(p || 4, s || 0, 4);
-  const primaryLabel = String(primaryKey || 'action').charAt(0).toUpperCase() + String(primaryKey || 'action').slice(1);
-  const secondaryLabel = secondaryKey ? (String(secondaryKey).charAt(0).toUpperCase() + String(secondaryKey).slice(1)) : '';
+  const primaryLabel = String(normalizedPrimary || 'action').charAt(0).toUpperCase() + String(normalizedPrimary || 'action').slice(1);
+  const secondaryLabel = normalizedSecondary ? (String(normalizedSecondary).charAt(0).toUpperCase() + String(normalizedSecondary).slice(1)) : '';
   let actionLabel = primaryLabel;
-  if (secondaryKey) {
+  if (normalizedSecondary) {
     if (Number(p || 0) > Number(s || 0)) actionLabel = primaryLabel;
     else if (Number(s || 0) > Number(p || 0)) actionLabel = secondaryLabel;
     else actionLabel = primaryLabel + '/' + secondaryLabel;
   }
-  const invBonus = (typeof collectInventoryBonusesForStat === 'function') ? collectInventoryBonusesForStat(primaryKey) : { advDice: [], flat: 0, addValor: 0 };
+  const invBonus = (typeof collectInventoryBonusesForStat === 'function') ? collectInventoryBonusesForStat(normalizedPrimary) : { advDice: [], flat: 0, addValor: 0 };
   const rollMod = (S && S.rollMod && typeof S.rollMod === 'object') ? S.rollMod : { advDice: [], flat: 0 };
   const actionAdvDice = []
     .concat(Array.isArray(invBonus.advDice) ? invBonus.advDice : [])
@@ -10239,6 +10259,8 @@ function resolveGalaxySkillCheck(primaryKey, secondaryKey, dd, label) {
     dreadTotal: dread.total,
     actionDie: die,
     dreadDie: dd,
+    statKey: normalizedPrimary,
+    secondaryStatKey: normalizedSecondary,
     text: `${label}: ${actionLabel} d${die}=${actionTotal} vs Dread d${dd}=${dread.total}`,
   };
 }
@@ -10261,8 +10283,8 @@ function formatStarsCheckLabel(label) {
 
 function runStarsActionDreadCheck(config) {
   const cfg = config && typeof config === 'object' ? config : {};
-  const statKey = String(cfg.statKey || 'valor').toLowerCase();
-  const secondaryKey = cfg.secondaryKey ? String(cfg.secondaryKey).toLowerCase() : null;
+  const statKey = normalizeSolarCycleActionStat(cfg.statKey || 'valor');
+  const secondaryKey = cfg.secondaryKey ? normalizeSolarCycleActionStat(cfg.secondaryKey) : null;
   const statLabel = String(cfg.statLabel || (statKey.charAt(0).toUpperCase() + statKey.slice(1) + (secondaryKey ? ('/' + secondaryKey.charAt(0).toUpperCase() + secondaryKey.slice(1)) : '')));
   const dreadDie = Math.max(4, Number(cfg.dreadDie || 6));
   const primaryDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie(statKey) : ((S.stats && S.stats[statKey]) || 4);
@@ -10732,7 +10754,7 @@ const FACILITY_TAINT = [
 ];
 const FACILITY_FIXED_EVENTS = [
   'A random character sees impossible visions and gains d10 Stress; Mind check to avoid firing wildly.',
-  'Corrosive moss-like growth threatens gear; Body/Agility check or lose random gear piece.',
+  'Corrosive moss-like growth threatens gear; Body/Control check or lose random gear piece.',
   'A throne of bones stands in the center; Perception reveals a hidden skull-clue.',
   'Floor collapse opens into a deep shaft. No VaccSuit: d20 Stress per round.',
   'An insistent voice asks: "Why are you here?" Random character gains 5 Stress.',
@@ -12577,7 +12599,7 @@ function applyPlanetTraversalEffects(state, cell) {
     return applyPlanetTerrainSave(state, cell, {
       label: 'Steep cliffs',
       primary: 'body',
-      secondary: 'agility',
+      secondary: 'control',
       dd: 20,
       onSuccess: 'cliffs crossed with +1 Phase travel cost.',
       onFailure: (delta) => {
@@ -12605,7 +12627,7 @@ function applyPlanetTraversalEffects(state, cell) {
     return applyPlanetTerrainSave(state, cell, {
       label: 'Hazardous river crossing',
       primary: 'body',
-      secondary: 'agility',
+      secondary: 'control',
       dd: 10,
       onSuccess: 'you cross with only the baseline +3 Phase detour.',
       onFailure: (delta) => {
@@ -21975,7 +21997,7 @@ const LONG_REST_EVENT_TABLE = [
   'A friendly animal sleeps near the party and refuses to leave at sunrise.',
   'A falling star breaks into three fragments. One lands close enough to investigate.',
   'A nightmare tests the party bond. Each player describes one fear.',
-  'A concealed scout watches camp. Notice them to gain a rumor before they flee.',
+  'A concealed scout watches camp. Spot them with Mind to gain a rumor before they flee.',
   'A swarm of harmless lights dances through the bedrolls.',
   'The moon appears too large. Navigation checks feel strangely easy tomorrow.',
   'A nearby ruin door opens by itself, then shuts at dawn.',

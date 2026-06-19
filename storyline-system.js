@@ -4577,6 +4577,7 @@
     const pushDread = typeof stepUp === "function" ? stepUp(dreadDie) : Math.min(20, dreadDie + 2);
     const currentTeamwork = (typeof S !== "undefined" && typeof S.tmw === "number") ? S.tmw : 0;
     const canSpend = currentTeamwork >= 3;
+    const canPush = currentTeamwork >= 2;
     const gmMode = !!(window.settingsSystem && typeof window.settingsSystem.isGMMode === "function" && window.settingsSystem.isGMMode());
     const revealDC = !window.settingsSystem || typeof window.settingsSystem.shouldRevealDC !== "function" ? true : !!window.settingsSystem.shouldRevealDC();
     const revealHidden = !window.settingsSystem || typeof window.settingsSystem.shouldRevealHiddenInfo !== "function" ? true : !!window.settingsSystem.shouldRevealHiddenInfo();
@@ -4613,13 +4614,13 @@
       + "<div style='font-size:.77rem;color:var(--text2);line-height:1.6;'>"
       + "<strong style='color:var(--teal);'>Accept:</strong> Take the setback, advance story, earn <strong style='color:var(--teal);'>+1 Teamwork Point</strong>.<br>"
       + "<strong style='color:#c9a227;'>Spend 3 Teamwork:</strong> Convert fail to success. You have <strong style='color:var(--teal);'>" + currentTeamwork + " Teamwork</strong>.<br>"
-      + "<strong style='color:#f0a050;'>Push Your Luck:</strong> Re-roll vs <strong style='color:#f0a050;'>Dread D" + pushDread + "</strong>. Win = success streak. Lose = accept fail (+1 Teamwork)."
+      + "<strong style='color:#f0a050;'>Push Your Luck (−2 Teamwork):</strong> Re-roll vs <strong style='color:#f0a050;'>Dread D" + pushDread + "</strong>. Win = success streak. Lose = accept fail (+1 Teamwork)."
       + "</div>"
       + "</div>"
       + "<div style='display:flex;gap:.35rem;flex-wrap:wrap;justify-content:flex-end;'>"
       + "<button class='btn btn-sm' onclick='storyAcceptFail()'>Accept (+1 Teamwork)</button>"
       + "<button class='btn btn-sm btn-teal' " + (canSpend ? "" : "disabled title='Need 3 Teamwork'") + " onclick='storySpendTeamwork()'>Spend 3 Teamwork → Succeed</button>"
-      + "<button class='btn btn-sm' style='background:rgba(240,160,80,.18);border-color:rgba(240,160,80,.5);color:#f0a050;' onclick='storyPushLuck()'>Push Luck (D" + pushDread + ")</button>"
+      + "<button class='btn btn-sm' style='background:rgba(240,160,80,.18);border-color:rgba(240,160,80,.5);color:#f0a050;' " + (canPush ? "" : "disabled title='Need 2 Teamwork'") + " onclick='storyPushLuck()'>Push Luck −2 TMW (D" + pushDread + ")</button>"
       + "</div>";
     if (gmMode) {
       html += "<div style='margin-top:.55rem;background:rgba(128,96,192,.08);border:1px solid rgba(128,96,192,.35);padding:.4rem .5rem;'>"
@@ -5922,6 +5923,13 @@
   window.storyPushLuck = function () {
     const p = window._pendingStoryRoll;
     if (!p) { if (typeof closeModal === "function") closeModal(); return; }
+    const tmw = (typeof S !== "undefined" && typeof S.tmw === "number") ? S.tmw : 0;
+    if (tmw < 2) {
+      if (typeof showNotif === "function") showNotif("Need 2 Teamwork Points to Push Your Luck.", "warn");
+      return;
+    }
+    if (typeof changeCounter === "function") changeCounter("tmw", -2);
+    else if (typeof S !== "undefined") S.tmw = Math.max(0, tmw - 2);
     const pushDread = typeof stepUp === "function" ? stepUp(p.dreadDie) : Math.min(20, p.dreadDie + 2);
     const newCheck = rollStoryCheck(p.option.stat, pushDread, p.factionContext || inferOptionFactionKey(p.option));
     const statName = STAT_LABELS[p.option.stat] || p.option.stat;
