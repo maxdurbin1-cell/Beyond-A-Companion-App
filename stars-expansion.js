@@ -9059,7 +9059,15 @@ function buildGalaxyMerchantOffers(kind) {
   const pool = getMerchantShopEntries(categories);
   const offers = [];
   const used = new Set();
-  while (pool.length && offers.length < 4) {
+  if (kind !== 'Black Market Ship') {
+    ['Ghostglass Dust', 'Redline Serum', 'Goldvein Spark', 'Halo Rot'].forEach(function(name) {
+      const entry = pool.find(function(item) { return item && item.name === name; });
+      if (!entry || used.has(entry.name)) return;
+      used.add(entry.name);
+      offers.push(Object.assign({}, entry));
+    });
+  }
+  while (pool.length && offers.length < 8) {
     const offer = pick(pool);
     if (!offer || used.has(offer.name)) continue;
     used.add(offer.name);
@@ -10206,15 +10214,23 @@ function resolveGalaxySkillCheck(primaryKey, secondaryKey, dd, label) {
     else actionLabel = primaryLabel + '/' + secondaryLabel;
   }
   const invBonus = (typeof collectInventoryBonusesForStat === 'function') ? collectInventoryBonusesForStat(primaryKey) : { advDice: [], flat: 0, addValor: 0 };
-  const action = (typeof rollWithAdvantage === 'function' && invBonus.advDice && invBonus.advDice.length)
-    ? rollWithAdvantage(die, invBonus.advDice)
-    : { total: explodingRoll(die).total };
-  let actionTotal = action.total + Number(invBonus.flat || 0);
+  const rollMod = (S && S.rollMod && typeof S.rollMod === 'object') ? S.rollMod : { advDice: [], flat: 0 };
+  const actionAdvDice = []
+    .concat(Array.isArray(invBonus.advDice) ? invBonus.advDice : [])
+    .concat(Array.isArray(rollMod.advDice) ? rollMod.advDice : []);
+  const action = (typeof rollWithAdvantage === 'function')
+    ? rollWithAdvantage(die, actionAdvDice, { type: 'action', major: true, label: String(label || actionLabel) })
+    : { total: explodingRoll(die, { type: 'action', major: true, label: String(label || actionLabel) }).total };
+  let actionTotal = action.total + Number(invBonus.flat || 0) + Number(rollMod.flat || 0);
+  const queuedValor = (typeof consumeQueuedRollModValorDice === 'function')
+    ? consumeQueuedRollModValorDice(String(label || actionLabel) + ' Queued Valor')
+    : { total: 0 };
+  actionTotal += Number(queuedValor.total || 0);
   const valorDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('valor') : ((S.stats && S.stats.valor) || 4);
   for (let i = 0; i < Number(invBonus.addValor || 0); i++) {
-    actionTotal += explodingRoll(valorDie).total;
+    actionTotal += explodingRoll(valorDie, { type: 'action', major: true, label: String(label || actionLabel) + ' Item V.D. #' + String(i + 1) }).total;
   }
-  const dread = explodingRoll(dd);
+  const dread = explodingRoll(dd, { type: 'dread', major: true, label: 'Dread d' + String(dd) });
   const success = actionTotal >= dread.total;
   return {
     success,

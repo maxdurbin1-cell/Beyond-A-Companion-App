@@ -251,6 +251,7 @@ function wireMainUiDelegates() {
 
     var navBtn = ev.target && ev.target.closest ? ev.target.closest('#mainNavTablist .tab-btn[data-tab]') : null;
     if (navBtn && typeof window.switchTab === 'function') {
+      if (navBtn.getAttribute && navBtn.getAttribute('onclick')) return;
       window.switchTab(String(navBtn.getAttribute('data-tab') || ''), navBtn);
       return;
     }
@@ -830,8 +831,8 @@ function quickRollStat(key) {
 
   // Roll base die + ALL advantage dice, take highest
   const ra = typeof rollWithAdvantage === 'function'
-    ? rollWithAdvantage(die, advDiceArr)
-    : {total: explodingRoll(die).total, base: explodingRoll(die), advRolls: [], breakdown: '', exploded: false};
+    ? rollWithAdvantage(die, advDiceArr, { type: 'action', major: true, label: label + ' Roll' })
+    : {total: explodingRoll(die, { type: 'action', major: true, label: label + ' Roll' }).total, base: explodingRoll(die, { type: 'action', major: true, label: label + ' Roll' }), advRolls: [], breakdown: '', exploded: false};
   const a = ra.base;
 
   // +N flat bonus
@@ -841,14 +842,14 @@ function quickRollStat(key) {
     : { total: 0 };
   withFlat += Number(queuedValor.total || 0);
   // Holy Shield: add spirit die (Flavor)
-  const holyShieldRoll = flB.holyShield ? explodingRoll(S.stats.spirit || 4) : null;
+  const holyShieldRoll = flB.holyShield ? explodingRoll(S.stats.spirit || 4, { type: 'action', major: true, label: label + ' Holy Shield' }) : null;
   if (holyShieldRoll) withFlat += holyShieldRoll.total;
   // +V.D. additive valor die
-  const valorBonus = addValorDie ? explodingRoll(S.stats.valor || 4) : null;
+  const valorBonus = addValorDie ? explodingRoll(S.stats.valor || 4, { type: 'action', major: true, label: label + ' Valor Bonus' }) : null;
   const withValor = withFlat + (valorBonus ? valorBonus.total : 0);
-  const gearAddRolls = (gearBonus.addDice || []).map(function(dieSize){ return explodingRoll(dieSize); });
+  const gearAddRolls = (gearBonus.addDice || []).map(function(dieSize){ return explodingRoll(dieSize, { type: 'action', major: true, label: label + ' Gear Bonus' }); });
   // Augmentation additive
-  const augRoll = augDie > 0 ? explodingRoll(augDie) : null;
+  const augRoll = augDie > 0 ? explodingRoll(augDie, { type: 'action', major: true, label: label + ' Augment' }) : null;
   const gearAddTotal = gearAddRolls.reduce(function(sum, roll){ return sum + roll.total; }, 0);
   const total = withValor + gearAddTotal + (augRoll ? augRoll.total : 0);
   const radPenalty = (typeof getRadPenaltyForStat === 'function') ? getRadPenaltyForStat(resolvedKey) : 0;

@@ -716,7 +716,7 @@ nav{padding:.28rem;gap:.16rem;border-radius:12px;}
     <button class="tab-btn ctx-space" aria-controls="tab-yessod" id="tabnav-yessod" style="display:none;" data-tab="yessod">Yessod</button>
     <button class="tab-btn ctx-space" aria-controls="tab-exocrafts" id="tabnav-exocrafts" style="display:none;" data-tab="exocrafts">Exocrafts</button>
     <button class="tab-btn ctx-sea ctx-space" aria-controls="tab-naval" id="tabnav-naval" style="display:none;" data-tab="naval">Ship</button>
-    <button class="tab-btn ctx-traveling ctx-holding ctx-sea ctx-space" aria-controls="tab-shop" id="tabnav-shop" data-tab="shop">Merchant</button>
+    <button class="tab-btn ctx-traveling ctx-holding ctx-sea ctx-space" aria-controls="tab-shop" id="tabnav-shop" data-tab="shop" onclick="switchTab('shop',this)">Merchant</button>
     <button class="tab-btn ctx-holding" aria-controls="tab-gambling" id="tabnav-gambling" data-tab="gambling">Gambling</button>
     <button class="tab-btn ctx-holding" aria-controls="tab-caravan" id="tabnav-caravan" data-tab="caravan">Caravan</button>
     <button class="tab-btn ctx-holding" aria-controls="tab-holding" id="tabnav-holding" style="display:none;" data-tab="holding">Holdings</button>
@@ -2258,6 +2258,9 @@ const stepDown=n=>{const i=DICE.indexOf(n);return i>0?DICE[i-1]:n;};
 function explodingRoll(n,meta){
   let t=0,r,c=0;
   const baseMeta=meta&&typeof meta==='object'?meta:{};
+  const explodeAt=(typeof getActionRollExplosionThreshold==='function')
+    ? getActionRollExplosionThreshold(n,baseMeta)
+    : Math.max(1,parseInt(n,10)||1);
   do{
     const m=Object.assign({},baseMeta);
     if(!m.label)m.label='Explode';
@@ -2265,8 +2268,8 @@ function explodingRoll(n,meta){
     r=roll(n,m);
     t+=r;
     c++;
-  }while(r===n&&c<8);
-  const out={total:t,exploded:c>1};
+  }while(r>=explodeAt&&c<8);
+  const out={total:t,exploded:c>1,threshold:explodeAt};
   try{
     if(!window.__btlExplodingRollLog||!Array.isArray(window.__btlExplodingRollLog))window.__btlExplodingRollLog=[];
     window.__btlExplodingRollLog.push({
@@ -3005,6 +3008,7 @@ const TRAVELING_WAYFARERS=[['Scavenger','Belle','Blackwood','Cloaked in shadows,
 
 const STRANGE_ITEMS_FULL=['Glass orbs filled with swirling mists, freezing to touch yet burn without flame. (75₵)','Thin metal sheets engraved with tiny symbols, housing secrets of a forgotten script. (120₵)','Small rounded stones emitting a soft eerie glow, changing colors with the phases of the moon. (60₵)','A delicate frame of twisted metal holding a pane of glass that shows a world upside down. (90₵)','Hollow tubes of polished metal, capped at both ends, whispering wind songs when swung through the air. (50₵)','Rectangular prisms of dense material, their surfaces displaying frozen faces and forgotten landscapes. (100₵)','Cylindrical containers with a mysterious ability to preserve the freshness of whatever is stored within. (80₵)','Twisted wires adorned with sparkling stones, worn around the neck to ward off invisible spirits. (70₵)','Metal discs with serrated edges, fitting together in a puzzle that sings when solved. (110₵)','Soft thin rectangles that emit a gentle light, revealing words and images with a touch. (95₵)','Rigid sheets of transparent material, trapping images of people and places no longer remembered. (65₵)','Complex contraptions of gears and springs, designed to measure the passage of an unseen force. (130₵)','A box of hard material opening to reveal rows of small colorful blocks, each emitting a unique sound. (85₵)','Intricately carved rods of a lightweight material, rumored to guide the bearer towards hidden treasures. (55₵)','Heavy cloaks made from material that repels water and reflects light, shimmering with the colors of the sky. (150₵)','A collection of flat circular objects, each imprinted with a different symbol. (40₵)','Elongated metallic capsules, once holding the power to capture and replay the essence of human voices. (105₵)','Fabric squares adorned with intricate patterns, capable of changing color under the sun\'s kiss. (45₵)','Small intricately detailed figures of humans and animals, frozen in time and crafted from unknown materials. (120₵)','Thin flexible panels that, when exposed to light, generate a mysterious energy. (160₵)','Curved blades of light and shadow encased in glass, used in rituals of the old world to summon daylight. (70₵)','A collection of small hard objects, each marked with a unique pattern, used in a game of strategy and chance. (50₵)','Vessels of transparent material, capable of holding the sky\'s tears and the essence of life itself. (60₵)','Metallic mesh fabrics, shimmering with a thousand colors, believed to protect against malevolent gazes. (75₵)','Elaborate masks of metal and glass, covering the eyes and allowing the wearer to see truths hidden from the naked eye. (140₵)','A set of tubes and wires that, when assembled, produce sounds mimicking the voices of the ancient ones. (90₵)','Objects of soft material, emitting warm light when activated through unknown means. (100₵)','Small flat rectangles displaying art and text, thought to be a method of communication between distant lands. (55₵)','A series of interconnected rings, each moving independently, used to calculate and predict celestial movements. (130₵)','Bands of flexible material, emitting a soft luminescence, used in ceremonies to bind people together. (85₵)','Large flat slabs of smooth durable material, upon which are drawn the blueprints of lost civilizations. (110₵)','Compact devices capable of emitting a variety of sounds, from music to the roaring of unseen beasts. (75₵)','Small handheld objects with a mirrored surface, believed to capture and store the souls of those who gaze into them. (65₵)','Containers crafted from the earth, holding fragrances that evoke memories of worlds untraveled. (50₵)','Elaborate headgear studded with luminous stones, worn by leaders of forgotten tribes. (120₵)','Ornate vessels, their interiors coated with a substance that turns liquid into air. (100₵)','Glass orb encasing a perpetual storm, lightning eternally dancing within its confines. (200₵)','Metallic disk with a serrated edge, inscribed with symbols of a forgotten tongue, humming when spun. (75₵)','Thin rectangular slab, its surface a maze of cracks, once held the sum of human knowledge at a touch. (75₵)','A hollow cylinder grooved on the inside, that produces a haunting melody when blown across. (70₵)'];
 const SHOP_DATA={weapons:[{name:'Sword',stat:'+1 Strike | Engaged',desc:'A reliable blade for close combat.',cost:60},{name:'Axe',stat:'+2 Strike | Engaged',desc:'A heavy chopping weapon.',cost:80},{name:'Mace',stat:'+2 Strike | Engaged',desc:'A blunt weapon for crushing armor.',cost:70},{name:'Rapier',stat:'+1 Strike | Engaged',desc:'A light, precise thrusting blade.',cost:50},{name:'Dagger',stat:'+1 Strike | Engaged',desc:'Fast and concealable. One-Handed.',cost:30},{name:'Spear',stat:'+2 Strike | Engaged',desc:'A long reach weapon. Two-Handed.',cost:40},{name:'Halberd',stat:'+3 Strike | Engaged',desc:'A pole weapon combining axe and spear. Two-Handed.',cost:90},{name:'Crossbow',stat:'+2 Shoot | Nearby',desc:'A mechanical bow, slow to reload. Two-Handed.',cost:80},{name:'Longbow',stat:'+2 Shoot | Far',desc:'A recurved bow with long range. Two-Handed.',cost:70},{name:'Pistol',stat:'+1 Shoot | Nearby',desc:'A compact sidearm. One-Handed.',cost:100},{name:'Shield',stat:'+V.D. Defend',desc:'Adds Valor Die to Defend rolls. One-Handed.',cost:45}],melee_exp:[{name:'Scrap Sword',stat:'+2 Strike | Engaged',desc:'A sword fashioned from scrap metal.',cost:60},{name:'Tactical Machete',stat:'Ad6 Strike | Engaged',desc:'Military-grade machete.',cost:80},{name:'Chain Whip',stat:'Ad4 Strike | Engaged',desc:'A length of chain ending in a weighted spike.',cost:45},{name:'Combat Knife',stat:'+1 Strike | Engaged',desc:'A sturdy knife for close-quarters combat.',cost:30},{name:'Sledgehammer',stat:'+3 Strike | Engaged',desc:'A heavy tool turned weapon. Two-Handed.',cost:70},{name:'Shock Baton',stat:'Ad8 Strike | Engaged',desc:'A baton that delivers a high-voltage shock.',cost:110},{name:'Buzzsaw Axe',stat:'Ad10 Strike | Engaged',desc:'A brutal axe with a powered buzzsaw. Two-Handed.',cost:150},{name:'Plasma Blade',stat:'Ad12 Strike | Engaged',desc:'A cutting-edge weapon emitting plasma.',cost:200},{name:'Spiked Gauntlet',stat:'+2 Strike | Engaged',desc:'Armored gauntlet with spikes.',cost:50},{name:'Razor Whip',stat:'Ad6 Strike | Engaged',desc:'A whip with razor-sharp edges.',cost:90},{name:'Shockwave Hammer',stat:'Ad20 Strike | Engaged',desc:'Utilizes gravity manipulation. Two-Handed.',cost:250},{name:'Energy Sword',stat:'Ad12 Strike | Engaged',desc:'A sword projecting a blade of concentrated energy.',cost:180},{name:'Tesla Lance',stat:'Ad10 Strike | Engaged',desc:'A long spear discharging electrical energy. Two-Handed.',cost:140},{name:'Bone Shiv',stat:'+1 Strike | Engaged',desc:'A sharpened bone.',cost:10},{name:'Riot Shield',stat:'+3 Defend/Strike | Engaged',desc:'Defense and offense combined.',cost:75},{name:'Gravity Mace',stat:'Ad20 Strike | Engaged',desc:'Utilizes gravity manipulation. Two-Handed.',cost:230}],ranged_exp:[{name:'Scrap Rifle',stat:'+2 Shoot | Nearby',desc:'A makeshift rifle. Two-Handed.',cost:100},{name:'Compound Bow',stat:'Ad8 Shoot | Far',desc:'A high-tension compound bow. Two-Handed.',cost:110},{name:'Sling',stat:'+1 Shoot | Nearby',desc:'A simple sling using scavenged stones.',cost:15},{name:'Hand Cannon',stat:'Ad10 Shoot | Close',desc:'A powerful crude handheld firearm.',cost:150},{name:'Throwing Knives',stat:'+1 Shoot | Close',desc:'A set of balanced throwing knives.',cost:40},{name:'Energy Pistol',stat:'Ad12 Shoot | Nearby',desc:'A rare energy-based weapon.',cost:200},{name:'Harpoon Gun',stat:'+3 Shoot | Nearby',desc:'A modified harpoon gun with reel-in mechanism. Two-Handed.',cost:130},{name:'Pneumatic Dart Rifle',stat:'+2 Shoot | Far',desc:'A silent rifle using compressed air. Two-Handed.',cost:140},{name:'Tactical Laser Rifle',stat:'Ad20 Shoot | Far',desc:'Advanced pre-collapse technology. Two-Handed.',cost:300},{name:'Shockwave Blaster',stat:'Ad6 Shoot | Close',desc:'On hit, Target saves vs Control or loses next Turn.',cost:180},{name:'Recoilless Sniper',stat:'+3 Shoot | Far',desc:'A sniper rifle with advanced recoil suppression. Two-Handed.',cost:250},{name:'Plasma Thrower',stat:'Ad12 Shoot | Close',desc:'Projects a stream of superheated plasma. Two-Handed.',cost:280},{name:'Flare Gun',stat:'+2 Shoot | Nearby',desc:'Can also be used as a distress signal.',cost:50},{name:'Bolt-Action Rifle',stat:'+2 Shoot | Nearby',desc:'A reliable bolt-action rifle. Two-Handed.',cost:80},{name:'Acid Spray Gun',stat:'Ad6 Shoot | Close',desc:'Sprays corrosive acid, effective against armored targets.',cost:160},{name:'Magnetic Railgun',stat:'Ad20 Shoot | Far',desc:'Utilizes magnetic fields to launch projectiles. Two-Handed.',cost:350}],armor:[{name:'Light Armor',stat:'Ad4 | 3 Actions',desc:'Fast and flexible. Allows full movement.',cost:60},{name:'Balanced Armor',stat:'Ad6 | 2 Actions',desc:'The standard choice for most Wayfarers.',cost:100},{name:'Heavy Armor',stat:'Ad10 | 1 Action',desc:'Maximum protection at the cost of mobility.',cost:160}],armor_exp:[{name:'Scrap Metal Armor',stat:'Ad6 Medium | 2 Actions',desc:'Crafted from the remnants of old-world machinery.',cost:80},{name:'Radiation Cloak',stat:'Ad4 Light | 3 Actions',desc:'Lightweight. Lined with radiation-reflective material.',cost:70},{name:'Rebar Reinforced Vest',stat:'Ad8 Heavy | 1 Action',desc:'Reinforced with rebar and concrete chunks.',cost:120},{name:'Vault Door Shield',stat:'Ad6 Shield',desc:'A shield made from a repurposed vault door.',cost:90},{name:'Pneumatic Plate Armor',stat:'Ad10 Heavy | 1 Action',desc:'Heavy armor powered by pneumatic systems.',cost:200},{name:'Kevlar Mesh Bodysuit',stat:'Ad4 Light | 4 Actions',desc:'A bodysuit made from salvaged kevlar.',cost:100},{name:'Desert Nomad\'s Garb',stat:'Ad4 Light | 4 Actions',desc:'Crafted from the fibers of desert plants.',cost:60},{name:'Carapace Armor',stat:'Ad6 Medium | 3 Actions',desc:'Armor made from the carapaces of giant insects.',cost:110},{name:'Hydro Suit',stat:'Ad6 Medium | 2 Actions',desc:'A suit designed for traversing toxic waters.',cost:150},{name:'Salvage Shield',stat:'Ad4 Shield',desc:'Makeshift shield constructed from scrap.',cost:50}],essentials:[{name:'Premium Basic',stat:'Size 3',desc:'Bread, water, hempen cloth, wrapping rags.',cost:2},{name:'Voyager Supplies',stat:'Size 3',desc:'Tinned meat, travel ale, disinfectant, novelty items.',cost:10},{name:'Snake Oil',stat:'Size 1',desc:'Generic remedies against bugs, parasites, diseases, rashes, and blisters.',cost:10},{name:'Lamp, Iron',stat:'Size 2',desc:'Basic lamp, hooded against wind.',cost:5},{name:'Lamp, Solar',stat:'Size 1',desc:'Magic lamp of the Long Ago that eats sunlight.',cost:100},{name:'Lamp, Spectrum',stat:'Size 2',desc:'Crystal lamp. Projects a ray of light far away.',cost:100},{name:'Depressant',stat:'Size 1',desc:'Reduces 1 Trauma immediately.',cost:40},{name:'Stimulant',stat:'Size 1',desc:'Restores 1d4 Stress when consumed.',cost:30}],toolkits:[{name:'Navigator\'s Suitcase',stat:'V.D. Advantage | 3 slots',desc:'High-grade compass, star maps, GPS, binoculars, signal flares.',cost:150},{name:'Ambassador\'s Trunk',stat:'V.D. Advantage | 4 slots',desc:'Diplomatic credentials, translation devices, cultural reference guides.',cost:200},{name:'Excavator\'s Kit',stat:'V.D. Advantage | 3 slots',desc:'Geiger counter, metal detector, shovels, pickaxe.',cost:175},{name:'Dungeoneer\'s Kit',stat:'V.D. Advantage | 2 slots',desc:'Telescoping pole, net, rope, hook, crowbar, hammer, lockpicks.',cost:100},{name:'Scavenger\'s Pouch',stat:'V.D. Advantage | 1 slot',desc:'Compact lockpicking set, gloves, mini flashlight, wire cutters.',cost:50},{name:'Biologist\'s Backpack',stat:'V.D. Advantage | 3 slots',desc:'Portable microscope, sample kits, biological guide.',cost:120},{name:'Mechanic\'s Roll',stat:'V.D. Advantage | 2 slots',desc:'Multi-purpose tools, soldering iron, circuit tester, duct tape.',cost:80},{name:'Survivalist\'s Satchel',stat:'V.D. Advantage | 4 slots',desc:'Water filtration, firestarter, emergency blanket, compact tent.',cost:130},{name:'Hacker\'s Holster',stat:'V.D. Advantage | 2 slots',desc:'Rugged laptop with hacking software, signal jammer, RFID cloner.',cost:150},{name:'Alchemist\'s Vials',stat:'V.D. Advantage | 3 slots',desc:'Portable chemistry set with reagents for explosive, corrosive, or medicinal compounds.',cost:140}],items:[{name:'Rations',stat:'1 slot',desc:"A day's worth of food and water.",cost:1},{name:'Rope (50ft)',stat:'1 slot',desc:'Hemp rope, good for climbing or binding.',cost:2},{name:'Mapping Materials',stat:'1 slot',desc:'Paper, ink, quills for charting the Province.',cost:3},{name:'Torch',stat:'1 slot',desc:'Burns for 1 hour, lights a close area.',cost:1},{name:'Lantern',stat:'1 slot',desc:'Burns oil, lights a wide area for 6 hours.',cost:5},{name:'Grappling Hook',stat:'1 slot',desc:'For scaling walls and cliffs.',cost:8},{name:'Lockpicks',stat:'1 slot',desc:"A set of thieves' tools.",cost:15},{name:'Compass',stat:'1 slot',desc:'Valor Die advantage to Lead/Survival.',cost:20},{name:'Spyglass',stat:'1 slot',desc:'Valor Die advantage to Notice.',cost:25},{name:'Healing Salve',stat:'1 slot',desc:'Restores d4 Stress.',cost:15},{name:'Antitoxin',stat:'1 slot',desc:'Neutralizes most poisons.',cost:20},{name:'Caltrops',stat:'1 slot',desc:'Scatter to slow pursuers.',cost:5}],scrolls:[{name:'Speak with Animals',stat:'Indefinite | Close',desc:'Communicate with any beast for one scene.',cost:50},{name:'Invisibility',stat:'Indefinite | Self',desc:'Become unseen until you attack or one hour passes.',cost:80},{name:'Levitate Object',stat:'Indefinite | Nearby',desc:'Float an object up to wagon-sized for one scene.',cost:60},{name:'Reveal Traps',stat:'Indefinite | Close',desc:'All traps in Close range glow softly.',cost:40},{name:'Night Vision',stat:'Indefinite | Self',desc:'See clearly in darkness for one scene.',cost:45},{name:'Create Light',stat:'Indefinite | Close',desc:'A hovering orb lights an area brightly.',cost:30},{name:'Silent Steps',stat:'Indefinite | Self',desc:'Make no sound for one scene.',cost:35},{name:'Create Portal',stat:'Indefinite | Close',desc:'Open a door to a location seen before.',cost:120},{name:'Fly',stat:'Indefinite | Self',desc:'Fly at walking speed for one scene.',cost:100},{name:'Repair Object',stat:'Indefinite | Touch',desc:'Restore a broken object to working condition.',cost:55},{name:'Plant Growth',stat:'Indefinite | Nearby',desc:'Accelerate plant growth to create cover.',cost:40},{name:'None Can Lie',stat:'Indefinite | Close',desc:'No one in range can speak falsehood for one scene.',cost:90},{name:'Empower',stat:'Indefinite | Self',desc:'Flood your body with arcane strength. You gain the Empowered condition.',cost:70,condition:'empowered'},{name:'Ward of Steel',stat:'Indefinite | Self',desc:'A shimmering barrier of will closes around you. You gain the Protected condition.',cost:70,condition:'protected'},{name:'Sight Beyond',stat:'Indefinite | Self',desc:'Your mind sharpens past the edge of thought. You gain the Focused condition.',cost:70,condition:'focused'},{name:'Battle Hymn',stat:'Indefinite | Close',desc:'A soundless melody steels the soul. You gain the Bolstered condition.',cost:70,condition:'bolstered'},{name:'Speak with the Dead',stat:'Indefinite | Touch',desc:'Hold a brief conversation with a recently deceased spirit. They may be reluctant or confused.',cost:90},{name:'Mark of Passage',stat:'Indefinite | Touch',desc:'Leave an invisible brand on any surface. Only the caster can see it, indefinitely.',cost:35},{name:'Memory of Stone',stat:'Indefinite | Touch',desc:'An object or wall reveals a vivid scene from its distant past. Vision lasts one minute.',cost:55},{name:'Warding Sigil',stat:'Indefinite | Touch',desc:'Inscribe an invisible alarm on a door, chest, or threshold. It triggers silently when crossed.',cost:45},{name:'Bind Oath',stat:'Indefinite | Close',desc:'Two or more willing parties speak an agreement. Breaking it causes a creeping spiritual dread.',cost:80},{name:'Shroud of Forgetting',stat:'Indefinite | Self',desc:"Those who witnessed you in this scene forget your face. They recall events, not a person.",cost:75},{name:'Summon Familiar',stat:'Indefinite | Self',desc:'A translucent spirit-beast appears at your side for the scene. It cannot fight but can scout ahead.',cost:85},{name:'True Name Revealed',stat:'Indefinite | Nearby',desc:"One creature's true name briefly glows above its head. Some find this deeply unsettling.",cost:100}],services:[{name:'Sage (Temple)',stat:'−1 Trauma',desc:'A learned healer at a Temple can reduce Trauma by 1.',cost:50},{name:'Bed & Board',stat:'Long Rest',desc:'A full long rest at an inn. Clear all Conditions and recover all Stress.',cost:5},{name:'Horse Hire',stat:'Gallop ×2',desc:"A riding horse for one day's journey.",cost:10},{name:'Boat Hire',stat:'Ferry ×3',desc:'A river ferryman for one day.',cost:15},{name:'Guide',stat:'No Wilderness Roll',desc:'A local guide for one Province zone.',cost:20},{name:'Mercenary',stat:'DD6 | 10 HP',desc:'A hired blade fights alongside you for one scene.',cost:30},{name:'Messenger',stat:'Instant delivery',desc:'Deliver a letter to any known Landmark in the Province.',cost:8}],remedies:[{name:'Wound Salve',stat:'Restore d4 Stress',desc:'A herbal paste applied to wounds.',cost:12},{name:'Fever Tincture',stat:'Remove Weakened',desc:'A bitter medicine that breaks fevers.',cost:18},{name:'Mind Draught',stat:'Remove Distracted',desc:'A calming brew that clears mental fog.',cost:25},{name:'Spirit Tonic',stat:'Remove Shaken',desc:'A warming drink that steadies the soul.',cost:22},{name:'Fortifying Broth',stat:'Remove Vulnerable',desc:'A hearty broth that hardens the body.',cost:20},{name:'Trauma Serum',stat:'−1 Trauma (temp)',desc:'Masks Trauma effects for one scene. Does not truly heal.',cost:35},{name:'Blight Repellent',stat:'Adv vs Peril/Hazard',desc:'Apply before a Peril or Hazard roll on a hex map to roll your chosen stat twice and keep the highest result.',cost:30},{name:'Depressant',stat:'−1 Trauma',desc:'Reduces 1 Trauma immediately.',cost:40}],strange:STRANGE_ITEMS_FULL.slice(0,40).map((s,i)=>({name:`Strange Item #${(i+1).toString().padStart(2,'0')}`,stat:'d100',desc:s,cost:parseInt(s.match(/\((\d+)₵\)/)?.[1])||75})),tradegoods:TRADE_GOODS.map(g=>({name:g.good,stat:g.source,desc:`${g.desc}. Use: ${g.use}`,cost:g.cost})),augmentations:[{name:'NAUTRAM 6T',stat:'Augmentation | Talent Slot',desc:'+d4 to Body Checks. When rolling Body, roll a d4 and add it to the result.',cost:2000},{name:'AI_EYE',stat:'Augmentation | Talent Slot',desc:'+d4 to Strike Rolls. When rolling Strike, roll a d4 and add it to the result. Ignores darkness.',cost:1500},{name:'3H7-ARCANE',stat:'Augmentation | Talent Slot',desc:'+d4 to Mind Checks. When rolling Mind, roll a d4 and add it to the result. Allows total recall.',cost:1000},{name:'VOICE SYNTHESIZER',stat:'Augmentation | Talent Slot',desc:'+d4 to Spirit Checks. When rolling Spirit, roll a d4 and add it to the result. Mimic any recorded voice.',cost:2500},{name:'DECENTRALIZED HEART',stat:'Augmentation | Talent Slot',desc:'If your Stress is reduced to 0, you get back up with full Stress restored.',cost:6000},{name:'NIGHTGUARD',stat:'Augmentation | Talent Slot',desc:'+d4 to Control Checks. When rolling Control (including Hack Checks), roll a d4 and add it to the result.',cost:1500},{name:'ANALYZER',stat:'Augmentation | Talent Slot',desc:'+d6 to Lead Checks. When rolling Lead, roll a d6 and add it to the result.',cost:4000},{name:'RADAR SENSOR',stat:'Augmentation | Talent Slot',desc:'+d6 to Shoot Rolls. When rolling Shoot, roll a d6 and add it to the result. View heat signatures up to 100m.',cost:4000},{name:'SUBDERMAL ARMOR',stat:'Augmentation | Talent Slot',desc:'+d4 to Defend Rolls. When rolling Defend, roll a d4 and add it to the result.',cost:4000},{name:'ADRENALIN BOOSTER',stat:'Augmentation | Talent Slot',desc:'Grants +2 Actions per turn. Activate on your turn as a free action.',cost:4000},{name:'OPERATING SYSTEM',stat:'Augmentation | Talent Slot',desc:'A Virtual Interface linking to the Planet\'s Satellite. Required to cast OS Hacks. Requires Renown +3 to install.',cost:2000}],os_hacks:[{name:'Javelin',stat:'1 TMW | Control Check',desc:'On a Success, deal 1d10 damage to your target.',cost:500},{name:'Ember',stat:'2 TMW | Control Check',desc:'On a success, the enemy is Vulnerable (Reduce their Dread Die by a Step).',cost:500},{name:'Short Circuit',stat:'4 TMW | Control Check',desc:'The target cannot make an action for 2 rounds.',cost:500},{name:'Reboot Optics',stat:'3 TMW | Control Check',desc:'Enemy rolls with Step Up Disadvantage for 3 Rounds (rolls higher die, takes lowest result).',cost:500},{name:'Weapon Glitch',stat:'2 TMW | Control Check',desc:"Target's weapons don't work for 2 Rounds.",cost:500},{name:'Ping',stat:'1 TMW | Control Check',desc:'Able to see all available Targets in the Zone (you have Advantage d6 (Ad6) against them).',cost:500},{name:'Sonic Shock',stat:'2 TMW | Control Check',desc:'Gain +d4 to Attack rolls against that enemy for the scene.',cost:500},{name:'Take Control',stat:'1 TMW | Control Check',desc:'Remotely operate a small electronic device.',cost:500},{name:'Counterspell',stat:'2 TMW | Reaction',desc:'Counter an enemy Hack when you sense it being cast.',cost:500},{name:'Brake',stat:'5 TMW | Control Check',desc:'Force a vehicle to stop by triggering its handbrake.',cost:500},{name:'LASHOUT (Master)',stat:'10 TMW | Master Hack',desc:'Force an enemy to attack the nearest ally or hostile. If no one is nearby, the enemy commits suicide. Found at Black Market Dealers.',cost:1000},{name:'SUICIDE (Master)',stat:'15 TMW | Master Hack',desc:'Forces the enemy to kill themselves. Found at Black Market Dealers.',cost:1000},{name:'COLLAPSE (Master)',stat:'12 TMW | Master Hack',desc:'Cripple an enemy for the day — they cannot act. Found at Black Market Dealers.',cost:1000},{name:'DETONATE GRENADE (Master)',stat:'10 TMW | Master Hack',desc:'Detonate explosives on an enemy or mech, dealing 2d10 damage. Found at Black Market Dealers.',cost:1000},{name:'AEGIES (Master)',stat:'10 TMW | Master Hack',desc:'Gain +10 to Defend Rolls for the duration of this Combat Scene. Found at Black Market Dealers.',cost:1000},{name:'PARASYTE (Master)',stat:'12 TMW | Master Hack',desc:'Enemy takes your Valor Die in Stress per Round for 12 Rounds. Found at Black Market Dealers.',cost:1000}],weapon_mods:[{name:'Silencer',stat:'Ranged Mod | 1 Mod Slot',desc:'With surprise, this weapon deals ×3 damage (Shoot roll ×3).',cost:250},{name:'Reflex Sight',stat:'Ranged Mod | 1 Mod Slot',desc:'If your Shoot Die roll beats enemy Dread, deal +2 damage per attack.',cost:275},{name:'Laser Accelerator',stat:'Ranged Mod | 1 Mod Slot',desc:'No Dread Die is rolled. Your Shoot Die result equals damage dealt directly.',cost:300},{name:'Auto Reloader',stat:'Ranged Mod | 1 Mod Slot',desc:'Spend +2 TMW to take 2 Shoot Actions this turn instead of 1.',cost:250},{name:'Shock Taser',stat:'Ranged Mod | 1 Mod Slot',desc:'If your Shoot Die Explodes when attacking, the enemy loses their next Turn.',cost:275},{name:'Smart Aim',stat:'Ranged Mod | 1 Mod Slot',desc:'Roll your Shoot Die twice (step-up advantage: roll current die and the next die up), keep the highest result.',cost:300},{name:'Stealth Grip',stat:'Melee Mod | 1 Mod Slot',desc:'For 1 Action, you may Attack twice.',cost:250},{name:'Vibrating Motor',stat:'Melee Mod | 1 Mod Slot',desc:'If your Strike roll beats enemy Dread, deal +2 damage.',cost:275},{name:'Kinetic Engine',stat:'Melee Mod | 1 Mod Slot',desc:'If you roll 1 or 2 on your Strike Die, you may attack again at no Action cost.',cost:300},{name:'Counter Guard',stat:'Melee Mod | 1 Mod Slot',desc:'Spend +2 TMW to immediately attack back after being hit by an Engaged enemy.',cost:250},{name:'Heat Chamber',stat:'Melee Mod | 1 Mod Slot',desc:'If your Strike Die Explodes, the enemy is Vulnerable.',cost:275},{name:'Charge Attack',stat:'Melee Mod | 1 Mod Slot',desc:'Lose 1 Turn to charge. Gain a Bonus Step Up Die per Turn spent charging (up to d20). Roll the bonus die and add it to your Strike result.',cost:300}]};
+if(typeof window!=='undefined')window.SHOP_DATA=SHOP_DATA;
 // ── STATE ─────────────────────────────────────────────────────────────────────
 const STAT_KEYS=['body','strike','shoot','mind','spirit','defend','control','lead'];
 const DARK_AFFLICTION_CURE_ITEMS=[
@@ -3012,8 +3016,18 @@ const DARK_AFFLICTION_CURE_ITEMS=[
   {name:'Moon Tonic',stat:'Cure Item',desc:'Cures Wolfism when consumed. Rare drop and sold by temple herbalists.',cost:220},
   {name:'Purity Elixir',stat:'Cure Item',desc:'Cures both Vampirism and Wolfism when consumed.',cost:480}
 ];
+const MERCHANT_DRUG_ITEMS=[
+  {name:'Ghostglass Dust',stat:'Drug | Next roll gains Advantage',desc:'A sharp, glittering powder. On use: your next roll gains advantage on the rolled die.',cost:120},
+  {name:'Redline Serum',stat:'Drug | +Valor Die to next roll',desc:'A fever-hot injector. On use: add your Valor Die to your next roll.',cost:140},
+  {name:'Goldvein Spark',stat:'Drug | Next roll crits on max-1',desc:'Microfilaments of charged gold. On use: your next roll explodes on one lower than normal.',cost:180},
+  {name:'Halo Rot',stat:'Drug | Random boons and backlash',desc:'On use: gain 1 random positive condition, 1 random negative condition, and take Mental Stress equal to your Valor Die roll.',cost:110}
+];
 if(typeof SHOP_DATA==='object'&&SHOP_DATA&&Array.isArray(SHOP_DATA.remedies)){
   DARK_AFFLICTION_CURE_ITEMS.forEach(function(item){
+    var exists=SHOP_DATA.remedies.some(function(existing){return existing&&existing.name===item.name;});
+    if(!exists)SHOP_DATA.remedies.push(item);
+  });
+  MERCHANT_DRUG_ITEMS.forEach(function(item){
     var exists=SHOP_DATA.remedies.some(function(existing){return existing&&existing.name===item.name;});
     if(!exists)SHOP_DATA.remedies.push(item);
   });
@@ -3040,7 +3054,7 @@ function ensureExpandedScrollCatalog(){
 ensureExpandedScrollCatalog();
 const STAT_NAMES=['Body','Strike','Shoot','Mind','Spirit','Defend','Control','Lead'];
 const STAT_SUBS=['Power / Athletics','Melee Attack','Ranged Attack','Lore / Notice','Convince / Heal','Block / Evade','Stealth / Finesse','Tactics / Inspire'];
-let S={name:'',career:'',background:'',age:'',characterYears:25,omen:'',reason:'',renown:0,credits:0,stress:0,trauma:0,pathTokens:0,tmw:0,successRolls:0,flavor:'',mutation:'',randomItem:'',equipment:{weapon1:'',weapon2:'',armor:'',readied:''},equipmentLayers:{under:'',over:'',suit:''},gearState:{oxygenHours:0,radAbsorbUsed:0,radAbsorbCap:0},environmentContext:{temperature:'',vacuum:false,irradiated:false},backpack:['','','','','',''],backpackUses:{},conditions:{empowered:false,protected:false,focused:false,bolstered:false,weakened:false,vulnerable:false,distracted:false,shaken:false},traumaConditions:{weakened:false,distracted:false,shaken:false,vulnerable:false},stats:{body:4,strike:4,shoot:4,mind:4,spirit:4,defend:4,control:4,lead:4,valor:4},combat:{enemyDread:8,spacing:'Engaged',actionsLeft:3,round:0,active:false,armyA:{stress:0,dread:0},armyB:{stress:0,dread:0}},enemies:[],soulArray:[],traits:{},currentAge:'green',currentSeason:'spring',rollMod:{advDice:[],flat:0},nightMode:false,fullPhaseClock:false,darkAfflictions:{vampirism:{active:false,corruption:0,lastFedStamp:''},wolfism:{active:false,corruption:0,lastFedStamp:''}},customContent:{affixes:[],items:[],builderAffixes:[]},backstory:{origin:'',upbringing:'',hometown:'',faction:'',rival:'',connection:'',earlyCareer:'',earlyBackground:'',lifeEvent:'',notes:'',provinceMarkers:{}},travelScenes:{byHex:{},activeSceneId:'',seq:1}};
+let S={name:'',career:'',background:'',age:'',characterYears:25,omen:'',reason:'',renown:0,credits:0,stress:0,trauma:0,pathTokens:0,tmw:0,successRolls:0,flavor:'',mutation:'',randomItem:'',equipment:{weapon1:'',weapon2:'',armor:'',readied:''},equipmentLayers:{under:'',over:'',suit:''},gearState:{oxygenHours:0,radAbsorbUsed:0,radAbsorbCap:0},environmentContext:{temperature:'',vacuum:false,irradiated:false},backpack:['','','','','',''],backpackUses:{},conditions:{empowered:false,protected:false,focused:false,bolstered:false,weakened:false,vulnerable:false,distracted:false,shaken:false},traumaConditions:{weakened:false,distracted:false,shaken:false,vulnerable:false},stats:{body:4,strike:4,shoot:4,mind:4,spirit:4,defend:4,control:4,lead:4,valor:4},combat:{enemyDread:8,spacing:'Engaged',actionsLeft:3,round:0,active:false,armyA:{stress:0,dread:0},armyB:{stress:0,dread:0}},enemies:[],soulArray:[],traits:{},currentAge:'green',currentSeason:'spring',rollMod:{advDice:[],flat:0,holyShieldDie:0,valorDice:[],repeatBaseAdvantage:0,critThresholdBonus:0},nightMode:false,fullPhaseClock:false,darkAfflictions:{vampirism:{active:false,corruption:0,lastFedStamp:''},wolfism:{active:false,corruption:0,lastFedStamp:''}},customContent:{affixes:[],items:[],builderAffixes:[]},backstory:{origin:'',upbringing:'',hometown:'',faction:'',rival:'',connection:'',earlyCareer:'',earlyBackground:'',lifeEvent:'',notes:'',provinceMarkers:{}},travelScenes:{byHex:{},activeSceneId:'',seq:1}};
 let hexNotes={};
 
 const BACKSTORY_TABLES={
@@ -10621,6 +10635,11 @@ function getAugBonus(stat){if(!S||!Array.isArray(S.augmentations))return 0;var m
 // Returns { total, base:{total,exploded}, advRolls:[{die,roll}], breakdown, exploded }
 function rollWithAdvantage(baseDie, advDiceArr){
   var meta=arguments.length>2&&arguments[2]&&typeof arguments[2]==='object'?arguments[2]:null;
+  var pendingSameDieAdv=(meta&&meta.type==='action'&&typeof consumeQueuedRollModSameDieAdvantage==='function')
+    ? consumeQueuedRollModSameDieAdvantage()
+    : 0;
+  var advList=(advDiceArr||[]).slice();
+  for(var ai=0;ai<pendingSameDieAdv;ai++)advList.push(baseDie);
   var base=explodingRoll(baseDie,meta);
   var luckyProfile=getPersonalFlavorMechanicProfile((S&&S.flavor)||'');
   if(luckyProfile.luckyReroll&&meta&&meta.type==='action'&&Number(base.total||0)===1){
@@ -10628,7 +10647,7 @@ function rollWithAdvantage(baseDie, advDiceArr){
     reroll.rerolledLucky=true;
     base=reroll;
   }
-  var advRolls=(advDiceArr||[]).filter(function(d){return d>0;}).map(function(d){
+  var advRolls=advList.filter(function(d){return d>0;}).map(function(d){
     var advMeta=meta?Object.assign({},meta):{};
     if(!advMeta.label&&meta&&meta.label)advMeta.label=meta.label;
     return{die:d,roll:explodingRoll(d,advMeta)};
@@ -10650,6 +10669,7 @@ function rollWithAdvantage(baseDie, advDiceArr){
       parts.push('Ad'+ar.die+'='+(kept?'<em>'+ar.roll.total+'✓</em>':ar.roll.total));
     });
   }
+  if(pendingSameDieAdv>0)parts.push('Queued same-die advantage');
   if(base.rerolledLucky)parts.push('Lucky reroll');
   var breakdown=parts.length?' <span style="font-size:.7rem;color:var(--muted2);">('+parts.join(', ')+')</span>':'';
   var anyExploded=base.exploded||advRolls.some(function(r){return r.roll.exploded;});
@@ -10871,19 +10891,19 @@ function addRollModAdv(selId){
   var sel=document.getElementById(selId||'rollModDieSel-combat');
   var d=sel?parseInt(sel.value,10):0;
   if(!d)return;
-  if(!S.rollMod)S.rollMod={advDice:[],flat:0};
+  if(!S.rollMod)S.rollMod={advDice:[],flat:0,holyShieldDie:0,valorDice:[],repeatBaseAdvantage:0,critThresholdBonus:0};
   S.rollMod.advDice.push(d);
   updateRollModDisplay();
 }
 function setRollModFlat(inpId){
   var inp=document.getElementById(inpId||'rollModFlatInp-combat');
   var v=inp?parseInt(inp.value,10)||0:0;
-  if(!S.rollMod)S.rollMod={advDice:[],flat:0};
+  if(!S.rollMod)S.rollMod={advDice:[],flat:0,holyShieldDie:0,valorDice:[],repeatBaseAdvantage:0,critThresholdBonus:0};
   S.rollMod.flat=v;
   updateRollModDisplay();
 }
 function clearRollMod(){
-  S.rollMod={advDice:[],flat:0,holyShieldDie:0,valorDice:[]};
+  S.rollMod={advDice:[],flat:0,holyShieldDie:0,valorDice:[],repeatBaseAdvantage:0,critThresholdBonus:0};
   if(S.scopedRollMods&&Array.isArray(S.scopedRollMods.attackAdvantage))S.scopedRollMods.attackAdvantage=[];
   if(S.flavorState&&S.flavorState.ghoulHidden)delete S.flavorState.ghoulHidden;
   ['rollModFlatInp-combat','rollModFlatInp-char','rollModFlatInp-dice'].forEach(function(id){
@@ -10892,11 +10912,55 @@ function clearRollMod(){
   updateRollModDisplay();
 }
 function ensureRollModState(){
-  if(!S.rollMod||typeof S.rollMod!=='object')S.rollMod={advDice:[],flat:0,holyShieldDie:0,valorDice:[]};
+  if(!S.rollMod||typeof S.rollMod!=='object')S.rollMod={advDice:[],flat:0,holyShieldDie:0,valorDice:[],repeatBaseAdvantage:0,critThresholdBonus:0};
   if(!Array.isArray(S.rollMod.advDice))S.rollMod.advDice=[];
   if(!Array.isArray(S.rollMod.valorDice))S.rollMod.valorDice=[];
   if(!Number.isFinite(Number(S.rollMod.flat||0)))S.rollMod.flat=0;
   if(!Number.isFinite(Number(S.rollMod.holyShieldDie||0)))S.rollMod.holyShieldDie=0;
+  if(!Number.isFinite(Number(S.rollMod.repeatBaseAdvantage||0)))S.rollMod.repeatBaseAdvantage=0;
+  if(!Number.isFinite(Number(S.rollMod.critThresholdBonus||0)))S.rollMod.critThresholdBonus=0;
+}
+function queueRollModSameDieAdvantage(count){
+  ensureRollModState();
+  S.rollMod.repeatBaseAdvantage=Math.max(0,Number(S.rollMod.repeatBaseAdvantage||0))+Math.max(1,Number(count||1)||1);
+  if(typeof updateRollModDisplay==='function')updateRollModDisplay();
+}
+function consumeQueuedRollModSameDieAdvantage(){
+  ensureRollModState();
+  var pending=Math.max(0,Number(S.rollMod.repeatBaseAdvantage||0)||0);
+  if(pending<=0)return 0;
+  S.rollMod.repeatBaseAdvantage=Math.max(0,pending-1);
+  if(typeof updateRollModDisplay==='function')updateRollModDisplay();
+  return 1;
+}
+function queueRollModCriticalBonus(amount){
+  ensureRollModState();
+  S.rollMod.critThresholdBonus=Math.max(0,Number(S.rollMod.critThresholdBonus||0))+Math.max(1,Number(amount||1)||1);
+  if(typeof updateRollModDisplay==='function')updateRollModDisplay();
+}
+function getActionRollExplosionThreshold(die,meta){
+  var sides=Math.max(1,parseInt(die,10)||1);
+  var rollMeta=meta&&typeof meta==='object'?meta:{};
+  if(String(rollMeta.type||'')!=='action')return sides;
+  if(window.__queuedCriticalRollScope&&Number(window.__queuedCriticalRollScope.bonus||0)>0){
+    return Math.max(1,sides-Number(window.__queuedCriticalRollScope.bonus||0));
+  }
+  ensureRollModState();
+  var pending=Math.max(0,Number(S.rollMod.critThresholdBonus||0)||0);
+  if(pending<=0)return sides;
+  S.rollMod.critThresholdBonus=Math.max(0,pending-1);
+  var scope={bonus:pending};
+  window.__queuedCriticalRollScope=scope;
+  var clearScope=function(){
+    if(window.__queuedCriticalRollScope===scope){
+      window.__queuedCriticalRollScope=null;
+      if(typeof updateRollModDisplay==='function')updateRollModDisplay();
+    }
+  };
+  if(typeof queueMicrotask==='function')queueMicrotask(clearScope);
+  else setTimeout(clearScope,0);
+  if(typeof updateRollModDisplay==='function')updateRollModDisplay();
+  return Math.max(1,sides-pending);
 }
 function queueRollModValorDice(count, dieSize){
   ensureRollModState();
@@ -10920,13 +10984,15 @@ function consumeQueuedRollModValorDice(label){
 function updateRollModDisplay(){
   ensureRollModState();
   var scopedParts=(typeof getScopedRollModDisplayParts==='function')?getScopedRollModDisplayParts():[];
-  var none=!S.rollMod||(!S.rollMod.advDice.length&&!S.rollMod.flat&&!Number(S.rollMod.holyShieldDie||0)&&!S.rollMod.valorDice.length&&!scopedParts.length);
+  var none=!S.rollMod||(!S.rollMod.advDice.length&&!S.rollMod.flat&&!Number(S.rollMod.holyShieldDie||0)&&!S.rollMod.valorDice.length&&!Number(S.rollMod.repeatBaseAdvantage||0)&&!Number(S.rollMod.critThresholdBonus||0)&&!scopedParts.length);
   var parts=[];
   if(!none){
     if(S.rollMod.advDice.length)parts.push('Adv: '+S.rollMod.advDice.map(function(d){return 'Ad'+d;}).join('+'));
     if(S.rollMod.flat)parts.push((S.rollMod.flat>0?'+':'')+S.rollMod.flat+' flat');
     if(Number(S.rollMod.holyShieldDie||0)>0)parts.push('Holy Shield: +Spirit d'+Number(S.rollMod.holyShieldDie||0));
     if(S.rollMod.valorDice.length)parts.push('+V.D.: '+S.rollMod.valorDice.map(function(d){return 'd'+d;}).join('+'));
+    if(Number(S.rollMod.repeatBaseAdvantage||0)>0)parts.push('Next roll: Advantage');
+    if(Number(S.rollMod.critThresholdBonus||0)>0)parts.push('Next roll: crit on max-'+Number(S.rollMod.critThresholdBonus||0));
     if(scopedParts.length)parts=parts.concat(scopedParts);
   }
   var text=none?'None active':parts.join(' | ');
@@ -13720,6 +13786,10 @@ const ITEM_USE_CFG = {
   'Healing Salve':    {maxUses:1},
   'Wound Salve':      {maxUses:1},
   'Stimulant':        {maxUses:1},
+  'Ghostglass Dust':  {maxUses:1},
+  'Redline Serum':    {maxUses:1},
+  'Goldvein Spark':   {maxUses:1},
+  'Halo Rot':         {maxUses:1},
   'Depressant':       {maxUses:1},
   'Sage (Temple)':    {maxUses:1},
   'Trauma Serum':     {maxUses:1},
@@ -14439,6 +14509,42 @@ function useBackpackItem(index) {
     var stimRecovery = explodingRoll(4).total;
     if(typeof changeMentalStress==='function')changeMentalStress(-stimRecovery);else changeStress(-stimRecovery);
     showNotif('Stimulant: −'+stimRecovery+' Mental Stress','good');
+    return;
+  }
+  if(name === 'Ghostglass Dust'){
+    if(!spendUse()) return;
+    if(typeof queueRollModSameDieAdvantage==='function') queueRollModSameDieAdvantage(1);
+    showNotif('Ghostglass Dust: your next roll gains Advantage.','good');
+    return;
+  }
+  if(name === 'Redline Serum'){
+    if(!spendUse()) return;
+    if(typeof queueRollModValorDice==='function') queueRollModValorDice(1, typeof getValorDieSize==='function' ? getValorDieSize() : ((S&&S.stats&&S.stats.valor)||4));
+    showNotif('Redline Serum: +Valor Die queued to your next roll.','good');
+    return;
+  }
+  if(name === 'Goldvein Spark'){
+    if(!spendUse()) return;
+    if(typeof queueRollModCriticalBonus==='function') queueRollModCriticalBonus(1);
+    showNotif('Goldvein Spark: your next roll now crits on max-1.','good');
+    return;
+  }
+  if(name === 'Halo Rot'){
+    if(!spendUse()) return;
+    var positivePool=['empowered','focused','bolstered','protected'];
+    var negativePool=['shaken','weakened','vulnerable','distracted'];
+    var positive=pick(positivePool);
+    var negative=pick(negativePool);
+    if(S.conditions){
+      S.conditions[positive]=true;
+      S.conditions[negative]=true;
+    }
+    var haloStress=explodingRoll(typeof getValorDieSize==='function' ? getValorDieSize() : ((S&&S.stats&&S.stats.valor)||4), {type:'action',major:true,label:'Halo Rot'}).total;
+    if(typeof changeMentalStress==='function')changeMentalStress(haloStress);
+    else changeStress(haloStress);
+    if(typeof updateConditionButtons==='function')updateConditionButtons();
+    if(typeof updateAllStatDisplays==='function')updateAllStatDisplays();
+    showNotif('Halo Rot: +' + haloStress + ' Mental Stress, gained ' + positive + ', suffered ' + negative + '.', 'warn');
     return;
   }
   // Caltrops reduce enemy actions for the current round only
