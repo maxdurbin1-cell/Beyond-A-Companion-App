@@ -529,6 +529,10 @@ function switchTab(tabId, btn) {
     scheduleTabTranslation(tabId, 260);
   }
 
+  if (typeof window.requestMainNavOverflowSync === 'function') {
+    window.requestMainNavOverflowSync();
+  }
+
 }
 
 window.switchTab = switchTab;
@@ -540,9 +544,15 @@ if (document.readyState === 'loading') {
     renderContextQuickActions();
     runMainUiBootstrap();
     initWorldThatWasBootstrap();
+    if (typeof window.requestMainNavOverflowSync === 'function') {
+      window.requestMainNavOverflowSync();
+    }
     window.addEventListener('resize', function () {
       renderGlobalQuickAccess();
       renderContextQuickActions();
+      if (typeof window.requestMainNavOverflowSync === 'function') {
+        window.requestMainNavOverflowSync();
+      }
     });
   });
 } else {
@@ -551,9 +561,15 @@ if (document.readyState === 'loading') {
   renderContextQuickActions();
   runMainUiBootstrap();
   initWorldThatWasBootstrap();
+  if (typeof window.requestMainNavOverflowSync === 'function') {
+    window.requestMainNavOverflowSync();
+  }
   window.addEventListener('resize', function () {
     renderGlobalQuickAccess();
     renderContextQuickActions();
+    if (typeof window.requestMainNavOverflowSync === 'function') {
+      window.requestMainNavOverflowSync();
+    }
   });
 }
 
