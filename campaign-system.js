@@ -7105,13 +7105,24 @@
     var seaReady = !!(window.S && window.S.lastSea && Array.isArray(window.S.lastSea.map) && window.S.lastSea.map.length);
     var galaxyReady = !!(window.S && window.S.starSystem && Array.isArray(window.S.starSystem.hexes) && window.S.starSystem.hexes.length);
     var worldReady = !!(window.S && window.S.worldThatWas && Array.isArray(window.S.worldThatWas.hexes) && window.S.worldThatWas.hexes.length);
+    var planetReady = !!(window.S && window.S.starSystem && window.S.starSystem.planetExplorationByHex && Object.keys(window.S.starSystem.planetExplorationByHex).length);
+    var yessodReady = !!(window.S && window.S.starSystem && window.S.starSystem.yessod && Array.isArray(window.S.starSystem.yessod.cells) && window.S.starSystem.yessod.cells.length);
+    var combatState = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? shared.campaignCombat
+      : null;
+    var combatReady = !!(combatState && Array.isArray(combatState.participants) && combatState.participants.length);
+    var vttReady = !!(combatState && combatState.vttSession);
     return {
       inCampaign: !!(state.code && state.connected),
       provinceReady: provinceReady,
       seaReady: seaReady,
       galaxyReady: galaxyReady,
       worldReady: worldReady,
-      mapsReady: provinceReady || seaReady || galaxyReady || worldReady
+      planetReady: planetReady,
+      yessodReady: yessodReady,
+      combatReady: combatReady,
+      vttReady: vttReady,
+      mapsReady: provinceReady || seaReady || galaxyReady || worldReady || planetReady || yessodReady
     };
   }
 
@@ -7119,20 +7130,27 @@
     var steps = getOnboardingSteps();
     var roleText = state.role === "gm" ? "GM" : (state.role === "player" ? "Player" : "Not joined");
     var mapSummary = [
-      steps.provinceReady ? "Province" : "-",
-      steps.seaReady ? "Last Sea" : "-",
-      steps.galaxyReady ? "Galaxy" : "-",
-      steps.worldReady ? "World" : "-"
-    ].join(" / ");
+      { label: "Province", ready: steps.provinceReady },
+      { label: "Last Sea", ready: steps.seaReady },
+      { label: "Galaxy", ready: steps.galaxyReady },
+      { label: "World That Was", ready: steps.worldReady },
+      { label: "Planet", ready: steps.planetReady },
+      { label: "Yessod", ready: steps.yessodReady }
+    ].map(function (entry) {
+      return (entry.ready ? "✓ " : "· ") + entry.label;
+    }).join(" / ");
+    var combatSummary = (steps.combatReady ? "Combat seeded" : "Combat idle") + " / " + (steps.vttReady ? "Shared VTT open" : "VTT not opened");
     return ""
       + '<div style="font-size:.82rem;color:var(--muted2);line-height:1.6;">'
       + '<strong style="color:var(--text);">Campaign Quickstart</strong><br>'
       + 'Role: <strong style="color:var(--gold2);">' + escapeHtml(roleText) + '</strong><br>'
-      + 'Shared map state: <strong style="color:var(--teal);">' + escapeHtml(mapSummary) + '</strong>'
+      + 'Shared world state: <strong style="color:var(--teal);">' + escapeHtml(mapSummary) + '</strong><br>'
+      + 'Combat / VTT: <strong style="color:var(--text2);">' + escapeHtml(combatSummary) + '</strong>'
       + '</div>'
       + '<div style="margin-top:.55rem;display:grid;gap:.4rem;">'
       + '<div>' + (steps.inCampaign ? '✅' : '⬜') + ' Join/Create campaign and confirm your role.</div>'
-      + '<div>' + (steps.mapsReady ? '✅' : '⬜') + ' GM generates map(s). Shared state auto-syncs every ~1.2s.</div>'
+      + '<div>' + (steps.mapsReady ? '✅' : '⬜') + ' GM generates or unlocks the needed map layers. Shared state auto-syncs every ~1.2s.</div>'
+      + '<div>' + ((steps.combatReady || !steps.inCampaign) ? '✅' : '⬜') + ' Seed Combat first, then use Enter Combat Mode / Join Shared VTT when the table moves to battle.</div>'
       + '<div>' + ((state.syncHealth === "online") ? '✅' : '⬜') + ' Use Sync Shared World or Broadcast Authoritative State if players look out-of-sync.</div>'
       + '<div>' + ((state.role === "gm") ? '✅' : '⬜') + ' Players can use Request Resync to force a fresh authoritative snapshot.</div>'
       + '<div>' + ((state.syncConflictCount === 0) ? '✅' : '⬜') + ' Resolve guardrail conflicts if shown.</div>'
@@ -7143,6 +7161,9 @@
         ? '<button class="btn btn-xs" onclick="if(typeof generateMap===\'function\')generateMap();">Generate Province</button>'
           + '<button class="btn btn-xs" onclick="if(typeof generateLastSea===\'function\')generateLastSea();">Generate Sea</button>'
           + '<button class="btn btn-xs" onclick="if(typeof generateStarSystemMap===\'function\')generateStarSystemMap();">Generate Galaxy</button>'
+        : '')
+      + (steps.vttReady
+        ? '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem&&window.campaignSystem.joinSharedCombatMode&&window.campaignSystem.joinSharedCombatMode()">Open Shared VTT</button>'
         : '')
       + '</div>';
   }

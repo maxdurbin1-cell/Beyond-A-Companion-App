@@ -6,7 +6,7 @@ import process from "node:process";
 
 import { chromium } from "playwright";
 
-const BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
+const BASE_URL = process.env.SMOKE_URL || `http://127.0.0.1:${process.env.PORT || "3000"}`;
 const START_TIMEOUT_MS = 20000;
 
 function wait(ms) {
@@ -193,7 +193,7 @@ async function runAssertions(page) {
 }
 
 async function main() {
-  const child = startServer();
+  const child = process.env.SMOKE_URL ? null : startServer();
   const browser = await launchChromium();
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
   const pageErrors = [];
@@ -204,7 +204,7 @@ async function main() {
     await runAssertions(page);
   } finally {
     await browser.close();
-    if (child.exitCode === null) {
+    if (child && child.exitCode === null) {
       child.kill("SIGTERM");
       await Promise.race([
         new Promise((resolve) => child.once("exit", resolve)),

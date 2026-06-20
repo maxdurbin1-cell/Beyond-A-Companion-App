@@ -764,8 +764,8 @@ nav{padding:.28rem;gap:.16rem;border-radius:12px;}
       <div class="hero-main">
         <p class="hero-subheading" id="heroSubheading">Create a Wayfarer, follow a guided first mission, then run combat and province travel with persistent progress. Designed for solo play or GM-led groups with clear flow and low setup friction.</p>
         <div class="hero-cta-row">
-          <button class="btn btn-primary hero-primary-cta" id="heroPrimaryCta" onclick="generateCharacter()">Start New Wayfarer</button>
-          <button class="btn btn-teal" id="heroGuidedCta" onclick="startGuidedCharacterBuild();switchTab('howto',document.getElementById('tabnav-howto'))">First-Time Guided Path</button>
+          <button class="btn btn-primary hero-primary-cta" id="heroPrimaryCta" onclick="runHeroPrimaryAction()">Start New Wayfarer</button>
+          <button class="btn btn-teal" id="heroGuidedCta" onclick="runHeroGuidedAction()">First-Time Guided Path</button>
           <button class="btn" onclick="loadCharacter()">Load Existing Run</button>
         </div>
         <div class="hero-secondary-row">
@@ -782,10 +782,10 @@ nav{padding:.28rem;gap:.16rem;border-radius:12px;}
       </div>
       <aside class="hero-firstpath" aria-label="First-time path">
         <strong>First Session Path</strong>
-        <div class="hero-step"><span class="hero-step-num">1</span><span>Generate your Wayfarer and confirm core stats.</span></div>
-        <div class="hero-step"><span class="hero-step-num">2</span><span>Open onboarding and run your first mission objective.</span></div>
-        <div class="hero-step"><span class="hero-step-num">3</span><span>Enter Combat or Province to begin active play loops.</span></div>
-        <button class="btn btn-sm btn-teal" id="heroFirstPathCta" style="width:100%;" onclick="startGuidedCharacterBuild();switchTab('howto',document.getElementById('tabnav-howto'))">Begin First-Time Path</button>
+        <div class="hero-step"><span class="hero-step-num">1</span><span id="heroStepOneText">Generate your Wayfarer and confirm core stats.</span></div>
+        <div class="hero-step"><span class="hero-step-num">2</span><span id="heroStepTwoText">Open onboarding and run your first mission objective.</span></div>
+        <div class="hero-step"><span class="hero-step-num">3</span><span id="heroStepThreeText">Enter Combat or Province to begin active play loops.</span></div>
+        <button class="btn btn-sm btn-teal" id="heroFirstPathCta" style="width:100%;" onclick="runHeroFirstPathAction()">Begin First-Time Path</button>
       </aside>
     </div>
     <div class="hero-meta-grid">
@@ -16583,17 +16583,69 @@ const HOMEPAGE_COPY_VARIANTS={
     subheading:'Generate your Wayfarer, follow one guided objective, and move straight into combat and province play without setup drag. Built for fast solo sessions with clean carry-over progress.',
     primaryCta:'Start Solo Wayfarer',
     guidedCta:'Run The Guided Solo Start',
-    firstPathCta:'Begin Solo First Mission'
+    firstPathCta:'Begin Solo First Mission',
+    stepOne:'Generate your Wayfarer and confirm core stats.',
+    stepTwo:'Open onboarding and run your first mission objective.',
+    stepThree:'Enter Combat or Province to begin active play loops.'
   },
   B:{
     kicker:'Beyond The Light • GM Campaign Control',
     title:'Run Multi-Scene Campaigns With Fast GM Command',
-    subheading:'Stand up characters quickly, launch guided onboarding for players, and control combat plus province progression from one connected flow. Built for GM-led campaign continuity.',
-    primaryCta:'Launch GM Campaign Setup',
-    guidedCta:'Open Guided Player Onboarding',
-    firstPathCta:'Start Campaign Control Path'
+    subheading:'Switch into GM mode, open the campaign panel, and move the whole table through maps, combat, and VTT scenes from one shared flow. Built for GM-led campaign continuity.',
+    primaryCta:'Open Campaign Setup',
+    guidedCta:'Open GM Dashboard',
+    firstPathCta:'Open Session Quickstart',
+    stepOne:'Switch into GM mode so campaign and encounter controls are visible.',
+    stepTwo:'Open the Campaign panel to create or join the shared room.',
+    stepThree:'Launch onboarding, generate the needed map layers, then move the table into combat or VTT when ready.'
   }
 };
+function openHeroCampaignQuickstart(){
+  if(window.settingsSystem){
+    if(typeof window.settingsSystem.setGameMode==='function'){
+      window.settingsSystem.setGameMode('gm',{silent:true});
+    }
+    if(typeof window.settingsSystem.openSettings==='function'){
+      window.settingsSystem.openSettings();
+    }
+    if(typeof window.settingsSystem.setActiveTab==='function'){
+      window.settingsSystem.setActiveTab('campaign');
+    }
+  }
+  if(typeof showNotif==='function'){
+    showNotif('Campaign setup is in Settings > Campaign. Use Create (GM) or Join to seat the table.', 'info');
+  }
+}
+function runHeroPrimaryAction(){
+  if(getHomepageCopyVariant()==='B'){
+    openHeroCampaignQuickstart();
+    return;
+  }
+  generateCharacter();
+}
+function runHeroGuidedAction(){
+  if(getHomepageCopyVariant()==='B'){
+    if(window.settingsSystem&&typeof window.settingsSystem.setGameMode==='function'){
+      window.settingsSystem.setGameMode('gm',{silent:true});
+    }
+    if(typeof openGmDashboard==='function'){
+      openGmDashboard();
+      return;
+    }
+    openHeroCampaignQuickstart();
+    return;
+  }
+  startGuidedCharacterBuild();
+  switchTab('howto',document.getElementById('tabnav-howto'));
+}
+function runHeroFirstPathAction(){
+  if(getHomepageCopyVariant()==='B'){
+    openHeroCampaignQuickstart();
+    return;
+  }
+  startGuidedCharacterBuild();
+  switchTab('howto',document.getElementById('tabnav-howto'));
+}
 function getHomepageCopyVariant(){
   var urlVariant='';
   try{
@@ -16624,12 +16676,18 @@ function applyHomepageCopyVariant(variantKey){
   var primaryEl=document.getElementById('heroPrimaryCta');
   var guidedEl=document.getElementById('heroGuidedCta');
   var pathEl=document.getElementById('heroFirstPathCta');
+  var stepOneEl=document.getElementById('heroStepOneText');
+  var stepTwoEl=document.getElementById('heroStepTwoText');
+  var stepThreeEl=document.getElementById('heroStepThreeText');
   if(kickerEl)kickerEl.textContent=copy.kicker;
   if(titleEl)titleEl.textContent=copy.title;
   if(subEl)subEl.textContent=copy.subheading;
   if(primaryEl)primaryEl.textContent=copy.primaryCta;
   if(guidedEl)guidedEl.textContent=copy.guidedCta;
   if(pathEl)pathEl.textContent=copy.firstPathCta;
+  if(stepOneEl)stepOneEl.textContent=copy.stepOne||'';
+  if(stepTwoEl)stepTwoEl.textContent=copy.stepTwo||'';
+  if(stepThreeEl)stepThreeEl.textContent=copy.stepThree||'';
   try{localStorage.setItem('beyond-hero-copy-variant',key);}catch(_err){}
   return key;
 }
