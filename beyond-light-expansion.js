@@ -5571,6 +5571,8 @@
 
   function syncNavalStateToVttCombat() {
     if (!S || !S.combat || !S.combat.active) return;
+    if (!S.naval || !S.naval.combatActive) return;
+    if (S.naval.boardingSession && S.naval.boardingSession.active) return;
     S.combat.spacing = S.naval.zone || S.combat.spacing || "Close";
     S.combat.enemyDread = getNavalEnemyDreadDie();
     if (typeof updateCombatUI === "function") updateCombatUI();

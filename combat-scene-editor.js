@@ -2041,13 +2041,25 @@
   }
 
   function buildCampaignCombatSceneSyncPayload() {
+    var combatState = deepCloneJson(window.S && window.S.combat || {}) || {};
+    var defaultEnemyDread = Math.max(4, Number(combatState && combatState.enemyDread || 8));
+    var enemyRows = Array.isArray(window.S && window.S.enemies)
+      ? (deepCloneJson(window.S.enemies) || []).map(function (entry) {
+          if (!entry || typeof entry !== 'object') return entry;
+          var row = Object.assign({}, entry);
+          if (!Number.isFinite(Number(row.dread)) || Number(row.dread) <= 0) {
+            row.dread = defaultEnemyDread;
+          }
+          return row;
+        })
+      : [];
     return {
       syncMeta: {
         by: String(window.S && window.S.name || 'GM'),
         at: Date.now()
       },
-      combat: deepCloneJson(window.S && window.S.combat || {}) || {},
-      enemies: Array.isArray(window.S && window.S.enemies) ? (deepCloneJson(window.S.enemies) || []) : [],
+      combat: combatState,
+      enemies: enemyRows,
       naval: (window.S && window.S.naval && typeof window.S.naval === 'object') ? (deepCloneJson(window.S.naval) || null) : null,
       caravan: (window.S && window.S.caravan && typeof window.S.caravan === 'object') ? (deepCloneJson(window.S.caravan) || null) : null,
       combatMap: (window.S && window.S.combatMap && typeof window.S.combatMap === 'object') ? (deepCloneJson(window.S.combatMap) || null) : null,
@@ -2058,11 +2070,12 @@
     };
   }
 
-  function announceCampaignCombatModeOpen(reason) {
+  function syncCurrentCampaignCombatScene(reason, options) {
     var cs = getCampaignCombatSceneSession();
     if (!cs || String(cs.role || '') !== 'gm' || !cs.connected || !cs.code) return;
     if (!(window.S && window.S.combat && window.S.combat.active)) return;
     if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== 'function' || typeof window.campaignSystem.getSharedState !== 'function') return;
+    var opts = options && typeof options === 'object' ? options : {};
     var scene = buildCampaignCombatSceneSyncPayload();
     var sceneEditor = scene && scene.sceneEditor && typeof scene.sceneEditor === 'object' ? scene.sceneEditor : null;
     var activeSceneId = String(sceneEditor && sceneEditor.activeSceneId || 'campaign-shared-scene');
@@ -2076,21 +2089,39 @@
     } catch (_err) {
       shared = null;
     }
-    var combatState = shared && shared.campaignCombat && typeof shared.campaignCombat === 'object'
-      ? (deepCloneJson(shared.campaignCombat) || {})
+    var combatStateHost = shared && typeof shared === 'object'
+      ? { campaignCombat: deepCloneJson(shared.campaignCombat) || {} }
+      : { campaignCombat: {} };
+    if (window.campaignSystem && typeof window.campaignSystem.ensureCampaignCombatState === 'function') {
+      try {
+        window.campaignSystem.ensureCampaignCombatState(combatStateHost);
+      } catch (_err2) {}
+    }
+    var combatState = combatStateHost.campaignCombat && typeof combatStateHost.campaignCombat === 'object'
+      ? (deepCloneJson(combatStateHost.campaignCombat) || {})
       : {};
-    combatState.vttSession = {
-      enteredAt: Date.now(),
-      by: String(window.S && window.S.name || cs.playerName || 'GM'),
-      sceneName: String(activeScene && activeScene.name || 'Campaign Shared Scene'),
-      activeSceneId: activeSceneId
-    };
     var patch = {
-      combatScene: scene,
-      campaignCombat: combatState
+      combatScene: scene
     };
+    if (opts.includeCombatSession !== false) {
+      combatState.active = true;
+      combatState.vttSession = {
+        enteredAt: Date.now(),
+        by: String(window.S && window.S.name || cs.playerName || 'GM'),
+        sceneName: String(activeScene && activeScene.name || 'Campaign Shared Scene'),
+        activeSceneId: activeSceneId
+      };
+      if (shared && typeof shared === 'object') {
+        shared.campaignCombat = deepCloneJson(combatState) || combatState;
+      }
+      patch.campaignCombat = combatState;
+    }
     var out = window.campaignSystem.syncSharedPatch(patch, String(reason || 'campaign-combat-mode-open'));
     if (out && typeof out.catch === 'function') out.catch(function () {});
+  }
+
+  function announceCampaignCombatModeOpen(reason) {
+    syncCurrentCampaignCombatScene(reason, { includeCombatSession: true });
   }
 
   function queueCampaignCombatSceneSync(reason) {
@@ -2098,8 +2129,11 @@
     if (typeof window.campaignSystem.getState !== 'function') return;
     if (typeof window.campaignSystem.syncSharedPatch !== 'function') return;
     if (campaignSceneSyncTimer) clearTimeout(campaignSceneSyncTimer);
+    var syncGeneration = Math.max(0, Number(window.__campaignCombatSceneSyncGeneration || 0));
     campaignSceneSyncTimer = setTimeout(function () {
       campaignSceneSyncTimer = null;
+      if (syncGeneration !== Math.max(0, Number(window.__campaignCombatSceneSyncGeneration || 0))) return;
+      if (Number(window.__campaignCombatSceneAutoSyncSuppressUntil || 0) > Date.now()) return;
       var cs = null;
       try {
         cs = window.campaignSystem.getState();
@@ -2457,6 +2491,7 @@
 
   function defaultTokens() {
     var portrait = (window.S && window.S.identityForge && window.S.identityForge.media && window.S.identityForge.media.portrait) || '';
+    var defaultEnemyDread = Math.max(4, Number(window.S && window.S.combat && window.S.combat.enemyDread || 6));
     var name = (window.S && window.S.name) || 'Wayfarer';
     var defendDie = getWayfarerEffectiveDie('defend', 6);
     var hpFromDefend = Math.max(1, defendDie * 2);
@@ -14737,8 +14772,18 @@
           next.actionHistory = [];
         }
         if (Array.isArray(seed.tokens) && seed.tokens.length) {
+          var seedEnemyDread = Math.max(4, Number(window.S && window.S.combat && window.S.combat.enemyDread || 6));
           next.tokens = normalizeCampaignCombatSceneTokens(seed.tokens).map(function (token, idx) {
-            return Object.assign({ id: uid('seed-' + idx), faction: 'npc', hp: 8, maxHp: 8, status: [], q: idx, r: 0, size: 1, image: '' }, token || {});
+            var mergedToken = Object.assign({ id: uid('seed-' + idx), faction: 'npc', hp: 8, maxHp: 8, status: [], q: idx, r: 0, size: 1, image: '' }, token || {});
+            if (String(mergedToken.faction || '') === 'monster') {
+              if (!Number.isFinite(Number(mergedToken.dread)) || Number(mergedToken.dread) <= 0) {
+                mergedToken.dread = seedEnemyDread;
+              }
+              if (!Number.isFinite(Number(mergedToken.deathNumber)) || Number(mergedToken.deathNumber) <= 0) {
+                mergedToken.deathNumber = Math.max(1, Number(mergedToken.dread || seedEnemyDread || 6));
+              }
+            }
+            return mergedToken;
           });
           next.initiative = [];
         }
@@ -14879,6 +14924,35 @@
     seed.id = String(vttSession.activeSceneId || seed.id || 'campaign-shared-scene');
     seed.name = String(vttSession.sceneName || seed.name || 'Campaign Shared Scene');
     return seed;
+  }
+
+  function primeCampaignCombatVttSession(seed) {
+    var cs = getCampaignCombatSceneSession();
+    if (!cs || String(cs.role || '') !== 'gm' || !cs.code || !(window.S && window.S.combat && window.S.combat.active)) return null;
+    if (!window.campaignSystem || typeof window.campaignSystem.getSharedState !== 'function' || typeof window.campaignSystem.syncSharedPatch !== 'function') return null;
+    var shared = null;
+    try {
+      shared = window.campaignSystem.getSharedState() || null;
+    } catch (_err) {
+      shared = null;
+    }
+    if (!shared || typeof shared !== 'object') return null;
+    var combatState = shared.campaignCombat && typeof shared.campaignCombat === 'object'
+      ? (deepCloneJson(shared.campaignCombat) || {})
+      : null;
+    if (!combatState || !combatState.active) return null;
+    combatState.vttSession = {
+      enteredAt: Date.now(),
+      by: String(window.S && window.S.name || cs.playerName || 'GM'),
+      sceneName: String(seed && seed.name || 'Campaign Shared Scene'),
+      activeSceneId: String(seed && seed.id || 'campaign-shared-scene')
+    };
+    shared.campaignCombat = deepCloneJson(combatState) || combatState;
+    var patchOut = window.campaignSystem.syncSharedPatch({
+      campaignCombat: deepCloneJson(shared.campaignCombat) || shared.campaignCombat
+    }, 'campaign-combat-vtt-prime');
+    if (patchOut && typeof patchOut.catch === 'function') patchOut.catch(function () {});
+    return shared.campaignCombat.vttSession;
   }
 
   function resolveCombatModeEntrySeed() {
@@ -15149,6 +15223,7 @@
     var zoneLane = {};
     var playerName = String(window.S && window.S.name || 'Wayfarer').trim() || 'Wayfarer';
     var maxHpByRules = getWayfarerMaxHpByRules();
+    var defaultEnemyDread = Math.max(4, Number(window.S && window.S.combat && window.S.combat.enemyDread || 8));
     var portrait = (window.S && window.S.identityForge && window.S.identityForge.media && window.S.identityForge.media.portrait) || '';
 
     var tokens = units.map(function (unit, idx) {
@@ -15177,7 +15252,7 @@
       }
 
       var trackerEnemy = getEnemyTrackerByName(unit.name);
-      var dread = Math.max(4, Number((trackerEnemy && trackerEnemy.dread) || unit.dread || 6));
+      var dread = Math.max(4, Number((trackerEnemy && trackerEnemy.dread) || unit.dread || defaultEnemyDread || 6));
       var maxStress = Math.max(1, Number((trackerEnemy && trackerEnemy.maxStress) || (dread * 2)));
       var curStress = Math.max(0, Number((trackerEnemy && trackerEnemy.stress) || 0));
       return {
@@ -15221,6 +15296,7 @@
   window.openCombatSceneEditor = function (seed) {
     syncCombatScenesTabNavigation();
     openOverlay(prepareCampaignCombatSeed(seed || buildActiveSharedCampaignCombatSceneSeed() || buildSharedCampaignCombatSceneSeed() || null));
+    syncCurrentCampaignCombatScene('campaign-combat-mode-open-immediate', { includeCombatSession: true });
   };
   
   window.closeCombatSceneEditor = function () {
@@ -15236,6 +15312,7 @@
     if (seed === false) return;
     syncCombatScenesTabNavigation();
     openOverlay(prepareCampaignCombatSeed(seed || null));
+    syncCurrentCampaignCombatScene('campaign-combat-mode-open-immediate', { includeCombatSession: true });
   };
   window.applySharedCombatSceneEditorState = applySharedCombatSceneEditorState;
 
