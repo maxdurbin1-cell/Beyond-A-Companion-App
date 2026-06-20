@@ -2257,7 +2257,7 @@ function clearCharacter(options) {
   if (typeof updateInjuriesUI === 'function') updateInjuriesUI();
   if (typeof updateScarUI === 'function') updateScarUI();
   try { localStorage.removeItem(SOLO_SAVE_MEDIA_KEY); } catch (_err) {}
-  _lastSoloLoadedChecksum = computeCurrentSoloStateChecksum();
+  refreshSoloSaveBaselineFromCurrentState();
 }
 
 const SOLO_SAVE_KEY = "beyond-light-character";
@@ -2393,6 +2393,18 @@ function computeCurrentSoloStateChecksum() {
   const envelope = makeSoloSaveEnvelope(S || {});
   detachSoloMediaFromEnvelope(envelope);
   return String(envelope.checksum || "");
+}
+
+function refreshSoloSaveBaselineFromCurrentState() {
+  try {
+    _lastSoloLoadedChecksum = computeCurrentSoloStateChecksum();
+  } catch (_err) {
+    _lastSoloLoadedChecksum = null;
+  }
+  if (document && document.body) {
+    document.body.classList.remove("solo-unsaved");
+  }
+  if (typeof refreshHeaderHeartbeat === 'function') refreshHeaderHeartbeat();
 }
 
 function makeSoloSaveEnvelope(stateObj) {
@@ -2645,9 +2657,8 @@ function saveCharacter() {
     } catch (_checkpointErr) {
       checkpointOk = false;
     }
-    _lastSoloLoadedChecksum = envelope.checksum;
     _lastSoloAutoSaveAt = Date.now();
-    if (typeof refreshHeaderHeartbeat === 'function') refreshHeaderHeartbeat();
+    refreshSoloSaveBaselineFromCurrentState();
     showNotif(checkpointOk ? "Character saved + checkpointed" : "Character saved (checkpoint unavailable)", checkpointOk ? "good" : "warn");
   } catch (error) {
     showNotif("Could not save character", "warn");
@@ -2671,7 +2682,7 @@ function loadCharacter() {
       return;
     }
     applyLoadedCharacterState(envelope.data || {});
-    _lastSoloLoadedChecksum = envelope.checksum || computeSaveChecksum(JSON.stringify(envelope.data || {}));
+    refreshSoloSaveBaselineFromCurrentState();
     showNotif(source === "backup" ? "Primary save was invalid. Loaded backup." : "Character loaded", source === "backup" ? "warn" : "good");
   } catch (error) {
     showNotif("Saved character is invalid", "warn");
@@ -2687,7 +2698,7 @@ function loadCharacterCheckpoint() {
       return;
     }
     applyLoadedCharacterState(checkpoint.data || {});
-    _lastSoloLoadedChecksum = checkpoint.checksum || computeSaveChecksum(JSON.stringify(checkpoint.data || {}));
+    refreshSoloSaveBaselineFromCurrentState();
     showNotif("Checkpoint restored", "good");
   } catch (_err) {
     showNotif("Could not restore checkpoint", "warn");
@@ -2702,7 +2713,7 @@ function loadCharacterCheckpointSlot(slot) {
     return;
   }
   applyLoadedCharacterState(checkpoint.data || {});
-  _lastSoloLoadedChecksum = checkpoint.checksum || computeSaveChecksum(JSON.stringify(checkpoint.data || {}));
+  refreshSoloSaveBaselineFromCurrentState();
   showNotif("Checkpoint " + idx + " restored", "good");
 }
 
@@ -3575,7 +3586,7 @@ function confirmImportCharacterSave(rawInput) {
     writeSoloEnvelope(envelope);
     writeSoloCheckpoint(envelope);
     applyLoadedCharacterState(envelope.data || {});
-    _lastSoloLoadedChecksum = envelope.checksum || computeSaveChecksum(JSON.stringify(envelope.data || {}));
+    refreshSoloSaveBaselineFromCurrentState();
     if (typeof closeModal === "function") closeModal();
     showNotif("Save imported and loaded", "good");
   } catch (_err) {
@@ -3811,9 +3822,8 @@ setInterval(function () {
     const mediaPatch = detachSoloMediaFromEnvelope(envelope);
     try { writeSoloMediaEnvelope(mediaPatch); } catch (_mediaErr) {}
     writeSoloEnvelope(envelope);
-    _lastSoloLoadedChecksum = envelope.checksum;
     _lastSoloAutoSaveAt = now;
-    if (typeof refreshHeaderHeartbeat === 'function') refreshHeaderHeartbeat();
+    refreshSoloSaveBaselineFromCurrentState();
   } catch (_err) {
     // Silent autosave failures should not interrupt gameplay.
   }

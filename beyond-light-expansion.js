@@ -813,6 +813,32 @@
     };
   }
 
+  function normalizeSeaDungeonData(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (!data.name) data.name = 'Sea Ruins';
+    data.builder = String(data.builder || 'Unknown');
+    data.builtFor = String(data.builtFor || 'Unknown');
+    data.novelty = String(data.novelty || 'None');
+    data.construction = String(data.construction || 'Stone');
+    data.entrance = String(data.entrance || 'Collapsed arch');
+    data.rooms = Math.max(1, Number(data.rooms || 4));
+    return data;
+  }
+
+  function getSeaDungeonData(hex) {
+    if (!hex) return null;
+    var data = hex && hex.encounter && hex.encounter.type === "dungeon"
+      ? hex.encounter.data
+      : hex && hex.siteType === "dungeon"
+        ? hex.siteData
+        : null;
+    if (!data) return null;
+    data = normalizeSeaDungeonData(data);
+    if (hex.encounter && hex.encounter.type === "dungeon") hex.encounter.data = data;
+    else if (hex.siteType === "dungeon") hex.siteData = data;
+    return data;
+  }
+
   function makeColosseumData() {
     return {
       name: pick(["Leviathan Ring", "Salt Crown Arena", "Brasswake Colosseum", "Abyss Court Pit"]),
@@ -2360,10 +2386,10 @@
         ${
           hex.siteType && hex.siteData
             ? `<div class="sea-site">
-                 <div class="ss-title">${capitalize(hex.siteType)}</div>
-                 <div class="ss-text">${describeSeaSite(hex.siteType, hex.siteData)}</div>
+                 <div class="ss-title">${hex.siteType === 'dungeon' ? 'Sea Ruins' : capitalize(hex.siteType)}</div>
+                 <div class="ss-text">${describeSeaSite(hex.siteType, hex.siteType === 'dungeon' ? normalizeSeaDungeonData(hex.siteData) : hex.siteData)}</div>
                  ${hex.siteType === 'settlement' ? `<div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;"><button class="btn btn-xs btn-primary" onclick="generateTaskForSeaHex(${hex.col},${hex.row})">⚄ Generate Task</button><button class="btn btn-xs btn-teal" onclick="if(typeof openSeaSettlementHexcrawl==='function')openSeaSettlementHexcrawl('${String(hex.title||hex.islandName||'Sea Settlement').replace(/'/g,"\\'")}');else if(typeof openHoldingSettlementHexcrawl==='function')openHoldingSettlementHexcrawl();">◫ Enter Settlement</button></div>` : ''}
-                 ${hex.siteType === 'dungeon' ? `<div class="rest-boon" style="margin-top:.28rem;background:rgba(160,152,112,.06);border-color:rgba(160,152,112,.4);"><div class="rb-label" style="color:#a09870;">◫ Rest Boon</div><div style="font-size:.82rem;color:var(--text2);">Resting here grants <strong style="color:var(--green2);">Empowered</strong> (Body/Strike/Shoot ↑).</div><div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="if(typeof advanceDay==='function')advanceDay(1);if(typeof toggleCond==='function'&&S.conditions&&!S.conditions.empowered)toggleCond('empowered');showNotif('Sea ruin camp complete. +1 day, Empowered applied.','good');">Accept Boon Rest (Long Rest +1 Day)</button></div></div><div class="ruin-room" style="margin-top:.32rem;"><div class="ruin-room-title">Ruin Details</div><div style="font-size:.8rem;color:var(--muted3);line-height:1.55;"><strong>Built by:</strong> ${hex.siteData.builder || 'Unknown'}<br><strong>Purpose:</strong> ${hex.siteData.builtFor || 'Unknown'}<br><strong>Construction:</strong> ${hex.siteData.construction || 'Stone'}<br><strong>Entrance:</strong> ${hex.siteData.entrance || 'Collapsed arch'}<br><strong>Rooms:</strong> ${hex.siteData.rooms || 4} total<br><strong>Novelty:</strong> ${hex.siteData.novelty || 'None'}</div></div><div style="margin-top:.32rem;display:flex;gap:.24rem;flex-wrap:wrap;"><button class="btn btn-xs btn-primary" onclick="openSeaDungeon(${hex.col},${hex.row})">Enter Sea Ruins Hexcrawl</button></div>` : ''}
+                 ${hex.siteType === 'dungeon' ? `<div class="rest-boon" style="margin-top:.28rem;background:rgba(160,152,112,.06);border-color:rgba(160,152,112,.4);"><div class="rb-label" style="color:#a09870;">◫ Rest Boon</div><div style="font-size:.82rem;color:var(--text2);">Resting here grants <strong style="color:var(--green2);">Empowered</strong> (Body/Strike/Shoot ↑).</div><div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="if(typeof advanceDay==='function')advanceDay(1);if(typeof toggleCond==='function'&&S.conditions&&!S.conditions.empowered)toggleCond('empowered');showNotif('Sea ruin camp complete. +1 day, Empowered applied.','good');">Accept Boon Rest (Long Rest +1 Day)</button></div></div><div class="ruin-room" style="margin-top:.32rem;"><div class="ruin-room-title">Ruin Details</div><div style="font-size:.8rem;color:var(--muted3);line-height:1.55;"><strong>Built by:</strong> ${normalizeSeaDungeonData(hex.siteData).builder}<br><strong>Purpose:</strong> ${normalizeSeaDungeonData(hex.siteData).builtFor}<br><strong>Construction:</strong> ${normalizeSeaDungeonData(hex.siteData).construction}<br><strong>Entrance:</strong> ${normalizeSeaDungeonData(hex.siteData).entrance}<br><strong>Rooms:</strong> ${normalizeSeaDungeonData(hex.siteData).rooms} total<br><strong>Novelty:</strong> ${normalizeSeaDungeonData(hex.siteData).novelty}</div></div><div style="margin-top:.32rem;display:flex;gap:.24rem;flex-wrap:wrap;"><button class="btn btn-xs btn-primary" onclick="requestJoinSeaArea('dungeon',${hex.col},${hex.row})">Join Area: Sea Ruins</button></div>` : ''}
                  ${hex.siteType === 'colosseum' ? `<div class="rest-boon" style="margin-top:.28rem;background:rgba(224,128,70,.07);border-color:rgba(224,128,70,.45);"><div class="rb-label" style="color:#f0a870;">⚔ Sea Colosseum</div><div style="font-size:.82rem;color:var(--text2);line-height:1.55;">Host: <strong>${hex.siteData.host || 'Arena Herald'}</strong> · Bracket: <strong>${hex.siteData.style || 'champion gauntlet'}</strong><br>Crowd: ${hex.siteData.crowd || 'wagering crews'} · Win bouts for credits and renown.</div><div style="margin-top:.3rem;display:flex;gap:.24rem;flex-wrap:wrap;"><button class="btn btn-xs btn-primary" onclick="if(typeof window.openSeaColosseumArena==='function')window.openSeaColosseumArena('challenge','${hex.key}');">Challenge Mode</button><button class="btn btn-xs btn-warn" onclick="if(typeof window.openSeaColosseumArena==='function')window.openSeaColosseumArena('endless','${hex.key}');">Endless Mode</button></div></div>` : ''}
                </div>`
             : ""
@@ -2452,7 +2478,8 @@
     if (type === "colosseum") {
       return `${data.name}. ${data.style} hosted by ${data.host}. The stands are packed with ${data.crowd}.`;
     }
-    return `${data.name}. Built by ${data.builder}. Entrance: ${data.entrance}. ${data.novelty}.`;
+    var ruinData = normalizeSeaDungeonData(data);
+    return `${ruinData.name}. Built by ${ruinData.builder}. Purpose: ${ruinData.builtFor}. Entrance: ${ruinData.entrance}. ${ruinData.novelty}.`;
   }
 
   function sanitizeInlineText(value) {
@@ -4133,15 +4160,16 @@
         </div>
       `;
     }
+    var ruinData = normalizeSeaDungeonData(data);
     return `
-      <div class="sea-result-title">Land Encounter - Dungeon</div>
+      <div class="sea-result-title">Land Encounter - Sea Ruins</div>
       <div class="sea-site">
-        <div class="ss-title">${data.name}</div>
+        <div class="ss-title">${ruinData.name}</div>
         <div class="ruin-room" style="margin-top:.28rem;">
-          <div class="ruin-room-title">Dungeon Overview</div>
-          <div class="rb-text">Built by ${data.builder}. Purpose: ${data.builtFor}. Entrance: ${data.entrance}. Rooms: ${data.rooms}. Novelty: ${data.novelty}.</div>
+          <div class="ruin-room-title">Ruin Details</div>
+          <div class="rb-text">Built by ${ruinData.builder}. Purpose: ${ruinData.builtFor}. Construction: ${ruinData.construction}. Entrance: ${ruinData.entrance}. Rooms: ${ruinData.rooms}. Novelty: ${ruinData.novelty}.</div>
         </div>
-        <div style="margin-top:.35rem;"><button class="btn btn-xs btn-primary" onclick="requestJoinSeaArea('dungeon',${hex.col},${hex.row})">Open Ruin-Style Dungeon</button></div>
+        <div style="margin-top:.35rem;"><button class="btn btn-xs btn-primary" onclick="requestJoinSeaArea('dungeon',${hex.col},${hex.row})">Join Area: Sea Ruins</button></div>
       </div>
     `;
   }
@@ -4293,6 +4321,7 @@
   }
 
   function buildDungeonModal(data) {
+    data = normalizeSeaDungeonData(data);
     data.hexcrawl = data.hexcrawl || null;
     if (!data.hexcrawl || !Array.isArray(data.hexcrawl.nodes) || !data.hexcrawl.nodes.length) {
       const total = Math.max(3, Number(data.rooms || 3));
@@ -4512,7 +4541,7 @@
   }
 
   function requestJoinSeaArea(areaType, col, row) {
-    var label = (String(areaType || '').toLowerCase() === 'dungeon') ? 'Sea Dungeon' : 'Sea Area';
+    var label = (String(areaType || '').toLowerCase() === 'dungeon') ? 'Sea Ruins' : 'Sea Area';
     openSeaAreaJoinPrompt(label, function () {
       if (String(areaType || '').toLowerCase() === 'dungeon') openSeaDungeon(col, row);
     });
@@ -4521,7 +4550,7 @@
 
   function openSeaDungeon(col, row) {
     const hex = getSeaCell(col, row);
-    const data = hex && hex.encounter && hex.encounter.type === "dungeon" ? hex.encounter.data : hex && hex.siteType === "dungeon" ? hex.siteData : null;
+    const data = getSeaDungeonData(hex);
     if (!data) {
       return;
     }

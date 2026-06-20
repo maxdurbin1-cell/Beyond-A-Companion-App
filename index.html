@@ -34,17 +34,17 @@ header{background:linear-gradient(180deg,rgba(4,5,8,.98) 0%,rgba(10,12,24,.95) 5
 .logo{font-family:'Cinzel Decorative',serif;font-size:1.12rem;font-weight:700;color:var(--gold);letter-spacing:.12em;white-space:nowrap;text-shadow:0 0 30px rgba(201,162,39,.4);flex-shrink:0;line-height:1.1;display:flex;flex-direction:column;gap:.15rem;}
 .logo::after{content:'Digital Companion';font-family:'Rajdhani',sans-serif;font-size:.62rem;letter-spacing:.26em;color:var(--muted2);text-transform:uppercase;}
 .logo span{color:var(--teal);}
-#mainNav{grid-column:1 / -1;display:flex;gap:.32rem;flex-wrap:wrap;align-items:center;padding:.46rem .5rem;background:linear-gradient(180deg,rgba(255,255,255,.035) 0%,rgba(255,255,255,.015) 100%);border:1px solid var(--border2);border-radius:18px;box-shadow:0 0 0 1px rgba(255,255,255,.02) inset;}
-#mainNavTablist{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.38rem;align-items:stretch;flex:1 1 920px;min-width:0;}
-#mainNavTools{display:flex;gap:.32rem;align-items:center;flex-wrap:nowrap;white-space:nowrap;flex:0 0 auto;order:99;}
+#mainNav{grid-column:1 / -1;display:flex;gap:.38rem;flex-wrap:nowrap;align-items:center;justify-content:space-between;min-width:0;padding:.44rem .5rem;background:linear-gradient(180deg,rgba(255,255,255,.035) 0%,rgba(255,255,255,.015) 100%);border:1px solid var(--border2);border-radius:18px;box-shadow:0 0 0 1px rgba(255,255,255,.02) inset;}
+#mainNavTablist{display:flex;gap:.38rem;align-items:center;flex:1 1 920px;min-width:0;overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch;padding-bottom:.04rem;}
+#mainNavTools{display:flex;gap:.32rem;align-items:center;flex-wrap:nowrap;white-space:nowrap;flex:0 0 auto;order:99;padding-left:.32rem;border-left:1px solid rgba(255,255,255,.08);}
 #mainNavTools .gm-dashboard-btn{order:1;}
 #mainNavTools .solo-reference-btn{order:2;}
 #mainNavTools .settings-tab-btn{order:3;}
-.main-nav-group{display:flex;flex-direction:column;gap:.3rem;min-width:0;padding:.42rem .48rem .48rem;border:1px solid rgba(72,79,120,.34);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03) 0%,rgba(255,255,255,.015) 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.02);}
-.main-nav-group[data-nav-group="gm"]{border-color:rgba(128,96,192,.28);}
-.main-nav-group-label{font-family:'Cinzel',serif;font-size:.56rem;letter-spacing:.18em;color:var(--muted2);text-transform:uppercase;line-height:1.2;}
-.main-nav-group[data-nav-group="gm"] .main-nav-group-label{color:#b7a6e6;}
-.main-nav-group-items{display:flex;gap:.28rem;flex-wrap:wrap;align-items:center;min-width:0;}
+.main-nav-group{display:flex;align-items:center;gap:.28rem;min-width:0;padding:0;border:0;background:none;box-shadow:none;}
+.main-nav-group[data-nav-group="gm"]{border-color:transparent;}
+.main-nav-group-label{display:none;}
+.main-nav-group[data-nav-group="gm"] .main-nav-group-label{color:inherit;}
+.main-nav-group-items{display:flex;gap:.28rem;flex-wrap:nowrap;align-items:center;min-width:0;}
 .main-nav-group-items .tab-btn{flex:0 0 auto;}
 #main-content :is([id],button,input,select,textarea,a[href]){scroll-margin-top:var(--sticky-focus-offset,10.5rem);}
 .tab-btn{background:rgba(255,255,255,.01);border:1px solid transparent;color:var(--text2);font-family:'Cinzel',serif;font-size:.80rem;letter-spacing:.10em;padding:.5rem .94rem;cursor:pointer;text-transform:uppercase;transition:all .15s;white-space:nowrap;min-height:2.4rem;border-radius:999px;font-weight:600;}
@@ -628,7 +628,7 @@ body.modal-open #quickPanel{z-index:20040;}
   .qp-close{padding:.24rem .42rem;}
   #qpContent{padding:.52rem;}
 }
-@media(max-width:980px){header{grid-template-columns:1fr auto;align-items:start;}.logo{grid-column:1 / 2;}.ctx-bar{grid-column:1 / -1;}.header-credits{grid-column:2 / 3;align-self:start;}.tab-btn{font-size:.68rem;padding:.4rem .72rem;}#mainNavTablist{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:980px){header{grid-template-columns:1fr auto;align-items:start;}.logo{grid-column:1 / 2;}.ctx-bar{grid-column:1 / -1;}.header-credits{grid-column:2 / 3;align-self:start;}.tab-btn{font-size:.68rem;padding:.4rem .72rem;}#mainNav{gap:.32rem;}#mainNavTablist{gap:.32rem;}}
 @media(max-width:680px){
 header{grid-template-columns:1fr;padding:.58rem .62rem .72rem;gap:.5rem;}
 .logo{font-size:.98rem;letter-spacing:.08em;}
@@ -636,12 +636,12 @@ header{grid-template-columns:1fr;padding:.58rem .62rem .72rem;gap:.5rem;}
 .header-credits{grid-column:1 / -1;justify-self:stretch;margin-left:0;min-width:0;}
 .ctx-bar{padding:.26rem .3rem;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;}
 .ctx-btn{flex:0 0 auto;font-size:.58rem;padding:.24rem .5rem;}
-#mainNav{padding:.34rem;gap:.3rem;display:grid;grid-template-columns:1fr;}
-#mainNavTablist{grid-template-columns:1fr;flex:none;width:100%;}
-.main-nav-group{padding:.32rem .34rem .36rem;}
-.main-nav-group-label{font-size:.52rem;letter-spacing:.14em;}
-.main-nav-group-items{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;padding-bottom:.06rem;}
-#mainNavTools{width:100%;justify-content:flex-start;flex-wrap:wrap;white-space:normal;}
+#mainNav{padding:.34rem;gap:.28rem;display:flex;flex-wrap:wrap;}
+#mainNavTablist{display:flex;flex:none;width:100%;overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
+.main-nav-group{gap:.24rem;}
+.main-nav-group-label{display:none;}
+.main-nav-group-items{flex-wrap:nowrap;overflow:visible;padding-bottom:.06rem;}
+#mainNavTools{width:100%;justify-content:flex-start;flex-wrap:wrap;white-space:normal;padding-left:0;border-left:0;border-top:1px solid rgba(255,255,255,.08);padding-top:.28rem;}
 .tab-btn{flex:0 0 auto;font-size:.62rem;letter-spacing:.08em;padding:.34rem .6rem;min-height:2rem;}
 #main-content{padding:.78rem .55rem 1.7rem;}
 }
@@ -655,7 +655,7 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
 .ctx-bar{padding:.2rem .22rem;gap:.2rem;}
 .ctx-btn{font-size:.54rem;padding:.2rem .42rem;min-height:1.78rem;letter-spacing:.06em;}
 #mainNav{padding:.28rem;gap:.22rem;border-radius:12px;}
-.main-nav-group{padding:.28rem .3rem .32rem;}
+.main-nav-group{gap:.2rem;}
 .tab-btn{font-size:.58rem;padding:.28rem .48rem;min-height:1.84rem;letter-spacing:.06em;}
 #main-content{padding:.66rem .44rem 1.45rem;}
 #quickPanelToggle{right:.34rem;bottom:.52rem;width:6.5rem;padding:.38rem .46rem;font-size:.55rem;letter-spacing:.08em;min-height:1.95rem;}
@@ -2398,7 +2398,7 @@ const PERSONAL_FLAVORS=(function(){
   var out=PERSONAL_FLAVORS_BASE.concat(PERSONAL_FLAVORS_EXTRAS).map(normalizePersonalFlavorWording);
   return out;
 })();
-const MUTATIONS=['Change your skin and hair color at will','Superhuman reflexes — Step up Advantage to Body Saves','Thick fur — you can never feel cold','Crocodile face — Bite attack (Ad4 Strike)','Secret Pocket — hide 1 apple-sized thing inside your body','Rippling Muscles — +3 to Body and Strike Checks','Your voice rises three octaves unexpectedly','Tusks, like a boar','Churning Guts — can eat rotten food as full rations','Plastic bone structure — adjust shape and size of bones','Large Ears, doubled in size — features become animalistic','You grow 1d6 new limbs from your body','You smell terrible — most creatures won\'t consider you edible','Dead nerves — completely immune to physical pain','Lizard tail','Chameleon Skin — shifts to vibrant colors','Your eyes bulge forth on stalks — (Ad4) to Lead and Mind checks','Sensitive skin — rash if you touch iron','Thick scales — +2 to Defend vs physical attacks','Your bones glow faintly through your skin in darkness'];
+const MUTATIONS=['Change your skin and hair color at will','Superhuman reflexes — Step up Advantage to Body, Strike, and Shoot rolls','Thick fur — you can never feel cold','Crocodile face — Bite attack (Ad4 Strike)','Secret Pocket — hide 1 apple-sized thing inside your body','Rippling Muscles — +3 to Body and Strike Checks','Your voice rises three octaves unexpectedly','Tusks, like a boar','Churning Guts — can eat rotten food as full rations','Plastic bone structure — adjust shape and size of bones','Large Ears, doubled in size — features become animalistic','You grow 1d6 new limbs from your body','You smell terrible — most creatures won\'t consider you edible','Dead nerves — completely immune to physical pain','Lizard tail','Chameleon Skin — shifts to vibrant colors','Your eyes bulge forth on stalks — (Ad4) to Lead and Mind checks','Sensitive skin — rash if you touch iron','Thick scales — +2 to Defend vs physical attacks','Your bones glow faintly through your skin in darkness'];
 const RANDOM_ITEMS=['Staff made of fused pistols','Lavender plant that cannot die','Mug that turns any liquid to water','Boots that leave no footprints','A cloak that repels all dust','A clockwork songbird','Teacup that chills its contents','Multicolored shifting Cloak','A book that writes down your dreams','A size-changing Scarf','Goggles that reveal undead','A completely weightless rock',"Ram's horn","Rat brain preserved in a crystal case",'Book proclaiming a coming revolution','Pink bottle that smells wonderful','Thermos perpetually full of soup','A mechanical hand','A kite and a copper key','A bone flute','Book: Tidecaller Log','Book: Neon Testament','Book: Hollow Crown Record'];
 const LORE_BOOK_POOL=[
   {item:'Book: Tidecaller Log',genre:'Sea Chronicle',lore:'Captain Ilessa mapped an invisible current that only appears under moonlight. Her crew survived by following constellations reflected in black water.',reward:'pathTokens'},
@@ -10784,7 +10784,7 @@ function getMutationBonus(stat){
   var m=(S.mutation||'').toLowerCase();
   var flat=0,advDice=[];
   if(statKey==='defend'){if(m.indexOf('thick scales')>=0)flat+=2;}
-  if(statKey==='body'||statKey==='power'||statKey==='strike'){
+  if(statKey==='body'||statKey==='power'||statKey==='strike'||statKey==='shoot'){
     if(m.indexOf('rippling muscles')>=0)flat+=3;
     if(m.indexOf('superhuman reflexes')>=0)advDice.push(stepUp(S.stats.body||4));
   }
