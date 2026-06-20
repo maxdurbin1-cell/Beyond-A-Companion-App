@@ -8364,8 +8364,7 @@ function ensureNewSunTab() {
     btn.setAttribute('data-tab', 'newsun');
     btn.setAttribute('onclick', "switchTab('newsun',this)");
     btn.textContent = 'Solo Challenge';
-    var factionsBtn = document.getElementById('tabnav-factions');
-    nav.insertBefore(btn, factionsBtn || document.getElementById('tabnav-storyline'));
+    nav.appendChild(btn);
   }
 
   if (!document.getElementById('tab-newsun')) {
@@ -18106,7 +18105,8 @@ function createPlanetTask(options) {
     cell.contractHostMarker = cell.marker === 'wayfarer' ? 'wayfarer' : (cell.contractHostMarker || 'none');
     cell.marker = 'wayfarer_task';
     cell.feature = cell.feature || 'Wayfarer contract site';
-  } else {
+  } else if (!cell.tradeRoute && (!cell.marker || cell.marker === 'none')) {
+    cell.taskHostMarker = cell.marker || 'none';
     cell.marker = 'task';
   }
   state.selectedCellId = cell.id;
@@ -18124,6 +18124,10 @@ function resolvePlanetTask(taskId, success, failedBy) {
   task.resolved = true;
   const cell = state.cells.find((c) => c.id === task.cellId);
   if (cell) cell.note = success ? `Task completed: ${task.title}` : `Task failed: ${task.title}`;
+  if (cell && cell.marker === 'task') {
+    cell.marker = cell.taskHostMarker || 'none';
+    cell.taskHostMarker = '';
+  }
   if (cell && cell.marker === 'wayfarer_task') {
     cell.marker = cell.contractHostMarker === 'wayfarer' ? 'wayfarer' : 'none';
     cell.contractHostMarker = '';
@@ -24123,14 +24127,8 @@ document.addEventListener('DOMContentLoaded', function() {
     nav.appendChild(yessodBtn);
   }
 
-  if (nav) {
-    var orderedTabs = ['galaxy', 'worldthatwas', 'planet', 'naval', 'exocrafts', 'yessod'];
-    orderedTabs.forEach(function(tabId) {
-      var tabBtn = document.getElementById('tabnav-' + tabId) || document.querySelector('#mainNavTablist .tab-btn[data-tab="' + tabId + '"]');
-      if (!tabBtn) return;
-      if (tabBtn.parentNode !== nav) nav.appendChild(tabBtn);
-      nav.appendChild(tabBtn);
-    });
+  if (typeof window.syncMainNavGroups === 'function') {
+    window.syncMainNavGroups();
   }
 
   dedupeNodes('#mainNavTablist .tab-btn[data-tab]', function(node) {

@@ -1102,6 +1102,11 @@ function changeTrauma(delta) {
   updateTrauma();
 }
 
+// Older content flows still call addTrauma directly.
+function addTrauma(delta) {
+  changeTrauma(delta);
+}
+
 function updateTMWPool() {
   const value = S.tmw || 0;
   const pool = document.getElementById("tmwPoolDisplay");

@@ -35,11 +35,17 @@ header{background:linear-gradient(180deg,rgba(4,5,8,.98) 0%,rgba(10,12,24,.95) 5
 .logo::after{content:'Digital Companion';font-family:'Rajdhani',sans-serif;font-size:.62rem;letter-spacing:.26em;color:var(--muted2);text-transform:uppercase;}
 .logo span{color:var(--teal);}
 #mainNav{grid-column:1 / -1;display:flex;gap:.32rem;flex-wrap:wrap;align-items:center;padding:.46rem .5rem;background:linear-gradient(180deg,rgba(255,255,255,.035) 0%,rgba(255,255,255,.015) 100%);border:1px solid var(--border2);border-radius:18px;box-shadow:0 0 0 1px rgba(255,255,255,.02) inset;}
-#mainNavTablist{display:flex;gap:.32rem;flex-wrap:wrap;align-items:center;flex:1 1 920px;min-width:0;}
+#mainNavTablist{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.38rem;align-items:stretch;flex:1 1 920px;min-width:0;}
 #mainNavTools{display:flex;gap:.32rem;align-items:center;flex-wrap:nowrap;white-space:nowrap;flex:0 0 auto;order:99;}
 #mainNavTools .gm-dashboard-btn{order:1;}
 #mainNavTools .solo-reference-btn{order:2;}
 #mainNavTools .settings-tab-btn{order:3;}
+.main-nav-group{display:flex;flex-direction:column;gap:.3rem;min-width:0;padding:.42rem .48rem .48rem;border:1px solid rgba(72,79,120,.34);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03) 0%,rgba(255,255,255,.015) 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.02);}
+.main-nav-group[data-nav-group="gm"]{border-color:rgba(128,96,192,.28);}
+.main-nav-group-label{font-family:'Cinzel',serif;font-size:.56rem;letter-spacing:.18em;color:var(--muted2);text-transform:uppercase;line-height:1.2;}
+.main-nav-group[data-nav-group="gm"] .main-nav-group-label{color:#b7a6e6;}
+.main-nav-group-items{display:flex;gap:.28rem;flex-wrap:wrap;align-items:center;min-width:0;}
+.main-nav-group-items .tab-btn{flex:0 0 auto;}
 #main-content :is([id],button,input,select,textarea,a[href]){scroll-margin-top:var(--sticky-focus-offset,10.5rem);}
 .tab-btn{background:rgba(255,255,255,.01);border:1px solid transparent;color:var(--text2);font-family:'Cinzel',serif;font-size:.80rem;letter-spacing:.10em;padding:.5rem .94rem;cursor:pointer;text-transform:uppercase;transition:all .15s;white-space:nowrap;min-height:2.4rem;border-radius:999px;font-weight:600;}
 .tab-btn:hover{color:var(--gold);border-color:rgba(201,162,39,.26);background:rgba(201,162,39,.05);transform:translateY(-1px);}
@@ -622,7 +628,7 @@ body.modal-open #quickPanel{z-index:20040;}
   .qp-close{padding:.24rem .42rem;}
   #qpContent{padding:.52rem;}
 }
-@media(max-width:980px){header{grid-template-columns:1fr auto;align-items:start;}.logo{grid-column:1 / 2;}.ctx-bar{grid-column:1 / -1;}.header-credits{grid-column:2 / 3;align-self:start;}.tab-btn{font-size:.68rem;padding:.4rem .72rem;}}
+@media(max-width:980px){header{grid-template-columns:1fr auto;align-items:start;}.logo{grid-column:1 / 2;}.ctx-bar{grid-column:1 / -1;}.header-credits{grid-column:2 / 3;align-self:start;}.tab-btn{font-size:.68rem;padding:.4rem .72rem;}#mainNavTablist{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:680px){
 header{grid-template-columns:1fr;padding:.58rem .62rem .72rem;gap:.5rem;}
 .logo{font-size:.98rem;letter-spacing:.08em;}
@@ -630,7 +636,12 @@ header{grid-template-columns:1fr;padding:.58rem .62rem .72rem;gap:.5rem;}
 .header-credits{grid-column:1 / -1;justify-self:stretch;margin-left:0;min-width:0;}
 .ctx-bar{padding:.26rem .3rem;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;}
 .ctx-btn{flex:0 0 auto;font-size:.58rem;padding:.24rem .5rem;}
-nav{padding:.34rem;gap:.2rem;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;}
+#mainNav{padding:.34rem;gap:.3rem;display:grid;grid-template-columns:1fr;}
+#mainNavTablist{grid-template-columns:1fr;flex:none;width:100%;}
+.main-nav-group{padding:.32rem .34rem .36rem;}
+.main-nav-group-label{font-size:.52rem;letter-spacing:.14em;}
+.main-nav-group-items{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;padding-bottom:.06rem;}
+#mainNavTools{width:100%;justify-content:flex-start;flex-wrap:wrap;white-space:normal;}
 .tab-btn{flex:0 0 auto;font-size:.62rem;letter-spacing:.08em;padding:.34rem .6rem;min-height:2rem;}
 #main-content{padding:.78rem .55rem 1.7rem;}
 }
@@ -643,7 +654,8 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
 .header-credits .amt{font-size:.9rem;}
 .ctx-bar{padding:.2rem .22rem;gap:.2rem;}
 .ctx-btn{font-size:.54rem;padding:.2rem .42rem;min-height:1.78rem;letter-spacing:.06em;}
-nav{padding:.28rem;gap:.16rem;border-radius:12px;}
+#mainNav{padding:.28rem;gap:.22rem;border-radius:12px;}
+.main-nav-group{padding:.28rem .3rem .32rem;}
 .tab-btn{font-size:.58rem;padding:.28rem .48rem;min-height:1.84rem;letter-spacing:.06em;}
 #main-content{padding:.66rem .44rem 1.45rem;}
 #quickPanelToggle{right:.34rem;bottom:.52rem;width:6.5rem;padding:.38rem .46rem;font-size:.55rem;letter-spacing:.08em;min-height:1.95rem;}
@@ -769,9 +781,9 @@ nav{padding:.28rem;gap:.16rem;border-radius:12px;}
           <button class="btn" onclick="loadCharacter()">Load Existing Run</button>
         </div>
         <div class="hero-secondary-row">
-          <button class="btn btn-sm" onclick="switchTab('missions',document.getElementById('tabnav-missions'))">Continue: Mission Board</button>
-          <button class="btn btn-sm" onclick="switchTab('map',document.getElementById('tabnav-map'))">Continue: Province Map</button>
-          <button class="btn btn-sm" onclick="switchTab('combat',document.getElementById('tabnav-combat'))">Continue: Combat</button>
+          <button class="btn btn-sm" id="heroContinuePrimary" onclick="runHeroContinueAction(0)">Continue: Mission Board</button>
+          <button class="btn btn-sm" id="heroContinueSecondary" onclick="runHeroContinueAction(1)">Continue: Province Map</button>
+          <button class="btn btn-sm" id="heroContinueTertiary" onclick="runHeroContinueAction(2)">Continue: Combat</button>
         </div>
         <div class="hero-proof-row" aria-label="Core value points">
           <span class="hero-proof-pill">Persistent Campaign State</span>
@@ -16486,31 +16498,76 @@ window.resolveProvinceEdgeBarrierCheck=function(fromKey,toKey){
 
 function setAge(age,btn){S.currentAge=age;document.querySelectorAll('.age-btn').forEach(b=>b.classList.remove('on'));if(btn)btn.classList.add('on');else{var autoBtn=document.getElementById('age-'+age);if(autoBtn)autoBtn.classList.add('on');}}
 function setSeason(season,btn){S.currentSeason=season;document.querySelectorAll('.season-btn').forEach(b=>b.classList.remove('on'));if(btn)btn.classList.add('on');else{var autoBtn=document.getElementById('season-'+season);if(autoBtn)autoBtn.classList.add('on');}}
-function enforceSpaceTabOrder(){
-  var tablist=document.getElementById('mainNavTablist')||document.getElementById('mainNav');
-  if(!tablist)return;
-
-  // Space context order: Oracle, Missions, Galaxy, World That Was, Planet Exploration,
-  // Ship, Exocrafts, (optional Yessod), Merchant.
-  var orderedTabs=['oracle','missions','galaxy','worldthatwas','planet','naval','exocrafts','yessod','shop'];
-  orderedTabs.forEach(function(tabId){
-    var btn=document.getElementById('tabnav-'+tabId)||tablist.querySelector('.tab-btn[data-tab="'+tabId+'"]');
-    if(btn&&btn.parentNode===tablist)tablist.appendChild(btn);
+const MAIN_NAV_GROUPS=[
+  {id:'wayfarer',label:'Wayfarer',tabs:['character','backstory','dice']},
+  {id:'table',label:'Table',tabs:['combat','scenes','missions','storyline','newsun','factions','trophies','endgame']},
+  {id:'worlds',label:'Worlds',tabs:['map','lastsea','galaxy','worldthatwas','planet','yessod','naval','gambling','caravan','holding']},
+  {id:'reference',label:'Reference',tabs:['codex','rules','oracle','theos','shop','howto']},
+  {id:'gm',label:'GM Tools',tabs:['gmworldbuilder']}
+];
+function getMainNavTabGroupId(tabId){
+  var key=String(tabId||'').toLowerCase();
+  for(var i=0;i<MAIN_NAV_GROUPS.length;i++){
+    if(MAIN_NAV_GROUPS[i].tabs.indexOf(key)>=0)return MAIN_NAV_GROUPS[i].id;
+  }
+  return 'reference';
+}
+function ensureMainNavGroups(){
+  var tablist=document.getElementById('mainNavTablist');
+  if(!tablist)return null;
+  MAIN_NAV_GROUPS.forEach(function(group){
+    var groupEl=tablist.querySelector('.main-nav-group[data-nav-group="'+group.id+'"]');
+    if(!groupEl){
+      groupEl=document.createElement('div');
+      groupEl.className='main-nav-group';
+      groupEl.setAttribute('data-nav-group',group.id);
+      var labelEl=document.createElement('div');
+      labelEl.className='main-nav-group-label';
+      labelEl.textContent=group.label;
+      var itemsEl=document.createElement('div');
+      itemsEl.className='main-nav-group-items';
+      itemsEl.setAttribute('data-nav-group-items',group.id);
+      groupEl.appendChild(labelEl);
+      groupEl.appendChild(itemsEl);
+      tablist.appendChild(groupEl);
+    }
   });
-
+  Array.from(tablist.children).forEach(function(child){
+    if(!child||!child.matches||!child.matches('.tab-btn[data-tab]'))return;
+    var groupId=getMainNavTabGroupId(child.getAttribute('data-tab')||'');
+    var target=tablist.querySelector('.main-nav-group-items[data-nav-group-items="'+groupId+'"]');
+    if(target)target.appendChild(child);
+  });
+  MAIN_NAV_GROUPS.forEach(function(group){
+    var itemsEl=tablist.querySelector('.main-nav-group-items[data-nav-group-items="'+group.id+'"]');
+    if(!itemsEl)return;
+    group.tabs.forEach(function(tabId){
+      var btn=document.getElementById('tabnav-'+tabId)||tablist.querySelector('.tab-btn[data-tab="'+tabId+'"]');
+      if(btn&&btn.parentNode!==itemsEl)itemsEl.appendChild(btn);
+    });
+  });
+  return tablist;
+}
+function syncMainNavGroups(){
+  var tablist=ensureMainNavGroups();
+  if(!tablist)return;
+  MAIN_NAV_GROUPS.forEach(function(group){
+    var groupEl=tablist.querySelector('.main-nav-group[data-nav-group="'+group.id+'"]');
+    var itemsEl=tablist.querySelector('.main-nav-group-items[data-nav-group-items="'+group.id+'"]');
+    if(!groupEl||!itemsEl)return;
+    var visibleCount=Array.from(itemsEl.querySelectorAll('.tab-btn[data-tab]')).filter(function(btn){
+      return btn&&btn.style.display!=='none';
+    }).length;
+    groupEl.style.display=visibleCount?'':'none';
+  });
+}
+window.syncMainNavGroups=syncMainNavGroups;
+function enforceSpaceTabOrder(){
+  syncMainNavGroups();
   enforceUtilityTabOrder();
 }
 function enforceTravelTabOrder(){
-  var tablist=document.getElementById('mainNavTablist')||document.getElementById('mainNav');
-  if(!tablist)return;
-
-  // Traveling context order uses the original preferred progression.
-  var orderedTabs=['character','backstory','dice','codex','rules','combat','scenes','oracle','storyline','newsun','factions','trophies','missions','endgame','theos','shop','howto'];
-  orderedTabs.forEach(function(tabId){
-    var btn=document.getElementById('tabnav-'+tabId)||tablist.querySelector('.tab-btn[data-tab="'+tabId+'"]');
-    if(btn&&btn.parentNode===tablist)tablist.appendChild(btn);
-  });
-
+  syncMainNavGroups();
   enforceUtilityTabOrder();
 }
 function enforceUtilityTabOrder(){
@@ -16564,6 +16621,7 @@ function setContext(ctx,btn){
   }else if(ctx==='traveling'){
     enforceTravelTabOrder();
   }
+  if(typeof window.syncMainNavGroups==='function')window.syncMainNavGroups();
   enforceUtilityTabOrder();
 }
 function toggleHeroOverview(forceState){
@@ -16598,12 +16656,67 @@ const HOMEPAGE_COPY_VARIANTS={
     stepOne:'Switch into GM mode so campaign and encounter controls are visible.',
     stepTwo:'Open the Campaign panel to create or join the shared room.',
     stepThree:'Launch onboarding, generate the needed map layers, then move the table into combat or VTT when ready.'
+  },
+  C:{
+    kicker:'Beyond The Light • Campaign Table Sync',
+    title:'Keep Players, Maps, and Combat In One Shared Flow',
+    subheading:'Join or host a shared room, keep live rolls and prompts visible, and move from exploration to combat or VTT without losing table state.',
+    primaryCta:'Open Campaign Panel',
+    guidedCta:'Open Live Dock',
+    firstPathCta:'Open Campaign Onboarding',
+    stepOne:'Confirm room code, role, and sync health before a long session starts.',
+    stepTwo:'Keep the Campaign dock open for rolls, chat, prompts, and ready checks.',
+    stepThree:'Jump into Combat Tab or Shared VTT when the scene turns hostile.'
   }
 };
-function openHeroCampaignQuickstart(){
+function normalizeHomepageVariantKey(key){
+  var value=String(key||'').trim().toUpperCase();
+  if(value==='SOLO')return'A';
+  if(value==='GM')return'B';
+  if(value==='CAMPAIGN')return'C';
+  if(value==='A'||value==='B'||value==='C')return value;
+  return'';
+}
+function getHomepageExperienceMode(){
+  try{
+    var params=new URLSearchParams(window.location.search||'');
+    var explicitMode=String(params.get('heroMode')||'').trim().toLowerCase();
+    if(explicitMode==='solo'||explicitMode==='gm'||explicitMode==='campaign')return explicitMode;
+    var explicitVariant=normalizeHomepageVariantKey(params.get('heroVariant'));
+    if(explicitVariant==='B')return'gm';
+    if(explicitVariant==='C')return'campaign';
+    if(explicitVariant==='A')return'solo';
+  }catch(_err){}
+  try{
+    var overrideVariant=normalizeHomepageVariantKey(localStorage.getItem('beyond-hero-copy-variant-override'));
+    if(overrideVariant==='B')return'gm';
+    if(overrideVariant==='C')return'campaign';
+    if(overrideVariant==='A')return'solo';
+  }catch(_err){}
+  if(window.settingsSystem){
+    if(typeof window.settingsSystem.isCampaignMode==='function'&&window.settingsSystem.isCampaignMode())return'campaign';
+    if(typeof window.settingsSystem.isGMMode==='function'&&window.settingsSystem.isGMMode())return'gm';
+  }
+  try{
+    var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+      ?(window.campaignSystem.getState()||{})
+      :null;
+    if(cs&&cs.code)return'campaign';
+  }catch(_err){}
+  if(document.body&&document.body.classList.contains('campaign-mode'))return'campaign';
+  if(document.body&&document.body.classList.contains('gm-mode'))return'gm';
+  return'solo';
+}
+function getHomepageModeVariantKey(mode){
+  if(mode==='gm')return'B';
+  if(mode==='campaign')return'C';
+  return'A';
+}
+function openHeroCampaignQuickstart(preferredMode){
+  var nextMode=preferredMode==='campaign'?'campaign':'gm';
   if(window.settingsSystem){
     if(typeof window.settingsSystem.setGameMode==='function'){
-      window.settingsSystem.setGameMode('gm',{silent:true});
+      window.settingsSystem.setGameMode(nextMode,{silent:true});
     }
     if(typeof window.settingsSystem.openSettings==='function'){
       window.settingsSystem.openSettings();
@@ -16613,62 +16726,152 @@ function openHeroCampaignQuickstart(){
     }
   }
   if(typeof showNotif==='function'){
-    showNotif('Campaign setup is in Settings > Campaign. Use Create (GM) or Join to seat the table.', 'info');
+    showNotif(nextMode==='campaign'
+      ? 'Campaign setup and room sync live in Settings > Campaign.'
+      : 'Campaign setup is in Settings > Campaign. Use Create (GM) or Join to seat the table.', 'info');
   }
 }
+function openHeroMissionBoard(){if(typeof window.switchTab==='function')window.switchTab('missions',document.getElementById('tabnav-missions')||null);}
+function openHeroProvinceMap(){
+  if(typeof setContext==='function'){
+    var ctxBtn=document.querySelector('.ctx-btn[data-ctx="holding"]');
+    setContext('holding',ctxBtn||null);
+    return;
+  }
+  if(typeof window.switchTab==='function')window.switchTab('map',document.getElementById('tabnav-map')||null);
+}
+function openHeroCombatTab(){if(typeof window.switchTab==='function')window.switchTab('combat',document.getElementById('tabnav-combat')||null);}
+function openHeroGmDashboard(){
+  if(window.settingsSystem&&typeof window.settingsSystem.setGameMode==='function'){
+    window.settingsSystem.setGameMode('gm',{silent:true});
+  }
+  if(typeof openGmDashboard==='function'){
+    openGmDashboard();
+    return;
+  }
+  openHeroCampaignQuickstart('gm');
+}
+function openHeroLiveDock(){
+  if(window.settingsSystem&&typeof window.settingsSystem.setGameMode==='function'){
+    window.settingsSystem.setGameMode('campaign',{silent:true});
+  }
+  var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+    ?(window.campaignSystem.getState()||{})
+    :null;
+  if(cs&&cs.code&&window.campaignSystem&&typeof window.campaignSystem.openDock==='function'){
+    window.campaignSystem.openDock();
+    return;
+  }
+  openHeroCampaignQuickstart('campaign');
+}
+function openHeroCampaignOnboarding(){
+  if(window.settingsSystem&&typeof window.settingsSystem.setGameMode==='function'){
+    window.settingsSystem.setGameMode('campaign',{silent:true});
+  }
+  var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+    ?(window.campaignSystem.getState()||{})
+    :null;
+  if(cs&&cs.code&&cs.connected&&window.campaignSystem&&typeof window.campaignSystem.showOnboarding==='function'){
+    window.campaignSystem.showOnboarding(true);
+    return;
+  }
+  openHeroCampaignQuickstart('campaign');
+}
+function openHeroSharedVttOrCombat(){
+  var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+    ?(window.campaignSystem.getState()||{})
+    :null;
+  if(cs&&cs.code&&window.campaignSystem&&typeof window.campaignSystem.joinSharedCombatMode==='function'){
+    window.campaignSystem.joinSharedCombatMode();
+    return;
+  }
+  openHeroCombatTab();
+}
+function getHeroContinueActions(mode){
+  var currentMode=String(mode||getHomepageExperienceMode()).toLowerCase();
+  var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+    ?(window.campaignSystem.getState()||{})
+    :null;
+  var vttReady=!!(cs&&cs.campaign&&cs.campaign.sharedState&&cs.campaign.sharedState.campaignCombat&&cs.campaign.sharedState.campaignCombat.vttSession);
+  if(currentMode==='gm'){
+    return [
+      {label:'Continue: Campaign Panel',run:function(){openHeroCampaignQuickstart('gm');}},
+      {label:'Continue: GM Dashboard',run:openHeroGmDashboard},
+      {label:'Continue: Combat Control',run:openHeroCombatTab}
+    ];
+  }
+  if(currentMode==='campaign'){
+    return [
+      {label:'Continue: Live Dock',run:openHeroLiveDock},
+      {label:'Continue: Campaign Panel',run:function(){openHeroCampaignQuickstart('campaign');}},
+      {label:vttReady?'Continue: Shared VTT':'Continue: Combat Tab',run:vttReady?openHeroSharedVttOrCombat:openHeroCombatTab}
+    ];
+  }
+  return [
+    {label:'Continue: Mission Board',run:openHeroMissionBoard},
+    {label:'Continue: Province Map',run:openHeroProvinceMap},
+    {label:'Continue: Combat',run:openHeroCombatTab}
+  ];
+}
+function applyHeroContinueRow(mode){
+  var actions=getHeroContinueActions(mode);
+  var ids=['heroContinuePrimary','heroContinueSecondary','heroContinueTertiary'];
+  ids.forEach(function(id,idx){
+    var btn=document.getElementById(id);
+    if(!btn)return;
+    var action=actions[idx];
+    if(!action){
+      btn.style.display='none';
+      return;
+    }
+    btn.style.display='';
+    btn.textContent=action.label;
+  });
+}
+function runHeroContinueAction(index){
+  var actions=getHeroContinueActions();
+  var action=actions[Math.max(0,Number(index)||0)];
+  if(action&&typeof action.run==='function')action.run();
+}
 function runHeroPrimaryAction(){
-  if(getHomepageCopyVariant()==='B'){
-    openHeroCampaignQuickstart();
+  var mode=getHomepageExperienceMode();
+  if(mode==='gm'||mode==='campaign'){
+    openHeroCampaignQuickstart(mode);
     return;
   }
   generateCharacter();
 }
 function runHeroGuidedAction(){
-  if(getHomepageCopyVariant()==='B'){
-    if(window.settingsSystem&&typeof window.settingsSystem.setGameMode==='function'){
-      window.settingsSystem.setGameMode('gm',{silent:true});
-    }
-    if(typeof openGmDashboard==='function'){
-      openGmDashboard();
-      return;
-    }
-    openHeroCampaignQuickstart();
+  var mode=getHomepageExperienceMode();
+  if(mode==='gm'){
+    openHeroGmDashboard();
+    return;
+  }
+  if(mode==='campaign'){
+    openHeroLiveDock();
     return;
   }
   startGuidedCharacterBuild();
   switchTab('howto',document.getElementById('tabnav-howto'));
 }
 function runHeroFirstPathAction(){
-  if(getHomepageCopyVariant()==='B'){
-    openHeroCampaignQuickstart();
+  var mode=getHomepageExperienceMode();
+  if(mode==='gm'){
+    openHeroCampaignQuickstart('gm');
+    return;
+  }
+  if(mode==='campaign'){
+    openHeroCampaignOnboarding();
     return;
   }
   startGuidedCharacterBuild();
   switchTab('howto',document.getElementById('tabnav-howto'));
 }
 function getHomepageCopyVariant(){
-  var urlVariant='';
-  try{
-    var params=new URLSearchParams(window.location.search||'');
-    urlVariant=String(params.get('heroVariant')||'').toUpperCase();
-  }catch(_err){}
-  if(urlVariant==='A'||urlVariant==='B')return urlVariant;
-  try{
-    var saved=String(localStorage.getItem('beyond-hero-copy-variant')||'').toUpperCase();
-    if(saved==='A'||saved==='B')return saved;
-  }catch(_err){}
-  var key='A';
-  try{
-    var seed=String(new Date().toISOString().slice(0,10));
-    var h=0;
-    for(var i=0;i<seed.length;i++)h=((h<<5)-h)+seed.charCodeAt(i);
-    key=(Math.abs(h)%2===0)?'A':'B';
-  }catch(_err){key='A';}
-  return key;
+  return getHomepageModeVariantKey(getHomepageExperienceMode());
 }
 function applyHomepageCopyVariant(variantKey){
-  var key=String(variantKey||getHomepageCopyVariant()).toUpperCase();
-  if(key!=='A'&&key!=='B')key='A';
+  var key=normalizeHomepageVariantKey(variantKey||getHomepageCopyVariant())||'A';
   var copy=HOMEPAGE_COPY_VARIANTS[key]||HOMEPAGE_COPY_VARIANTS.A;
   var kickerEl=document.getElementById('heroKicker');
   var titleEl=document.getElementById('heroTitle');
@@ -16688,15 +16891,31 @@ function applyHomepageCopyVariant(variantKey){
   if(stepOneEl)stepOneEl.textContent=copy.stepOne||'';
   if(stepTwoEl)stepTwoEl.textContent=copy.stepTwo||'';
   if(stepThreeEl)stepThreeEl.textContent=copy.stepThree||'';
-  try{localStorage.setItem('beyond-hero-copy-variant',key);}catch(_err){}
   return key;
 }
 window.applyHomepageCopyVariant=applyHomepageCopyVariant;
-window.setHomepageCopyVariant=function(key){return applyHomepageCopyVariant(key);};
+function syncHomepageExperience(){
+  var key=applyHomepageCopyVariant(getHomepageCopyVariant());
+  applyHeroContinueRow(getHomepageExperienceMode());
+  return key;
+}
+window.syncHomepageExperience=syncHomepageExperience;
+window.setHomepageCopyVariant=function(key){
+  var normalized=normalizeHomepageVariantKey(key);
+  try{
+    if(normalized)localStorage.setItem('beyond-hero-copy-variant-override',normalized);
+    else localStorage.removeItem('beyond-hero-copy-variant-override');
+  }catch(_err){}
+  return syncHomepageExperience();
+};
+window.clearHomepageCopyVariantOverride=function(){
+  try{localStorage.removeItem('beyond-hero-copy-variant-override');}catch(_err){}
+  return syncHomepageExperience();
+};
 try{
   if(localStorage.getItem('beyond-hero-expanded')==='0')toggleHeroOverview(false);
 }catch(_err){}
-try{applyHomepageCopyVariant();}catch(_err){}
+try{syncHomepageExperience();}catch(_err){}
 function ensureMapClickMode(){
   if(!S.mapClickMode)S.mapClickMode='travel';
   if(['travel','inspect'].indexOf(String(S.mapClickMode))<0)S.mapClickMode='travel';

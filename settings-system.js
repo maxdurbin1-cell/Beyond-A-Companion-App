@@ -1184,6 +1184,12 @@ window.playCustomMusicFromSettings = function() {
     if (typeof window.updateGmWorldbuilderVisibility === 'function') {
       window.updateGmWorldbuilderVisibility();
     }
+    if (typeof window.syncMainNavGroups === 'function') {
+      window.syncMainNavGroups();
+    }
+    if (typeof window.syncHomepageExperience === 'function') {
+      window.syncHomepageExperience();
+    }
 
     const colorBlindBtn = document.getElementById('colorBlindModeBtn');
     if (colorBlindBtn) {

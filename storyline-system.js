@@ -5831,6 +5831,9 @@
       btn.setAttribute("onclick", "switchTab('" + STORY_TAB_ID + "',this)");
       btn.textContent = "Storyline";
       nav.appendChild(btn);
+      if (typeof window.syncMainNavGroups === "function") {
+        window.syncMainNavGroups();
+      }
     }
 
     if (!document.getElementById("tab-" + STORY_TAB_ID)) {

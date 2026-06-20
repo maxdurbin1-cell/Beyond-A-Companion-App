@@ -50,6 +50,7 @@
     "smoke:maybe-reconnect": "node -e \"const run=['1','true','yes','on'].includes(String(process.env.SMOKE_RECONNECT||'').toLowerCase()); if(!run){console.log('Skipping reconnect soak (set SMOKE_RECONNECT=1 to enable).'); process.exit(0);} const {spawnSync}=require('node:child_process'); const cmd=process.platform==='win32'?'npm.cmd':'npm'; const r=spawnSync(cmd,['run','smoke:reconnect'],{stdio:'inherit'}); process.exit(r.status||0);\"",
     "smoke:galaxy-manual-prompts": "node smoke-tests/galaxy-manual-prompts.smoke.mjs",
     "smoke:wtw-permutations": "node smoke-tests/world-that-was-permutations.smoke.mjs",
+    "smoke:deep-world-branches": "node smoke-tests/deep-world-branches.smoke.mjs",
     "smoke:health-dashboard": "node smoke-tests/health-dashboard.smoke.mjs",
     "smoke:guild-system": "node smoke-tests/guild-system-smoke.mjs",
     "smoke:guild-multiplayer-sync": "node smoke-tests/guild-multiplayer-sync.smoke.mjs",
