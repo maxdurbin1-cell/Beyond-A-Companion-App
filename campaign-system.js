@@ -3277,6 +3277,7 @@
     if (!Number.isFinite(Number(sharedState.campaignCombat.currentActorIndex))) {
       sharedState.campaignCombat.currentActorIndex = -1;
     }
+    sanitizeCampaignCombatTurnState(sharedState.campaignCombat);
     return sharedState.campaignCombat;
   }
 
@@ -3396,6 +3397,65 @@
 
   function getCampaignEnemyTurnToken() {
     return "enemy:phase";
+  }
+
+  function sanitizeCampaignCombatTurnState(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef) return stateRef;
+    var enemyToken = getCampaignEnemyTurnToken();
+    var participants = Array.isArray(stateRef.participants) ? stateRef.participants : [];
+    var keepEnemyParticipant = false;
+    stateRef.participants = participants.filter(function (row) {
+      if (!row || !row.token) return false;
+      var token = String(row.token || "");
+      if (!token) return false;
+      var isEnemy = !!row.isEnemy || token === enemyToken;
+      if (isEnemy) {
+        keepEnemyParticipant = true;
+        return true;
+      }
+      return String(row.role || "player") !== "gm";
+    });
+    var participantMap = {};
+    stateRef.participants.forEach(function (row) {
+      if (!row || !row.token) return;
+      participantMap[String(row.token || "")] = true;
+    });
+    var order = Array.isArray(stateRef.turnOrder) ? stateRef.turnOrder : [];
+    var cleanedOrder = [];
+    var sawEnemyTurn = false;
+    order.forEach(function (entry) {
+      var token = String(entry || "");
+      if (!token) return;
+      if (token === enemyToken) {
+        if (!sawEnemyTurn) {
+          cleanedOrder.push(enemyToken);
+          sawEnemyTurn = true;
+        }
+        return;
+      }
+      if (participantMap[token]) cleanedOrder.push(token);
+    });
+    if (
+      keepEnemyParticipant &&
+      !sawEnemyTurn &&
+      (stateRef.active || cleanedOrder.length || (Array.isArray(stateRef.pendingWayfarers) && stateRef.pendingWayfarers.length) || (Array.isArray(stateRef.actedWayfarers) && stateRef.actedWayfarers.length))
+    ) {
+      cleanedOrder.push(enemyToken);
+    }
+    stateRef.turnOrder = cleanedOrder;
+    stateRef.pendingWayfarers = getCampaignCombatPendingWayfarers(stateRef);
+    stateRef.actedWayfarers = getCampaignCombatActedWayfarers(stateRef);
+    var activeToken = String(stateRef.activeToken || "");
+    var phase = String(stateRef.phase || "wayfarer");
+    if (phase === "enemy") {
+      stateRef.activeToken = enemyToken;
+    } else if (activeToken === enemyToken || (activeToken && !participantMap[activeToken])) {
+      stateRef.activeToken = "";
+    }
+    syncCampaignCombatCurrentActorIndex(stateRef);
+    syncCampaignCombatParticipantFlags(stateRef);
+    return stateRef;
   }
 
   function syncCampaignCombatParticipantFlags(combatState) {
@@ -3521,7 +3581,13 @@
     try {
       var sharedState = getMutableCampaignSharedState();
       var combatState = ensureCampaignCombatState(sharedState);
-      var roster = (Array.isArray(participants) ? participants : buildPartyRoster()).slice();
+      var roster = (Array.isArray(participants) ? participants : buildPartyRoster()).slice().filter(function (participant) {
+        return participant && String(participant.role || "player") !== "gm";
+      });
+      if (!roster.length) {
+        if (callback) callback({ ok: false, error: "No Wayfarers are available for campaign combat." });
+        return;
+      }
       var wayfarerTokens = roster.map(function (p) { return String(p.token || ""); }).filter(Boolean);
 
       combatState.active = true;
@@ -6003,10 +6069,8 @@
     var phase = String(combatState.phase || "wayfarer");
     var token = String(getCampaignCombatActiveToken(combatState) || "");
     if (!token && phase === "wayfarer") {
-      var actedCount = Array.isArray(combatState.actedWayfarers) ? combatState.actedWayfarers.length : 0;
-      var wayfarerTotal = Array.isArray(combatState.turnOrder)
-        ? combatState.turnOrder.filter(function (entry) { return entry && entry !== getCampaignEnemyTurnToken(); }).length
-        : 0;
+      var actedCount = getCampaignCombatActedWayfarers(combatState).length;
+      var wayfarerTotal = getCampaignCombatWayfarerTokens(combatState).length;
       return {
         active: true,
         key: "gm-prompt:" + Math.max(1, Number(combatState.round || 1)) + ":" + actedCount,
@@ -8423,6 +8487,7 @@
     setCombatActor: setCombatActor,
     nextCombatActor: nextCombatActor,
     endCampaignCombat: endCampaignCombat,
+    joinSharedCombatMode: joinSharedCampaignCombatMode,
     getCurrentCombatActor: getCurrentCombatActor,
     gmInitiateTravel: gmInitiateTravel,
     promptCampaignTravel: promptCampaignTravel,

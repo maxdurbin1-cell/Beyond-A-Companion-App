@@ -381,7 +381,6 @@ async function runScenario(browser) {
   }
 
   const turnOrder = [
-    combatSetup.expected.gmToken,
     combatSetup.expected.playerToken,
     combatSetup.expected.enemyTurn
   ];
@@ -392,11 +391,10 @@ async function runScenario(browser) {
     phase: "wayfarer",
     currentActorIndex: -1,
     activeToken: "",
-    pendingWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+    pendingWayfarers: [combatSetup.expected.playerToken],
     actedWayfarers: [],
     turnOrder,
     participantActed: {
-      [combatSetup.expected.gmToken]: false,
       [combatSetup.expected.playerToken]: false,
       [combatSetup.expected.enemyTurn]: false
     }
@@ -405,55 +403,17 @@ async function runScenario(browser) {
   for (const step of [
     {
       actionName: "setCombatActor",
-      arg: combatSetup.expected.gmToken,
-      expected: {
-        active: true,
-        round: 1,
-        phase: "wayfarer",
-        currentActorIndex: 0,
-        activeToken: combatSetup.expected.gmToken,
-        pendingWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
-        actedWayfarers: [],
-        turnOrder,
-        participantActed: {
-          [combatSetup.expected.gmToken]: false,
-          [combatSetup.expected.playerToken]: false,
-          [combatSetup.expected.enemyTurn]: false
-        }
-      }
-    },
-    {
-      actionName: "nextCombatActor",
-      expected: {
-        active: true,
-        round: 1,
-        phase: "wayfarer",
-        currentActorIndex: -1,
-        activeToken: "",
-        pendingWayfarers: [combatSetup.expected.playerToken],
-        actedWayfarers: [combatSetup.expected.gmToken],
-        turnOrder,
-        participantActed: {
-          [combatSetup.expected.gmToken]: true,
-          [combatSetup.expected.playerToken]: false,
-          [combatSetup.expected.enemyTurn]: false
-        }
-      }
-    },
-    {
-      actionName: "setCombatActor",
       arg: combatSetup.expected.playerToken,
       expected: {
         active: true,
         round: 1,
         phase: "wayfarer",
-        currentActorIndex: 1,
+        currentActorIndex: 0,
         activeToken: combatSetup.expected.playerToken,
         pendingWayfarers: [combatSetup.expected.playerToken],
-        actedWayfarers: [combatSetup.expected.gmToken],
+        actedWayfarers: [],
         turnOrder,
         participantActed: {
-          [combatSetup.expected.gmToken]: true,
           [combatSetup.expected.playerToken]: false,
           [combatSetup.expected.enemyTurn]: false
         }
@@ -464,14 +424,13 @@ async function runScenario(browser) {
       expected: {
         active: true,
         round: 1,
+        currentActorIndex: 1,
         phase: "enemy",
-        currentActorIndex: 2,
         activeToken: combatSetup.expected.enemyTurn,
         pendingWayfarers: [],
-        actedWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+        actedWayfarers: [combatSetup.expected.playerToken],
         turnOrder,
         participantActed: {
-          [combatSetup.expected.gmToken]: true,
           [combatSetup.expected.playerToken]: true,
           [combatSetup.expected.enemyTurn]: false
         }
@@ -485,11 +444,10 @@ async function runScenario(browser) {
         phase: "wayfarer",
         currentActorIndex: -1,
         activeToken: "",
-        pendingWayfarers: [combatSetup.expected.gmToken, combatSetup.expected.playerToken],
+        pendingWayfarers: [combatSetup.expected.playerToken],
         actedWayfarers: [],
         turnOrder,
         participantActed: {
-          [combatSetup.expected.gmToken]: false,
           [combatSetup.expected.playerToken]: false,
           [combatSetup.expected.enemyTurn]: false
         }

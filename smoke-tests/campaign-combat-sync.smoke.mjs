@@ -569,9 +569,9 @@ async function runScenario(browser) {
   });
 
   await waitForSceneEditorState(playerPage, {
-    minTokens: 4,
+    minTokens: 3,
     sceneName: 'Smoke Shared Scene',
-    requiredNames: ['Ash Raider', 'Pale Hound']
+    requiredNames: ['Combat Smoke Player', 'Ash Raider', 'Pale Hound']
   }, 'Player refreshed shared VTT state');
 
   const seeded = await gmPage.evaluate(async () => {

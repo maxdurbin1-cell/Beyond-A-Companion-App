@@ -7586,6 +7586,31 @@ function getCampaignCombatParticipantMap(cc){
   return out;
 }
 
+function isCampaignWayfarerParticipant(row, token){
+  var key=String(token||'');
+  if(!key||key==='enemy:phase')return false;
+  if(!row||row.isEnemy)return false;
+  return String(row.role||'player')!=='gm';
+}
+
+function getCampaignDisplayWayfarerTokens(cc, byToken){
+  var out=[];
+  var seen={};
+  var source=[];
+  if(cc&&Array.isArray(cc.turnOrder))source=source.concat(cc.turnOrder);
+  if(cc&&Array.isArray(cc.pendingWayfarers))source=source.concat(cc.pendingWayfarers);
+  if(cc&&Array.isArray(cc.actedWayfarers))source=source.concat(cc.actedWayfarers);
+  source.forEach(function(token){
+    var key=String(token||'');
+    if(!key||seen[key])return;
+    var row=byToken[key]||null;
+    if(!isCampaignWayfarerParticipant(row,key))return;
+    seen[key]=true;
+    out.push(key);
+  });
+  return out;
+}
+
 function getCampaignTurnGate(actorKind){
   if(!window.campaignSystem||typeof window.campaignSystem.getState!=='function'||typeof window.campaignSystem.getSharedState!=='function')return{ok:true};
   var st=window.campaignSystem.getState();
@@ -7602,6 +7627,9 @@ function getCampaignTurnGate(actorKind){
   }
   if(enemyTurn)return{ok:false,msg:'Campaign initiative: this is an Enemy turn.'};
   if(!token)return{ok:false,msg:'Campaign initiative: wait for the GM to prompt the next Wayfarer.'};
+  if(st.role==='gm'){
+    return{ok:false,msg:'Campaign initiative: GM clients prompt Wayfarers and resolve enemy turns. Let the active player take this action.'};
+  }
   if(st.role==='player'&&st.token&&token&&String(st.token)!==token){
     var active=(Array.isArray(cc.participants)?cc.participants:[]).filter(function(p){return p&&String(p.token||'')===token;})[0];
     return{ok:false,msg:'Campaign initiative: it is '+String(active&&active.name?active.name:'another Wayfarer')+'\'s turn.'};
@@ -8333,51 +8361,93 @@ function renderCampaignInitiativePanel(){
   }
   var esc=function(v){return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
   var byToken=getCampaignCombatParticipantMap(combat);
+  var enemyToken='enemy:phase';
   var activeToken=getCampaignCombatActiveToken(combat);
   var phase=String(combat.phase||'wayfarer');
+  var overlay=document.getElementById('combatModeOverlay');
+  var overlayOpen=!!(overlay&&overlay.classList.contains('open'));
+  var wayfarerTokens=getCampaignDisplayWayfarerTokens(combat,byToken);
+  var filteredTokenMap={};
+  wayfarerTokens.forEach(function(token){filteredTokenMap[String(token||'')]=true;});
   var pendingMap={};
-  (Array.isArray(combat.pendingWayfarers)?combat.pendingWayfarers:[]).forEach(function(token){pendingMap[String(token||'')]=true;});
+  (Array.isArray(combat.pendingWayfarers)?combat.pendingWayfarers:[]).forEach(function(token){
+    var key=String(token||'');
+    if(filteredTokenMap[key])pendingMap[key]=true;
+  });
   var actedMap={};
-  (Array.isArray(combat.actedWayfarers)?combat.actedWayfarers:[]).forEach(function(token){actedMap[String(token||'')]=true;});
-  var rows=combat.turnOrder.map(function(token,idx){
+  (Array.isArray(combat.actedWayfarers)?combat.actedWayfarers:[]).forEach(function(token){
+    var key=String(token||'');
+    if(filteredTokenMap[key])actedMap[key]=true;
+  });
+  var pending=wayfarerTokens.filter(function(token){return !!pendingMap[String(token||'')];});
+  var acted=wayfarerTokens.filter(function(token){return !!actedMap[String(token||'')];});
+  var displayTokens=wayfarerTokens.concat([enemyToken]);
+  var rows=displayTokens.map(function(token,idx){
     var p=byToken[String(token)]||null;
-    var name=p&&p.name?String(p.name):String(token);
-    var role=(p&&p.isEnemy)||String(token).indexOf('enemy:')===0?'Enemy':'Wayfarer';
-    var active=String(token)===String(activeToken||'');
-    var status=active?'ACTIVE':(role==='Enemy'?(phase==='enemy'?'WAITING':'WAITING'):(actedMap[String(token)]?'DONE':(pendingMap[String(token)]?'READY':'WAITING')));
-    if(role==='Enemy'&&phase==='enemy'&&active)status='ACTIVE';
-    var statusColor=status==='ACTIVE'?'var(--teal)':(status==='DONE'?'var(--gold2)':(role==='Enemy'?'var(--red2)':'var(--muted2)'));
+    var isEnemy=String(token)===enemyToken||!!(p&&p.isEnemy);
+    var name=isEnemy?'Enemy Turn':(p&&p.name?String(p.name):String(token));
+    var role=isEnemy?'Enemy':'Wayfarer';
+    var active=String(token)===String(activeToken||'')&&(isEnemy?phase==='enemy':phase==='wayfarer');
+    var status=isEnemy?(phase==='enemy'?'ACTIVE':'WAITING'):(active?'ACTING':(actedMap[String(token)]?'DONE':(pendingMap[String(token)]?'READY':'WAITING')));
+    var statusColor=status==='ACTIVE'||status==='ACTING'?'var(--teal)':(status==='DONE'?'var(--gold2)':(isEnemy?'var(--red2)':'var(--muted2)'));
     return '<div style="display:flex;justify-content:space-between;gap:.35rem;padding:.16rem .24rem;border-radius:3px;'+(active?'background:rgba(46,196,182,.12);border:1px solid rgba(46,196,182,.35);':'')+'">'
       +'<span style="color:'+(active?'var(--teal)':'var(--text2)')+';font-size:.74rem;">'+(idx+1)+'. '+esc(name)+'</span>'
       +'<span style="font-size:.68rem;color:'+statusColor+';">'+role+' \u00b7 '+status+'</span>'
       +'</div>';
   }).join('');
+  var activeRow=byToken[String(activeToken)]||null;
+  var activeName=activeRow&&activeRow.name?String(activeRow.name):'Wayfarer';
+  var summaryTitle='';
+  var summaryText='';
+  if(phase==='enemy'){
+    summaryTitle='Enemy turn is active';
+    summaryText='GM resolves the enemy action, then ends the turn to begin the next round.';
+  }else if(activeToken&&String(activeToken)!==enemyToken){
+    summaryTitle=esc(activeName)+' is acting now';
+    summaryText='The GM can complete that turn after the Wayfarer finishes their actions.';
+  }else{
+    summaryTitle='GM chooses the next Wayfarer';
+    summaryText=pending.length?String(pending.length)+' of '+String(wayfarerTokens.length)+' Wayfarer turns remain this round.':'All Wayfarers have acted. Start the enemy turn next.';
+  }
+  var vttButton='';
+  if(!overlayOpen){
+    if(cs.role==='gm'){
+      vttButton='<button class="btn btn-xs btn-teal" onclick="if(window.openCombatSceneEditorFromExpedition){openCombatSceneEditorFromExpedition();}else if(window.openCombatSceneEditor){openCombatSceneEditor();}">'+(combat.vttSession?'Open Shared VTT':'Enter Combat Mode')+'</button>';
+    }else if(combat.vttSession){
+      vttButton='<button class="btn btn-xs btn-teal" onclick="window.campaignSystem&&window.campaignSystem.joinSharedCombatMode&&window.campaignSystem.joinSharedCombatMode()">Join Shared VTT</button>';
+    }
+  }
   var gmControls='';
   if(cs.role==='gm'&&window.campaignSystem){
     if(phase==='wayfarer'){
-      var pending=(Array.isArray(combat.pendingWayfarers)?combat.pendingWayfarers:[]).filter(Boolean);
-      if(activeToken){
-        gmControls='<div style="display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.45rem;">'
-          +'<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.nextCombatActor()">Complete Turn</button>'
+      if(activeToken&&String(activeToken)!==enemyToken){
+        gmControls='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Active Wayfarer:</div>'
+          +'<div style="display:flex;flex-wrap:wrap;gap:.35rem;align-items:center;margin-top:.24rem;">'
+          +'<div style="padding:.34rem .5rem;border:1px solid rgba(46,196,182,.28);border-radius:5px;background:rgba(46,196,182,.08);font-size:.78rem;color:var(--text2);">'+esc(activeName)+'</div>'
+          +'<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.nextCombatActor()">Complete '+esc(activeName)+'&#39;s Turn</button>'
+          +(vttButton?vttButton:'')
           +'</div>';
       }else if(pending.length){
-        gmControls='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">GM prompt next Wayfarer:</div>'
-          +'<div style="display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.22rem;">'
+        gmControls='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Prompt the next Wayfarer:</div>'
+          +'<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.24rem;">'
           +pending.map(function(token){
             var row=byToken[String(token)]||null;
             var label=esc(row&&row.name?row.name:'Wayfarer');
             var safeToken=String(token||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-            return '<button class="btn btn-xs" onclick="window.campaignSystem.setCombatActor(\''+safeToken+'\')">'+label+'</button>';
+            return '<button class="btn btn-sm" onclick="window.campaignSystem.setCombatActor(\''+safeToken+'\')">Prompt '+label+'</button>';
           }).join('')
+          +(vttButton?vttButton:'')
           +'</div>';
       }else{
-        gmControls='<div style="display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.45rem;">'
-          +'<button class="btn btn-xs btn-red" onclick="window.campaignSystem.nextCombatActor()">Start Enemy Turn</button>'
+        gmControls='<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.45rem;">'
+          +'<button class="btn btn-sm btn-red" onclick="window.campaignSystem.nextCombatActor()">Start Enemy Turn</button>'
+          +(vttButton?vttButton:'')
           +'</div>';
       }
     }else{
-      gmControls='<div style="display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.45rem;">'
-        +'<button class="btn btn-xs btn-red" onclick="window.campaignSystem.nextCombatActor()">End Enemy Turn</button>'
+      gmControls='<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.45rem;">'
+        +'<button class="btn btn-sm btn-red" onclick="window.campaignSystem.nextCombatActor()">End Enemy Turn / Next Round</button>'
+        +(vttButton?vttButton:'')
         +'</div>';
     }
   }
@@ -8390,13 +8460,29 @@ function renderCampaignInitiativePanel(){
     }else if(!activeToken){
       playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">The GM is choosing who acts next.</div>';
     }else{
-      var activeRow=byToken[String(activeToken)]||null;
       playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Waiting on '+esc(activeRow&&activeRow.name?activeRow.name:'another Wayfarer')+'.</div>';
+    }
+    if(combat.vttSession&&!overlayOpen){
+      playerHint+='<div style="font-size:.7rem;color:var(--muted2);margin-top:.28rem;">The GM has a shared VTT open. Use <strong style="color:var(--teal);">Join Shared VTT</strong> to mirror the same battlemap.</div>';
+    }else if(!combat.vttSession){
+      playerHint+='<div style="font-size:.7rem;color:var(--muted2);margin-top:.28rem;">The GM has not opened the shared VTT yet. You can still act from the Combat Tab or Quick Panel.</div>';
+    }
+    if(vttButton){
+      playerHint+='<div style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.38rem;">'+vttButton+'</div>';
     }
   }
   panel.innerHTML='<div style="padding:.4rem .5rem;background:rgba(46,196,182,.05);border:1px solid rgba(46,196,182,.3);border-radius:6px;">'
     +'<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:var(--teal);text-transform:uppercase;margin-bottom:.2rem;">Campaign Initiative</div>'
-    +'<div style="font-size:.72rem;color:var(--muted2);margin-bottom:.3rem;">Round '+Math.max(1,Number(combat.round||1))+' \u00b7 '+(phase==='enemy'?'Enemy phase':'Wayfarer phase')+' \u00b7 GM chooses the acting Wayfarer</div>'
+    +'<div style="display:flex;justify-content:space-between;gap:.5rem;align-items:flex-start;margin-bottom:.34rem;">'
+      +'<div>'
+        +'<div style="font-size:.76rem;color:var(--text2);font-weight:700;">'+summaryTitle+'</div>'
+        +'<div style="font-size:.7rem;color:var(--muted2);margin-top:.12rem;">Round '+Math.max(1,Number(combat.round||1))+' \u00b7 '+(phase==='enemy'?'Enemy phase':'Wayfarer phase')+' \u00b7 '+summaryText+'</div>'
+      +'</div>'
+      +'<div style="font-size:.68rem;color:var(--muted2);text-align:right;white-space:nowrap;">'
+        +'<div>Ready: '+pending.length+'</div>'
+        +'<div>Done: '+acted.length+'/'+wayfarerTokens.length+'</div>'
+      +'</div>'
+    +'</div>'
     +'<div style="display:grid;gap:.14rem;max-height:160px;overflow:auto;">'+rows+'</div>'
     +gmControls
     +playerHint
