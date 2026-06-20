@@ -3337,6 +3337,7 @@
     var roster = [];
     state.campaign.participants.forEach(function(participant) {
       if (!participant.character) return;
+      if (String(participant.role || "") === "gm") return;
       roster.push({
         token: participant.token,
         name: participant.name || "Player",
@@ -3359,6 +3360,40 @@
     return roster;
   }
 
+  function isCampaignWayfarerToken(combatState, token) {
+    var key = String(token || "");
+    if (!key || key === getCampaignEnemyTurnToken()) return false;
+    var row = findCampaignCombatParticipant(combatState, key);
+    if (!row || row.isEnemy) return false;
+    return String(row.role || "player") !== "gm";
+  }
+
+  function getCampaignCombatWayfarerTokens(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    var source = stateRef && Array.isArray(stateRef.turnOrder) ? stateRef.turnOrder : [];
+    return source.filter(function (token) {
+      return isCampaignWayfarerToken(stateRef, token);
+    });
+  }
+
+  function getCampaignCombatPendingWayfarers(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef) return [];
+    var pending = Array.isArray(stateRef.pendingWayfarers) ? stateRef.pendingWayfarers : [];
+    return pending.filter(function (token) {
+      return isCampaignWayfarerToken(stateRef, token);
+    });
+  }
+
+  function getCampaignCombatActedWayfarers(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef) return [];
+    var acted = Array.isArray(stateRef.actedWayfarers) ? stateRef.actedWayfarers : [];
+    return acted.filter(function (token) {
+      return isCampaignWayfarerToken(stateRef, token);
+    });
+  }
+
   function getCampaignEnemyTurnToken() {
     return "enemy:phase";
   }
@@ -3367,7 +3402,7 @@
     var stateRef = combatState && typeof combatState === "object" ? combatState : null;
     if (!stateRef || !Array.isArray(stateRef.participants)) return stateRef;
     var actedMap = {};
-    var acted = Array.isArray(stateRef.actedWayfarers) ? stateRef.actedWayfarers : [];
+    var acted = getCampaignCombatActedWayfarers(stateRef);
     acted.forEach(function (token) {
       var key = String(token || "");
       if (key) actedMap[key] = true;
@@ -3405,7 +3440,7 @@
     var nextRoster = Array.isArray(rosterTokens)
       ? rosterTokens.slice()
       : ((stateRef && Array.isArray(stateRef.turnOrder))
-        ? stateRef.turnOrder.filter(function (token) { return token && token !== getCampaignEnemyTurnToken(); })
+        ? getCampaignCombatWayfarerTokens(stateRef)
         : []);
     if (!stateRef) return stateRef;
     stateRef.phase = "wayfarer";
@@ -3587,7 +3622,7 @@
         if (callback) callback({ ok: false, error: "Choose a Wayfarer first" });
         return;
       }
-      if ((combatState.pendingWayfarers || []).indexOf(target) === -1) {
+      if (getCampaignCombatPendingWayfarers(combatState).indexOf(target) === -1) {
         if (callback) callback({ ok: false, error: "That Wayfarer has already acted this round" });
         return;
       }
@@ -3623,14 +3658,14 @@
 
       var actorToken = String(combatState.activeToken || "");
       if (actorToken) {
-        combatState.pendingWayfarers = (combatState.pendingWayfarers || []).filter(function (entry) {
+        combatState.pendingWayfarers = getCampaignCombatPendingWayfarers(combatState).filter(function (entry) {
           return String(entry || "") !== actorToken;
         });
-        if ((combatState.actedWayfarers || []).indexOf(actorToken) === -1) {
-          combatState.actedWayfarers = (combatState.actedWayfarers || []).concat([actorToken]);
+        if (getCampaignCombatActedWayfarers(combatState).indexOf(actorToken) === -1) {
+          combatState.actedWayfarers = getCampaignCombatActedWayfarers(combatState).concat([actorToken]);
         }
       }
-      if (Array.isArray(combatState.pendingWayfarers) && combatState.pendingWayfarers.length > 0) {
+      if (getCampaignCombatPendingWayfarers(combatState).length > 0) {
         setCampaignCombatActorToken(combatState, "");
       } else {
         combatState.phase = "enemy";
