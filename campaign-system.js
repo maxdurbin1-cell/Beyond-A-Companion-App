@@ -70,6 +70,7 @@
     lastCampaignCombatPromptAt: 0,
     lastCampaignActorPromptKey: "",
     lastCampaignVttPromptAt: 0,
+    lastCampaignScenePromptKey: "",
     lastAppliedCampaignSoundtrackHash: "",
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
@@ -781,10 +782,24 @@
   }
 
   function resolveSharedCombatSceneName() {
-    var sceneState = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
-      ? window.S.combat.sceneEditor
-      : null;
-    if (!sceneState) return "Campaign Shared Scene";
+    var sceneState = getSharedCombatSceneEditorSnapshot();
+    if (!sceneState) {
+      var sharedState = null;
+      try {
+        sharedState = typeof getCampaignSharedState === "function"
+          ? getCampaignSharedState()
+          : (window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+            ? window.campaignSystem.getSharedState()
+            : null);
+      } catch (_err) {
+        sharedState = null;
+      }
+      var vttSession = sharedState && sharedState.campaignCombat && typeof sharedState.campaignCombat === "object"
+        && sharedState.campaignCombat.vttSession && typeof sharedState.campaignCombat.vttSession === "object"
+        ? sharedState.campaignCombat.vttSession
+        : null;
+      return String(vttSession && vttSession.sceneName || "Campaign Shared Scene");
+    }
     var activeSceneId = String(sceneState.activeSceneId || "");
     var scenes = Array.isArray(sceneState.scenes) ? sceneState.scenes : [];
     var activeScene = activeSceneId
@@ -793,8 +808,41 @@
     return String(activeScene && activeScene.name || "Campaign Shared Scene");
   }
 
+  function getSharedCombatSceneEditorSnapshot() {
+    var localScene = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
+      ? window.S.combat.sceneEditor
+      : null;
+    if (localScene) return localScene;
+    var sharedState = null;
+    try {
+      sharedState = typeof getCampaignSharedState === "function"
+        ? getCampaignSharedState()
+        : (window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+          ? window.campaignSystem.getSharedState()
+          : null);
+    } catch (_err) {
+      sharedState = null;
+    }
+    var sharedScene = sharedState && sharedState.combatScene && typeof sharedState.combatScene === "object"
+      ? sharedState.combatScene
+      : null;
+    var snapshot = sharedScene && sharedScene.sceneEditor && typeof sharedScene.sceneEditor === "object"
+      ? (deepCloneJson(sharedScene.sceneEditor) || sharedScene.sceneEditor)
+      : null;
+    if (!snapshot) return null;
+    if (window.S && typeof window.S === "object") {
+      if (!window.S.combat || typeof window.S.combat !== "object") {
+        window.S.combat = {};
+      }
+      window.S.combat.sceneEditor = deepCloneJson(snapshot) || snapshot;
+      return window.S.combat.sceneEditor;
+    }
+    return snapshot;
+  }
+
   function joinSharedCampaignCombatMode() {
-    if (!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object")) {
+    var sceneSnapshot = getSharedCombatSceneEditorSnapshot();
+    if (!sceneSnapshot) {
       safeNotif("The shared VTT is still syncing. Try again in a moment.", "warn");
       return false;
     }
@@ -803,10 +851,14 @@
       return false;
     }
     try {
-      window.applySharedCombatSceneEditorState(window.S.combat.sceneEditor, {
+      var opened = window.applySharedCombatSceneEditorState(sceneSnapshot, {
         autoOpen: true,
         sceneName: resolveSharedCombatSceneName()
       });
+      if (!opened) {
+        safeNotif("Could not join the shared Combat Mode scene.", "warn");
+        return false;
+      }
       safeNotif("Joined the shared Combat Mode scene.", "good");
       return true;
     } catch (_err) {
@@ -826,6 +878,7 @@
     window.joinSharedCampaignCombatModeFromPrompt = function () {
       var ok = joinSharedCampaignCombatMode();
       if (ok && typeof window.closeModal === "function") window.closeModal();
+      return ok;
     };
     window.dismissSharedCampaignCombatModePrompt = function () {
       if (typeof window.closeModal === "function") window.closeModal();
@@ -841,6 +894,38 @@
       + '</div>'
       + '</div>';
     window.openModal("Join Shared Combat Mode", html, null, { preventScroll: true, focusTrap: true });
+  }
+
+  function maybePromptSharedCombatModeFromScene(sharedCombat, sceneEditorState, syncMeta) {
+    if (state.role !== "player") return false;
+    var combatState = sharedCombat && typeof sharedCombat === "object" ? sharedCombat : null;
+    var sceneState = sceneEditorState && typeof sceneEditorState === "object" ? sceneEditorState : null;
+    if (!sceneState) return false;
+    var overlay = document.getElementById("combatModeOverlay");
+    if (overlay && overlay.classList.contains("open")) return false;
+    var activeSceneId = String(sceneState.activeSceneId || "campaign-shared-scene");
+    var sceneName = resolveSharedCombatSceneName();
+    var vttSession = combatState.vttSession && typeof combatState.vttSession === "object"
+      ? combatState.vttSession
+      : {
+          enteredAt: Number(syncMeta && syncMeta.at || combatState && combatState.startedAt || Date.now()),
+          by: String(syncMeta && syncMeta.by || combatState && combatState.startedBy || "GM"),
+          sceneName: sceneName,
+          activeSceneId: activeSceneId
+        };
+    var promptKeyBase = String(Math.max(0, Number(combatState && combatState.startedAt || 0)) || activeSceneId || "campaign-shared-scene");
+    var promptKey = [
+      promptKeyBase,
+      activeSceneId
+    ].join("|");
+    if (!promptKey || promptKey === state.lastCampaignScenePromptKey) return false;
+    state.lastCampaignScenePromptKey = promptKey;
+    var promptAt = Number(vttSession && vttSession.enteredAt || 0);
+    if (promptAt > state.lastCampaignVttPromptAt) {
+      state.lastCampaignVttPromptAt = promptAt;
+    }
+    promptCampaignCombatModeInvite(vttSession);
+    return true;
   }
 
   function cloneClientLocalSeaState() {
@@ -1108,6 +1193,9 @@
       window.setProvinceSelectedKey = function () {
         var out = baseSetProvinceSelectedKey.apply(this, arguments);
         if (state.applyingSharedState) return out;
+        if (out && state.role === "gm") {
+          syncProvinceFocus("province-focus").catch(function () {});
+        }
         if (out) scheduleGmCameraSync("province-focus", false);
         return out;
       };
@@ -2860,6 +2948,12 @@
           combatAugState: null,
           sceneEditor: null
         };
+        if (state.role === "player" && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object") {
+          var sharedCombatForPrompt = sharedState.campaignCombat && typeof sharedState.campaignCombat === "object"
+            ? sharedState.campaignCombat
+            : (current.campaignCombat && typeof current.campaignCombat === "object" ? current.campaignCombat : null);
+          maybePromptSharedCombatModeFromScene(sharedCombatForPrompt, window.S.combat.sceneEditor, sharedState.combatScene.syncMeta);
+        }
       }
       if (sharedState.gmSettings && typeof sharedState.gmSettings === "object") {
         var current = getCampaignSharedState() || {};
@@ -2873,9 +2967,19 @@
         var previousCombat = current && current.campaignCombat && typeof current.campaignCombat === "object"
           ? (deepCloneJson(current.campaignCombat) || {})
           : {};
+        var previousVttSession = previousCombat && previousCombat.vttSession && typeof previousCombat.vttSession === "object"
+          ? (deepCloneJson(previousCombat.vttSession) || previousCombat.vttSession)
+          : null;
         if (!current.campaignCombat) current.campaignCombat = {};
         Object.assign(current.campaignCombat, sharedState.campaignCombat);
         var mergedCombat = ensureCampaignCombatState(current);
+        if (mergedCombat.active && !mergedCombat.vttSession && previousVttSession) {
+          var hasSharedSceneEditor = !!(current.combatScene && current.combatScene.sceneEditor && typeof current.combatScene.sceneEditor === "object");
+          var hasLocalSceneEditor = !!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object");
+          if (hasSharedSceneEditor || hasLocalSceneEditor) {
+            mergedCombat.vttSession = deepCloneJson(previousVttSession) || previousVttSession;
+          }
+        }
         var combatStartedAt = Number(mergedCombat.startedAt || 0);
         if (mergedCombat.active && combatStartedAt && combatStartedAt !== state.lastCampaignCombatPromptAt) {
           state.lastCampaignCombatPromptAt = combatStartedAt;
@@ -2910,6 +3014,7 @@
           state.lastCampaignCombatPromptAt = 0;
           state.lastCampaignActorPromptKey = "";
           state.lastCampaignVttPromptAt = 0;
+          state.lastCampaignScenePromptKey = "";
         }
       }
       if (sharedState.campaignTravel && typeof sharedState.campaignTravel === "object") {
@@ -8024,6 +8129,14 @@
       travel.phaseCost = 0;
       travel.updatedAt = now;
       patch.campaignTravel = travel;
+      if (typeof window.getProvinceMapState === "function") {
+        try {
+          var provinceMap = deepCloneJson(window.getProvinceMapState() || null);
+          if (provinceMap && Array.isArray(provinceMap.mapData) && provinceMap.mapData.length) {
+            patch.provinceMap = provinceMap;
+          }
+        } catch (_err) {}
+      }
     }
 
     if (!Object.keys(patch).length) return { ok: false, error: "No focus patch available." };
