@@ -153,6 +153,65 @@
     background: true
   };
 
+  var CAMPAIGN_SOUNDTRACK_PRESETS = [
+    {
+      id: "calm-travel",
+      label: "Calm Travel",
+      suiteId: "music-suite-caravan",
+      styleName: "Folk Caravan",
+      ambienceIds: ["amb-wind"]
+    },
+    {
+      id: "province-expedition",
+      label: "Province Expedition",
+      suiteId: "music-suite-province",
+      styleName: "Province Marches",
+      ambienceIds: ["amb-wind"]
+    },
+    {
+      id: "sea-voyage",
+      label: "Sea Voyage",
+      suiteId: "music-suite-sea",
+      styleName: "Abyssal Sea",
+      ambienceIds: ["amb-waves", "amb-ship-rumble"]
+    },
+    {
+      id: "storm-dread",
+      label: "Storm And Dread",
+      suiteId: "music-suite-sea",
+      styleName: "Stormglass Voyage",
+      ambienceIds: ["amb-rain", "amb-thunder"]
+    },
+    {
+      id: "cosmic-wonder",
+      label: "Cosmic Wonder",
+      suiteId: "music-suite-planet",
+      styleName: "Planetfall Frontier",
+      ambienceIds: ["amb-radio"]
+    },
+    {
+      id: "city-noir",
+      label: "City Noir",
+      suiteId: "music-suite-space",
+      styleName: "Orbital Noir",
+      ambienceIds: ["amb-crowd", "amb-radio"]
+    },
+    {
+      id: "combat-pressure",
+      label: "Combat Pressure",
+      suiteId: "music-suite-combat",
+      styleName: "Iron Clash",
+      ambienceIds: ["amb-weapon-fighting"]
+    },
+    {
+      id: "victory-relief",
+      label: "Victory And Relief",
+      suiteId: "music-suite-character",
+      styleName: "Heroic Thread",
+      ambienceIds: ["amb-campfire"]
+    }
+  ];
+
   function safeNotif(msg, kind) {
     if (typeof window.showNotif === "function") {
       window.showNotif(msg, kind || "");
@@ -2805,6 +2864,8 @@
         var current = getCampaignSharedState() || {};
         if (!current.gmSettings) current.gmSettings = {};
         Object.assign(current.gmSettings, sharedState.gmSettings);
+        ensureGmSettings(current);
+        applyCampaignSoundtrackFromSharedState(current);
       }
       if (sharedState.campaignCombat && typeof sharedState.campaignCombat === "object") {
         var current = getCampaignSharedState() || {};
@@ -3281,6 +3342,39 @@
     return sharedState.campaignCombat;
   }
 
+  function createDefaultCampaignSoundtrackSettings() {
+    return {
+      enabled: false,
+      mood: "custom",
+      suiteId: "",
+      styleName: "",
+      ambienceIds: []
+    };
+  }
+
+  function normalizeCampaignSoundtrackSettings(config) {
+    var fallback = createDefaultCampaignSoundtrackSettings();
+    var raw = config && typeof config === "object" ? config : {};
+    var suiteId = String(raw.suiteId || raw.musicId || "").trim();
+    var styleName = String(raw.styleName || raw.style || "").trim();
+    var mood = String(raw.mood || "custom").trim() || "custom";
+    var seen = {};
+    var ambienceIds = (Array.isArray(raw.ambienceIds) ? raw.ambienceIds : (raw.ambienceId ? [raw.ambienceId] : []))
+      .map(function (entry) { return String(entry || "").trim(); })
+      .filter(function (entry) {
+        if (!entry || seen[entry]) return false;
+        seen[entry] = true;
+        return true;
+      })
+      .slice(0, 2);
+    fallback.enabled = !!raw.enabled && !!suiteId;
+    fallback.mood = mood;
+    fallback.suiteId = fallback.enabled ? suiteId : "";
+    fallback.styleName = fallback.enabled ? styleName : "";
+    fallback.ambienceIds = fallback.enabled ? ambienceIds : [];
+    return fallback;
+  }
+
   // Get or initialize GM settings (gmMode, visibility, etc)
   function ensureGmSettings(sharedState) {
     if (!sharedState) sharedState = getMutableCampaignSharedState();
@@ -3289,13 +3383,230 @@
         mode: "passive", // "passive" | "active" | "facilitative"
         travelMode: "gm-led", // who can initiate travel
         combatMode: "turn-based", // combat style
-        cameraLock: true
+        cameraLock: true,
+        soundtrack: createDefaultCampaignSoundtrackSettings()
       };
     }
     if (typeof sharedState.gmSettings.cameraLock !== "boolean") {
       sharedState.gmSettings.cameraLock = true;
     }
+    sharedState.gmSettings.soundtrack = normalizeCampaignSoundtrackSettings(sharedState.gmSettings.soundtrack);
     return sharedState.gmSettings;
+  }
+
+  function getCampaignSoundtrackPresets() {
+    return CAMPAIGN_SOUNDTRACK_PRESETS.map(function (preset) {
+      return {
+        id: String(preset.id || ""),
+        label: String(preset.label || ""),
+        suiteId: String(preset.suiteId || ""),
+        styleName: String(preset.styleName || ""),
+        ambienceIds: Array.isArray(preset.ambienceIds) ? preset.ambienceIds.slice() : []
+      };
+    });
+  }
+
+  function getCampaignSoundtrackPresetById(presetId) {
+    var key = String(presetId || "").trim();
+    if (!key || key === "custom") return null;
+    var presets = getCampaignSoundtrackPresets();
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i].id === key) return presets[i];
+    }
+    return null;
+  }
+
+  function getCampaignSoundtrackCatalog() {
+    var audio = typeof window !== "undefined" ? window.AudioManager : null;
+    if (audio && typeof audio.getCampaignSoundtrackCatalog === "function") {
+      try {
+        return audio.getCampaignSoundtrackCatalog() || { suites: [], ambiences: [] };
+      } catch (_err) {}
+    }
+    return { suites: [], ambiences: [] };
+  }
+
+  function renderCampaignSelectOptions(options, selectedValue, placeholderLabel) {
+    var items = Array.isArray(options) ? options : [];
+    var selected = String(selectedValue || "");
+    var html = placeholderLabel
+      ? ('<option value="">' + escapeHtml(String(placeholderLabel || "")) + "</option>")
+      : "";
+    items.forEach(function (option) {
+      var id = String(option && option.id != null ? option.id : "");
+      var label = String(option && option.label != null ? option.label : id);
+      html += '<option value="' + escapeHtml(id) + '"' + (id === selected ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
+    });
+    return html;
+  }
+
+  function buildCampaignSoundtrackStyleOptions(suiteId, selectedStyle) {
+    var catalog = getCampaignSoundtrackCatalog();
+    var selectedSuite = String(suiteId || "");
+    var suites = Array.isArray(catalog.suites) ? catalog.suites : [];
+    for (var i = 0; i < suites.length; i++) {
+      if (String(suites[i].id || "") !== selectedSuite) continue;
+      return renderCampaignSelectOptions(suites[i].styles || [], selectedStyle, "Auto / Any Cue");
+    }
+    return renderCampaignSelectOptions([], "", "Auto / Any Cue");
+  }
+
+  function getCampaignSoundtrackSummary(soundtrack) {
+    var config = normalizeCampaignSoundtrackSettings(soundtrack);
+    var presets = getCampaignSoundtrackPresets();
+    var catalog = getCampaignSoundtrackCatalog();
+    var moodLabel = "Custom";
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i].id === config.mood) {
+        moodLabel = presets[i].label;
+        break;
+      }
+    }
+    var suiteLabel = "Local soundtrack only";
+    var styleLabel = "Auto";
+    var ambienceLabels = [];
+    if (config.enabled) {
+      var suiteRow = null;
+      var suites = Array.isArray(catalog.suites) ? catalog.suites : [];
+      for (var si = 0; si < suites.length; si++) {
+        if (String(suites[si].id || "") === config.suiteId) {
+          suiteRow = suites[si];
+          break;
+        }
+      }
+      suiteLabel = suiteRow ? String(suiteRow.label || config.suiteId) : config.suiteId;
+      styleLabel = config.styleName || "Auto / Any Cue";
+      var ambiences = Array.isArray(catalog.ambiences) ? catalog.ambiences : [];
+      ambienceLabels = (config.ambienceIds || []).map(function (ambienceId) {
+        for (var ai = 0; ai < ambiences.length; ai++) {
+          if (String(ambiences[ai].id || "") === String(ambienceId || "")) {
+            return String(ambiences[ai].label || ambienceId);
+          }
+        }
+        return String(ambienceId || "");
+      }).filter(Boolean);
+    }
+    return {
+      enabled: config.enabled,
+      moodLabel: moodLabel,
+      suiteLabel: suiteLabel,
+      styleLabel: styleLabel,
+      ambienceLabel: ambienceLabels.length ? ambienceLabels.join(" + ") : "None"
+    };
+  }
+
+  function applyCampaignSoundtrackFromSharedState(sharedState) {
+    var audio = typeof window !== "undefined" ? window.AudioManager : null;
+    if (!audio) return;
+    var settings = ensureGmSettings(sharedState && typeof sharedState === "object" ? sharedState : getCampaignSharedState());
+    var soundtrack = normalizeCampaignSoundtrackSettings(settings.soundtrack);
+    if (soundtrack.enabled && typeof audio.applyCampaignSoundtrack === "function") {
+      audio.applyCampaignSoundtrack(soundtrack, { fadeIn: true });
+      return;
+    }
+    if (typeof audio.clearCampaignSoundtrack === "function") {
+      audio.clearCampaignSoundtrack({ fadeIn: true });
+    }
+  }
+
+  function setGmSoundtrack(config, callback) {
+    if (!state.role || state.role !== "gm") {
+      if (callback) callback({ ok: false, error: "Only GM can set table music" });
+      return;
+    }
+    try {
+      var requested = config && typeof config === "object" ? config : {};
+      var nextSoundtrack = normalizeCampaignSoundtrackSettings(requested);
+      if (requested.enabled && !nextSoundtrack.suiteId) {
+        if (callback) callback({ ok: false, error: "Choose a playlist first" });
+        safeNotif("Choose a playlist before syncing table music.", "warn");
+        return;
+      }
+      var shared = getMutableCampaignSharedState();
+      var settings = ensureGmSettings(shared);
+      settings.soundtrack = nextSoundtrack;
+      applyCampaignSoundtrackFromSharedState(shared);
+      renderSettingsSection();
+      if (state.code && state.connected) {
+        syncSharedPatch({ gmSettings: deepCloneJson(settings) || settings }, "set-gm-soundtrack").then(function (res) {
+          if (!res || !res.ok) {
+            safeNotif((res && res.error) || "Could not sync table music.", "warn");
+            if (callback) callback(res || { ok: false });
+            return;
+          }
+          safeNotif(nextSoundtrack.enabled ? "Table music updated." : "Table music cleared.", nextSoundtrack.enabled ? "good" : "info");
+          if (callback) callback(res);
+        }).catch(function (err) {
+          if (callback) callback({ ok: false, error: String(err) });
+        });
+        return;
+      }
+      safeNotif(nextSoundtrack.enabled ? "Table music updated locally." : "Table music cleared locally.", nextSoundtrack.enabled ? "good" : "info");
+      if (callback) callback({ ok: true, local: true, soundtrack: nextSoundtrack });
+    } catch (err) {
+      if (callback) callback({ ok: false, error: String(err) });
+    }
+  }
+
+  function applyCampaignSoundtrackMoodFromUi(callback) {
+    var moodId = readUiValue("campaignMusicMood").trim() || "custom";
+    var preset = getCampaignSoundtrackPresetById(moodId);
+    if (!preset) {
+      safeNotif("Choose a named scene mood or use Play Custom Mix.", "info");
+      if (callback) callback({ ok: false, error: "No soundtrack preset selected." });
+      return;
+    }
+    setGmSoundtrack({
+      enabled: true,
+      mood: preset.id,
+      suiteId: preset.suiteId,
+      styleName: preset.styleName,
+      ambienceIds: preset.ambienceIds
+    }, callback);
+  }
+
+  function applyCampaignSoundtrackMixFromUi(callback) {
+    var moodId = readUiValue("campaignMusicMood").trim() || "custom";
+    var ambienceIds = [
+      readUiValue("campaignMusicAmbienceA").trim(),
+      readUiValue("campaignMusicAmbienceB").trim()
+    ].filter(Boolean).filter(function (entry, index, list) {
+      return list.indexOf(entry) === index;
+    });
+    setGmSoundtrack({
+      enabled: true,
+      mood: moodId,
+      suiteId: readUiValue("campaignMusicSuite").trim(),
+      styleName: readUiValue("campaignMusicStyle").trim(),
+      ambienceIds: ambienceIds
+    }, callback);
+  }
+
+  function clearCampaignSoundtrack(callback) {
+    setGmSoundtrack(createDefaultCampaignSoundtrackSettings(), callback);
+  }
+
+  function refreshCampaignSoundtrackStyleOptions(selectedStyle) {
+    var styleSelect = document.getElementById("campaignMusicStyle");
+    if (!styleSelect) return;
+    var suiteId = readUiValue("campaignMusicSuite").trim();
+    var desired = typeof selectedStyle === "string" ? selectedStyle : String(styleSelect.value || "");
+    styleSelect.innerHTML = buildCampaignSoundtrackStyleOptions(suiteId, desired);
+    styleSelect.value = desired;
+    if (desired && styleSelect.value !== desired) styleSelect.value = "";
+  }
+
+  function syncCampaignSoundtrackMoodToEditor() {
+    var moodId = readUiValue("campaignMusicMood").trim() || "custom";
+    var preset = getCampaignSoundtrackPresetById(moodId);
+    if (!preset) return;
+    var suiteSelect = document.getElementById("campaignMusicSuite");
+    var ambienceA = document.getElementById("campaignMusicAmbienceA");
+    var ambienceB = document.getElementById("campaignMusicAmbienceB");
+    if (suiteSelect) suiteSelect.value = preset.suiteId;
+    refreshCampaignSoundtrackStyleOptions(preset.styleName);
+    if (ambienceA) ambienceA.value = preset.ambienceIds[0] || "";
+    if (ambienceB) ambienceB.value = preset.ambienceIds[1] || "";
   }
 
   function resolveCharacterMaxHealth(character) {
@@ -3917,7 +4228,7 @@
       var settings = ensureGmSettings(shared);
       settings.cameraLock = !!enabled;
       if (state.code && state.connected) {
-        syncSharedPatch({ gmSettings: { cameraLock: !!enabled } }, "set-gm-camera-lock").then(function (res) {
+        syncSharedPatch({ gmSettings: deepCloneJson(settings) || settings }, "set-gm-camera-lock").then(function (res) {
           if (res && res.ok && enabled) {
             syncGmCameraView("enable-camera-lock", { force: true, includeWorldSync: true }).catch(function () {});
           }
@@ -5358,6 +5669,21 @@
       ? sharedState.campaignTravel
       : ensureCampaignTravelState(sharedState);
     var gmSettings = ensureGmSettings(sharedState);
+    var soundtrackSettings = normalizeCampaignSoundtrackSettings(gmSettings.soundtrack);
+    var soundtrackSummary = getCampaignSoundtrackSummary(soundtrackSettings);
+    var soundtrackCatalog = getCampaignSoundtrackCatalog();
+    var soundtrackSuites = Array.isArray(soundtrackCatalog.suites) ? soundtrackCatalog.suites : [];
+    var soundtrackAmbiences = Array.isArray(soundtrackCatalog.ambiences) ? soundtrackCatalog.ambiences : [];
+    var soundtrackPresets = [{ id: "custom", label: "Custom" }].concat(getCampaignSoundtrackPresets().map(function (preset) {
+      return { id: preset.id, label: preset.label };
+    }));
+    var soundtrackMoodOptionsHtml = renderCampaignSelectOptions(soundtrackPresets, soundtrackSettings.mood, "");
+    var soundtrackSuiteOptionsHtml = renderCampaignSelectOptions(soundtrackSuites, soundtrackSettings.suiteId, "Choose Playlist");
+    var soundtrackStyleOptionsHtml = buildCampaignSoundtrackStyleOptions(soundtrackSettings.suiteId, soundtrackSettings.styleName);
+    var soundtrackPrimaryAmbience = Array.isArray(soundtrackSettings.ambienceIds) ? String(soundtrackSettings.ambienceIds[0] || "") : "";
+    var soundtrackSecondaryAmbience = Array.isArray(soundtrackSettings.ambienceIds) ? String(soundtrackSettings.ambienceIds[1] || "") : "";
+    var soundtrackAmbienceOptionsHtml = renderCampaignSelectOptions(soundtrackAmbiences, soundtrackPrimaryAmbience, "No Ambience");
+    var soundtrackAmbienceOptionsHtmlSecondary = renderCampaignSelectOptions(soundtrackAmbiences, soundtrackSecondaryAmbience, "No Ambience");
     var strictCameraLock = !!(gmSettings && gmSettings.cameraLock);
     var isGm = state.role === "gm";
     var sessionTimeline = Array.isArray(sharedState.sessionTimeline)
@@ -5517,6 +5843,32 @@
       + (campaign && campaign.archived ? ' · <strong style="color:var(--gold2);">Archived</strong>' : '')
       + (campaign && campaign.hasPassword ? ' · Password Protected' : '')
       + '</div>'
+      + "</div>"
+      + '<div class="campaign-card">'
+      + '<div class="campaign-card-title">Table Soundtrack</div>'
+      + '<div class="campaign-muted"><strong>' + escapeHtml(soundtrackSettings.enabled ? ('Mood: ' + soundtrackSummary.moodLabel) : 'No GM soundtrack override active') + '</strong></div>'
+      + '<div class="campaign-muted" style="margin-top:.22rem;">Playlist: <strong style="color:var(--gold2);">' + escapeHtml(soundtrackSummary.suiteLabel) + '</strong> · ' + escapeHtml(soundtrackSummary.styleLabel) + '</div>'
+      + '<div class="campaign-muted" style="margin-top:.22rem;">Ambience: <strong style="color:var(--teal);">' + escapeHtml(soundtrackSummary.ambienceLabel) + '</strong></div>'
+      + '<div class="campaign-muted" style="margin-top:.22rem;">Applies to everyone in the campaign who has music enabled in Settings.</div>'
+      + (isGm
+        ? ('<div style="display:flex;flex-direction:column;gap:.35rem;margin-top:.45rem;">'
+          + '<div class="campaign-roll-grid">'
+          + '<select id="campaignMusicMood" class="campaign-input" onchange="window.campaignSystem.syncCampaignSoundtrackMoodToEditor()">' + soundtrackMoodOptionsHtml + '</select>'
+          + '<select id="campaignMusicSuite" class="campaign-input" onchange="window.campaignSystem.refreshCampaignSoundtrackStyleOptions()">' + soundtrackSuiteOptionsHtml + '</select>'
+          + '<select id="campaignMusicStyle" class="campaign-input">' + soundtrackStyleOptionsHtml + '</select>'
+          + '</div>'
+          + '<div class="campaign-roll-grid">'
+          + '<select id="campaignMusicAmbienceA" class="campaign-input">' + soundtrackAmbienceOptionsHtml + '</select>'
+          + '<select id="campaignMusicAmbienceB" class="campaign-input">' + soundtrackAmbienceOptionsHtmlSecondary + '</select>'
+          + '</div>'
+          + '<div class="campaign-actions" style="margin-top:.1rem;">'
+          + '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.applyCampaignSoundtrackMoodFromUi()"' + riskyDisabledAttr + '>Use Mood Preset</button>'
+          + '<button class="btn btn-xs" onclick="window.campaignSystem.applyCampaignSoundtrackMixFromUi()"' + riskyDisabledAttr + '>Play Custom Mix</button>'
+          + '<button class="btn btn-xs btn-red" onclick="window.campaignSystem.clearCampaignSoundtrack()"' + riskyDisabledAttr + '>Clear Table Music</button>'
+          + '</div>'
+          + '<div class="campaign-muted" style="font-size:.78rem;">Pick a mood for fast scene swaps, or build a custom mix with any playlist and ambience combo.</div>'
+          + '</div>')
+        : '')
       + "</div>"
       + (isGm
         ? (""
@@ -7323,6 +7675,11 @@
     state.lastCharacterHash = "";
     state.uiDraft.joinPassword = "";
     state.lastPlayerDockSeed = "";
+    if (typeof window.AudioManager !== "undefined" && window.AudioManager && typeof window.AudioManager.clearCampaignSoundtrack === "function") {
+      try {
+        window.AudioManager.clearCampaignSoundtrack({ fadeIn: true });
+      } catch (_err) {}
+    }
     clearSession();
     refreshSettingsModeFromCampaign();
 
@@ -8504,6 +8861,12 @@
     // Phase 1: GM modes and campaign combat
     setGmMode: setGmMode,
     setGmCameraLock: setGmCameraLock,
+    setGmSoundtrack: setGmSoundtrack,
+    applyCampaignSoundtrackMoodFromUi: applyCampaignSoundtrackMoodFromUi,
+    applyCampaignSoundtrackMixFromUi: applyCampaignSoundtrackMixFromUi,
+    clearCampaignSoundtrack: clearCampaignSoundtrack,
+    refreshCampaignSoundtrackStyleOptions: refreshCampaignSoundtrackStyleOptions,
+    syncCampaignSoundtrackMoodToEditor: syncCampaignSoundtrackMoodToEditor,
     startCampaignCombat: startCampaignCombat,
     setCombatActor: setCombatActor,
     nextCombatActor: nextCombatActor,

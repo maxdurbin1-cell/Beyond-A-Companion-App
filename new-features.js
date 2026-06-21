@@ -14718,18 +14718,30 @@
     var mode = 'standard';
     if (window.heavyAttackData && window.heavyAttackData.type === type) mode = 'heavy';
     else if (window.fastAttackData && window.fastAttackData.type === type) mode = 'fast';
+    else if (window.dualAttackData && window.dualAttackData.type === type) mode = 'dual';
     else if (window.enemyManualReactionData && window.enemyManualReactionData.mode === 'arena-enemy-reaction') mode = 'enemy_reaction';
     else if (window.manualRollData && window.manualRollData.mode === 'surprise-check') mode = 'surprise_check';
+    var displayLabel = skillLabel;
+    if (mode === 'heavy') displayLabel = 'Heavy ' + skillLabel;
+    else if (mode === 'fast') displayLabel = 'Fast ' + skillLabel;
+    else if (mode === 'dual') displayLabel = 'Dual Wield (' + skillLabel + ')';
     var statForModifiers = type === 'hack' ? 'control' : (type === 'spell' ? 'mind' : type);
+    var manualMeta = window.manualRollData && typeof window.manualRollData === 'object' ? window.manualRollData : {};
+    var weaponBonusOptions = manualMeta.weaponBonusOptions || null;
+    if (mode === 'heavy' && window.heavyAttackData && window.heavyAttackData.weaponBonusOptions) weaponBonusOptions = window.heavyAttackData.weaponBonusOptions;
+    else if (mode === 'fast' && window.fastAttackData && window.fastAttackData.weaponBonusOptions) weaponBonusOptions = window.fastAttackData.weaponBonusOptions;
+    else if (mode === 'dual' && window.dualAttackData && window.dualAttackData.weaponBonusOptions) weaponBonusOptions = window.dualAttackData.weaponBonusOptions;
+    else if (!weaponBonusOptions && typeof window.getPreferredWeaponBonusOptionsForStat === 'function') weaponBonusOptions = window.getPreferredWeaponBonusOptionsForStat(statForModifiers);
     var extraLines = [];
     if (mode === 'heavy') extraLines.push('Heavy attack mode: add +2 damage on hit.');
     if (mode === 'fast') extraLines.push('Fast attack mode: on success, target becomes Vulnerable for 1 round.');
+    if (mode === 'dual') extraLines.push('Dual Wield mode: apply matching Weapon 1 and Weapon 2 bonuses, then become Vulnerable after the attack resolves.');
     if (mode === 'enemy_reaction') extraLines.push('This is a reaction defense check against an enemy action.');
     if (mode === 'surprise_check') extraLines.push('Surprise check success grants +2 to attacks this round.');
     extraLines.push('Enter final totals after applying your active bonuses, penalties, and condition step changes.');
     var modifierLines = [];
     if (typeof window.buildManualRollModifierLines === 'function') {
-      modifierLines = window.buildManualRollModifierLines(statForModifiers, actionDie, { extraLines: extraLines }) || [];
+      modifierLines = window.buildManualRollModifierLines(statForModifiers, actionDie, { extraLines: extraLines, weaponBonusOptions: weaponBonusOptions }) || [];
     } else {
       modifierLines = extraLines;
     }
@@ -14747,15 +14759,15 @@
 
     var html = '<div style="font-size:.85rem;color:var(--text2);line-height:1.7;">'
       + '<div style="font-family:\'Cinzel\',serif;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--gold2);margin-bottom:.4rem;">'
-      + skillLabel + ' vs Dread d' + dreadDie
+      + displayLabel + ' vs Dread d' + dreadDie
       + '</div>'
       + '<div style="background:rgba(46,196,182,.05);border:1px solid rgba(46,196,182,.25);padding:.35rem .45rem;margin-bottom:.4rem;border-radius:3px;">'
       + '<div style="font-size:.75rem;color:var(--teal);margin-bottom:.15rem;"><strong>Roll Against:</strong></div>'
-      + '<div><strong style="color:var(--text2);">' + skillLabel + ' d' + actionDie + '</strong> <span style="color:var(--muted2);">vs</span> <strong style="color:var(--red);">Dread d' + dreadDie + '</strong></div>'
+      + '<div><strong style="color:var(--text2);">' + displayLabel + ' d' + actionDie + '</strong> <span style="color:var(--muted2);">vs</span> <strong style="color:var(--red);">Dread d' + dreadDie + '</strong></div>'
       + '</div>'
       + modifierHtml
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-bottom:.4rem;">'
-      + '<div><label style="font-size:.7rem;color:var(--muted2);display:block;margin-bottom:.15rem;">' + skillLabel + ' d' + actionDie + '</label><input type="text" inputmode="text" id="combatManualActionValue" placeholder="e.g. 8+7" style="width:100%;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .4rem;font-size:.85rem;border-radius:3px;"></div>'
+      + '<div><label style="font-size:.7rem;color:var(--muted2);display:block;margin-bottom:.15rem;">' + displayLabel + ' d' + actionDie + '</label><input type="text" inputmode="text" id="combatManualActionValue" placeholder="e.g. 8+7" style="width:100%;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .4rem;font-size:.85rem;border-radius:3px;"></div>'
       + '<div><label style="font-size:.7rem;color:var(--muted2);display:block;margin-bottom:.15rem;">Dread d' + dreadDie + '</label><input type="text" inputmode="text" id="combatManualDreadValue" placeholder="e.g. 7+3+1" style="width:100%;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .4rem;font-size:.85rem;border-radius:3px;"></div>'
       + '</div>'
       + '</div>'
@@ -14765,7 +14777,7 @@
       + '<button class="btn btn-sm btn-teal" onclick="finalizeCombatManualRoll(\'' + type + '\')">⚄ Resolve</button>'
       + '</div>';
 
-    openModal('Manual ' + skillLabel + ' Roll', html, null, { preventScroll: true, focusTrap: true });
+    openModal('Manual ' + displayLabel + ' Roll', html, null, { preventScroll: true, focusTrap: true });
   };
 
   window.finalizeCombatManualRoll = function(type) {
@@ -14794,6 +14806,7 @@
     var mode = 'standard';
     if (window.heavyAttackData && window.heavyAttackData.type === type) mode = 'heavy';
     else if (window.fastAttackData && window.fastAttackData.type === type) mode = 'fast';
+    else if (window.dualAttackData && window.dualAttackData.type === type) mode = 'dual';
     else if (window.enemyManualReactionData && window.enemyManualReactionData.mode === 'arena-enemy-reaction') mode = 'enemy_reaction';
     else if (window.manualRollData && window.manualRollData.mode === 'surprise-check') mode = 'surprise_check';
     var selectedDice = (window.selectedDice && typeof window.selectedDice === 'object') ? window.selectedDice : { action: 4, dread: 6 };
@@ -14827,8 +14840,9 @@
       });
     }
     var label = 'Spell';
-    if (mode === 'heavy') label = 'Heavy Attack';
-    else if (mode === 'fast') label = 'Fast Attack';
+    if (mode === 'heavy') label = 'Heavy Attack (' + (type === 'shoot' ? 'Shoot' : 'Strike') + ')';
+    else if (mode === 'fast') label = 'Fast Attack (' + (type === 'shoot' ? 'Shoot' : 'Strike') + ')';
+    else if (mode === 'dual') label = 'Dual Wield (' + (type === 'shoot' ? 'Shoot' : 'Strike') + ')';
     else if (type === 'strike') label = 'Strike';
     else if (type === 'shoot') label = 'Shoot';
     else if (type === 'hack') label = 'Hack';
@@ -14886,6 +14900,7 @@
       window.manualRollData = null;
       window.heavyAttackData = null;
       window.fastAttackData = null;
+      window.dualAttackData = null;
       return;
     }
 
@@ -14919,6 +14934,7 @@
       window.manualRollData = null;
       window.heavyAttackData = null;
       window.fastAttackData = null;
+      window.dualAttackData = null;
       return;
     }
 
@@ -15028,6 +15044,9 @@
       S.combat.fastAttackVulnerable = 1;
       S.combat.fastAttackUsedEncounter = true;
     }
+    if (mode === 'dual' && typeof applyDualWieldSelfVulnerable === 'function') {
+      applyDualWieldSelfVulnerable();
+    }
 
     if (typeof clearConditionOnUse === 'function') clearConditionOnUse(type);
   if (typeof updateCombatUI === 'function') updateCombatUI();
@@ -15038,6 +15057,7 @@
     window.manualRollData = null;
     window.heavyAttackData = null;
     window.fastAttackData = null;
+    window.dualAttackData = null;
   };
   window.returnToPreviousManualRollModal = returnToPreviousManualRollModal;
   window.manualRollOutcomeFailure = manualRollOutcomeFailure;

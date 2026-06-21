@@ -23,6 +23,7 @@
     currentMusicPool: [],
     currentMusicRotationTimer: null,
     currentScenario: "",
+    campaignSoundtrackOverride: null,
     currentAmbiences: [],
     musicVolume: 0.5,
     sfxVolume: 0.6,
@@ -101,6 +102,135 @@
       return bits.join(' | ');
     },
 
+    formatSuiteLabel(suiteId) {
+      var suite = String(suiteId || '').trim();
+      if (!suite) return 'Playlist';
+      var pool = this.getMusicVariantPool(suite);
+      for (var i = 0; i < pool.length; i++) {
+        var meta = this.musicTrackMeta && this.musicTrackMeta[pool[i]] ? this.musicTrackMeta[pool[i]] : null;
+        if (meta && meta.suiteLabel) return String(meta.suiteLabel);
+      }
+      return suite
+        .replace(/^music[-_]?suite[-_]?/i, '')
+        .replace(/^music[-_]?/i, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b\w/g, function (chr) { return chr.toUpperCase(); });
+    },
+
+    formatAmbienceLabel(ambienceId) {
+      var raw = String(ambienceId || '').trim();
+      if (!raw) return 'No ambience';
+      return raw
+        .replace(/^amb[-_]?/i, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b\w/g, function (chr) { return chr.toUpperCase(); });
+    },
+
+    normalizeCampaignSoundtrack(config) {
+      var raw = config && typeof config === 'object' ? config : {};
+      var suiteId = String(raw.suiteId || raw.musicId || '').trim();
+      var styleName = String(raw.styleName || raw.style || '').trim();
+      var mood = String(raw.mood || raw.sceneMood || 'custom').trim() || 'custom';
+      var rawAmbiences = Array.isArray(raw.ambienceIds)
+        ? raw.ambienceIds.slice()
+        : (raw.ambienceId ? [raw.ambienceId] : []);
+      var seen = Object.create(null);
+      var ambienceIds = rawAmbiences.map(function (entry) {
+        return String(entry || '').trim();
+      }).filter(function (entry) {
+        if (!entry || seen[entry]) return false;
+        seen[entry] = true;
+        return !!entry;
+      }).filter((entry) => {
+        return !!(this.ambienceProfiles && this.ambienceProfiles[entry]);
+      });
+      var enabled = !!raw.enabled && !!suiteId;
+      return {
+        enabled: enabled,
+        mood: mood,
+        suiteId: enabled ? suiteId : '',
+        styleName: enabled ? styleName : '',
+        ambienceIds: enabled ? ambienceIds : []
+      };
+    },
+
+    hasCampaignSoundtrackOverride() {
+      var config = this.campaignSoundtrackOverride;
+      return !!(config && config.enabled && config.suiteId);
+    },
+
+    getCampaignSoundtrackCatalog() {
+      if (!Object.keys(this.musicSuiteStyles || {}).length || !Object.keys(this.ambienceProfiles || {}).length) {
+        this.ensureInitialized();
+      }
+      var suiteIds = Object.keys(this.musicSuiteStyles || {});
+      var suites = suiteIds.map((suiteId) => {
+        var styleMap = this.musicSuiteStyles && this.musicSuiteStyles[suiteId] ? this.musicSuiteStyles[suiteId] : {};
+        return {
+          id: suiteId,
+          label: this.formatSuiteLabel(suiteId),
+          styles: Object.keys(styleMap).map(function (styleName) {
+            return { id: styleName, label: String(styleName || '') };
+          })
+        };
+      }).sort(function (a, b) {
+        return String(a.label || '').localeCompare(String(b.label || ''));
+      });
+      var ambiences = Object.keys(this.ambienceProfiles || {}).map((ambienceId) => {
+        return {
+          id: ambienceId,
+          label: this.formatAmbienceLabel(ambienceId)
+        };
+      }).sort(function (a, b) {
+        return String(a.label || '').localeCompare(String(b.label || ''));
+      });
+      return { suites: suites, ambiences: ambiences };
+    },
+
+    applyCampaignSoundtrack(config, options = {}) {
+      this.ensureInitialized();
+      var previous = this.normalizeCampaignSoundtrack(this.campaignSoundtrackOverride);
+      var next = this.normalizeCampaignSoundtrack(config);
+      if (!next.enabled) return this.clearCampaignSoundtrack(options);
+      this.campaignSoundtrackOverride = next;
+      if (!this.enabled || !this.musicConsent) return next;
+      var variantPool = this.resolveSuiteStylePool(next.suiteId, next.styleName);
+      var previousHash = JSON.stringify(previous);
+      var nextHash = JSON.stringify(next);
+      var currentPoolHash = JSON.stringify(Array.isArray(this.currentMusicPool) ? this.currentMusicPool : []);
+      var desiredPoolHash = JSON.stringify(variantPool);
+      var forceVariant = options.forceVariantChange === true
+        || previousHash !== nextHash
+        || (String(this.currentMusicBaseId || '') === String(next.suiteId || '') && currentPoolHash !== desiredPoolHash);
+      this.stopAmbience(options.fadeOut !== false);
+      next.ambienceIds.forEach((ambienceId) => {
+        if (this.ambienceProfiles[ambienceId]) this.playAmbience(ambienceId, 1, true);
+      });
+      this.playMusic(next.suiteId, options.fadeIn !== false, {
+        allowCampaignOverride: true,
+        forceVariantChange: forceVariant,
+        variantPool: variantPool
+      });
+      return next;
+    },
+
+    clearCampaignSoundtrack(options = {}) {
+      this.campaignSoundtrackOverride = null;
+      if (!this.enabled || !this.musicConsent) return null;
+      if (this.currentScenario) {
+        this.playScenarioAudio(this.currentScenario, {
+          fadeIn: options.fadeIn !== false,
+          fadeOut: options.fadeOut !== false,
+          allowCampaignOverride: true
+        });
+      } else {
+        this.switchTabMusic(this.currentTab || 'character', {
+          allowCampaignOverride: true
+        });
+      }
+      return null;
+    },
+
     getAssetPackAttributionEntries() {
       var ids = Array.isArray(this.assetPack && this.assetPack.loadedIds) ? this.assetPack.loadedIds.slice() : [];
       var seen = Object.create(null);
@@ -166,7 +296,12 @@
           if (document.hidden) {
             this.stopAmbience(true);
           } else {
-            if (this.currentScenario) {
+            if (this.hasCampaignSoundtrackOverride()) {
+              this.applyCampaignSoundtrack(this.campaignSoundtrackOverride, {
+                fadeIn: true,
+                fadeOut: false
+              });
+            } else if (this.currentScenario) {
               this.playScenarioAudio(this.currentScenario, { fadeIn: true, fadeOut: false });
             } else {
               this.switchTabMusic(this.currentTab || 'character');
@@ -259,6 +394,7 @@
         if (!self.musicConsent || !self.enabled) return;
         if (String(self.currentMusicBaseId || '') !== String(baseId || '')) return;
         self.playMusic(baseId, true, {
+          allowCampaignOverride: true,
           forceVariantChange: true,
           excludeId: chosenId,
           preserveScenario: true,
@@ -543,6 +679,9 @@
 
       const baseId = String(musicId || '').trim();
       if (!baseId) return;
+      if (this.hasCampaignSoundtrackOverride() && options.allowCampaignOverride !== true) {
+        return;
+      }
       const now = Date.now();
       if (!options.forceVariantChange && this.lastMusicSwitchAt > 0
         && (now - this.lastMusicSwitchAt) < Math.max(200, Number(this.musicSwitchCooldownMs || 900))) {
@@ -600,6 +739,7 @@
           }
           self.currentMusic = null;
           self.playMusic(baseId, true, {
+            allowCampaignOverride: true,
             forceVariantChange: true,
             excludeId: chosenId,
             preserveScenario: true,
@@ -1346,10 +1486,11 @@
 
     playScenarioAudio(name, options = {}) {
       this.ensureInitialized();
+      this.currentScenario = String(name || '');
       if (!this.enabled || !this.musicConsent) return;
+      if (this.hasCampaignSoundtrackOverride() && options.allowCampaignOverride !== true) return;
       const profile = this.resolveScenarioProfile(name);
       if (!profile) return;
-      this.currentScenario = String(name || '');
       if (profile.music) {
         const selection = this.resolveScenarioMusicSelection(profile.music, name);
         this.playMusic(selection.musicId || profile.music, options.fadeIn !== false, { variantPool: selection.variantPool });
@@ -1368,10 +1509,13 @@
     },
 
     // ── TAB-SPECIFIC MUSIC ───────────────────────────────────────────────────
-    switchTabMusic(tabId) {
+    switchTabMusic(tabId, options = {}) {
       this.currentTab = tabId;
 
       if (!this.musicConsent) {
+        return;
+      }
+      if (this.hasCampaignSoundtrackOverride() && options.allowCampaignOverride !== true) {
         return;
       }
       
@@ -1452,6 +1596,13 @@
       }
       this.ensureInitialized();
       this.loadOptionalAssetPack();
+      if (this.hasCampaignSoundtrackOverride()) {
+        this.applyCampaignSoundtrack(this.campaignSoundtrackOverride, {
+          fadeIn: true,
+          forceVariantChange: true
+        });
+        return;
+      }
       this.switchTabMusic(this.currentTab || 'character');
     },
 
@@ -1487,6 +1638,7 @@
     // Scenario/Location conveniences
     playLocationAudio(name, options) { this.playScenarioAudio(name, options || {}); },
     setAmbienceByName(name) {
+      if (this.hasCampaignSoundtrackOverride()) return;
       const key = normalizeScenarioKey(name);
       const ambienceId = {
         'wind': 'amb-wind',

@@ -1372,6 +1372,8 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
             <option value="">— Choose Action —</option>
             <option value="standard_strike">Standard Attack (Strike) — 1 Action</option>
             <option value="standard_shoot">Standard Attack (Shoot) — 1 Action</option>
+            <option value="dual_strike">Dual Wield (Strike) — 3 Actions · Weapon 1 + Weapon 2 · Vulnerable</option>
+            <option value="dual_shoot">Dual Wield (Shoot) — 3 Actions · Weapon 1 + Weapon 2 · Vulnerable</option>
             <option value="heavy_strike">Heavy Attack (Strike) — 2 Actions · +Valor Die</option>
             <option value="heavy_shoot">Heavy Attack (Shoot) — 2 Actions · +Valor Die</option>
             <option value="fast_strike">Fast Attack (Strike) — Free · -Valor Die</option>
@@ -8051,11 +8053,15 @@ function updateWayfarerActionBtn(){
   var canCover=(range==='nearby'||range==='far');
   var canHelp=(typeof getAdjacentCombatAllies==='function'?getAdjacentCombatAllies().length>0:(range!=='far'));
   var canStrike=(range==='engaged');
+  var canDualStrike=canStrike&&typeof hasDualWieldAttackOption==='function'&&hasDualWieldAttackOption('strike');
+  var canDualShoot=canShoot&&typeof hasDualWieldAttackOption==='function'&&hasDualWieldAttackOption('shoot');
   var moveCost=(typeof getCombatMoveActionCost==='function')?getCombatMoveActionCost():1;
   var fastUsed=!!(S&&S.combat&&S.combat.fastAttackUsedEncounter);
   var allow={
     standard_strike:(actions>=1&&canStrike),
     standard_shoot:(actions>=1&&canShoot),
+    dual_strike:(actions>=3&&canDualStrike),
+    dual_shoot:(actions>=3&&canDualShoot),
     heavy_strike:(actions>=2&&canStrike),
     heavy_shoot:(actions>=2&&canShoot),
     fast_strike:(canStrike&&!fastUsed),
@@ -8105,6 +8111,7 @@ function updateWayfarerActionBtn(){
     if(v==='teamwork_event')hint='Need 1 Action and 5 TMW. ('+actions+' Actions, '+tmw+' TMW)';
     else if(v==='cover_partial'||v==='cover_full')hint='Cover requires Nearby/Far zone and 1 Action.';
     else if(v==='stand_help')hint='Help requires not being in Far zone and 1 Action.';
+    else if(v==='dual_strike'||v==='dual_shoot')hint='Dual Wield needs 3 Actions and a non-shield Weapon 2 bonus for that attack.';
     else if(v==='move_out')hint='Already at Far. Move Inward to close distance.';
     else if(v==='move_in')hint='Already at Engaged. Move Outward to open distance.';
     else if(v==='fast_strike'||v==='fast_shoot')hint='Fast Attack can only be used once per combat encounter.';
@@ -8168,59 +8175,34 @@ function executeWayfarerAction(){
   if(resEl)resEl.innerHTML='';
   if(v==='standard_strike'){rollAttack('strike');setRes('<span style="color:var(--muted2);font-size:.78rem;">\u2192 see Strike result below</span>');return;}
   if(v==='standard_shoot'){rollAttack('shoot');setRes('<span style="color:var(--muted2);font-size:.78rem;">\u2192 see Shoot result below</span>');return;}
+  if(v==='dual_strike'||v==='dual_shoot'){
+    var dualType=v==='dual_strike'?'strike':'shoot';
+    rollAttack(dualType,{
+      actionCost:3,
+      actionSpendLabel:'Dual Wield',
+      weaponBonusOptions:getDualWieldWeaponBonusOptions(),
+      attackLabel:'Dual Wield ('+(dualType==='strike'?'Strike':'Shoot')+')',
+      manualMode:'dual',
+      applySelfVulnerable:true,
+      extraNotes:['Weapon Slot 2 contributes its matching combat bonus to this attack.']
+    });
+    setRes('<span style="color:var(--muted2);font-size:.78rem;">\u2192 see Dual Wield result below</span>');
+    return;
+  }
   if(v==='heavy_strike'||v==='heavy_shoot'){
     var type2=v==='heavy_strike'?'strike':'shoot';
-    if(!consumeCombatAction('Heavy Attack (first action)'))return;
-    if(!consumeCombatAction('Heavy Attack (second action)'))return;
-    
-    // Check if manual roll mode is enabled
-    if(typeof isManualRollModeEnabled==='function'&&isManualRollModeEnabled()){
-      var baseDie=getEffectiveCombatDie(type2);
-      var focusedEnemy2=typeof getPrimaryCombatEnemy==='function'?getPrimaryCombatEnemy():null;
-      var enemyDie=focusedEnemy2&&Number(focusedEnemy2.dread||0)>0?Number(focusedEnemy2.dread||0):(S.combat&&S.combat.enemyDread?S.combat.enemyDread:6);
-      window.selectedDice={action:baseDie,dread:enemyDie};
-      window.heavyAttackData={type:type2,advDie:S&&S.stats&&S.stats.valor?S.stats.valor:4};
-      performCombatActionManualRoll(type2);
-      return;
-    }
-    
-    var advDie=S&&S.stats&&S.stats.valor?S.stats.valor:4;
-    var affixBonus=getEquippedAffixCombatBonuses();
-    var die = getEffectiveCombatDie(type2);
-    if(type2==='strike'&&Number(affixBonus.strikeDieSteps||0)!==0)die=applyDieSteps(die,Number(affixBonus.strikeDieSteps||0));
-    var augDie = getAugBonus(type2);
-    var wpBonus = parseWeaponBonuses(type2);
-    var flBonus = getFlavorBonus(type2);
-    var mtBonus = getMutationBonus(type2);
-    var mods = Array.isArray(S.weaponMods) ? S.weaponMods : [];
-    var advDiceArr = [];
-    if(wpBonus.advDie > 0) advDiceArr.push(wpBonus.advDie);
-    advDiceArr = advDiceArr.concat(flBonus.advDice||[]).concat(mtBonus.advDice||[]);
-    var scopedHeavyMods=(typeof consumeScopedAttackAdvantages==='function')?consumeScopedAttackAdvantages(type2):{advDice:[],notes:[]};
-    advDiceArr = advDiceArr.concat(scopedHeavyMods.advDice||[]);
-    if(type2==='shoot'&&mods.indexOf('Smart Aim')>=0) advDiceArr.push(stepUp(die));
-    if(S.rollMod && Array.isArray(S.rollMod.advDice)) advDiceArr = advDiceArr.concat(S.rollMod.advDice);
-    var ra = rollWithAdvantage(die, advDiceArr, {type:'action',major:true,label:'Heavy '+(type2==='strike'?'Strike':'Shoot')});
-    var advRoll=explodingRoll(advDie,{type:'action',label:'Heavy Valor Bonus'});
-    var flatTotal=ra.total+advRoll.total;
-    if(S.rollMod&&Number(S.rollMod.flat||0)!==0)flatTotal+=Number(S.rollMod.flat||0);
-    if(type2==='shoot'&&getPrimaryEnemyZoneRelative()==='close')flatTotal+=Number(affixBonus.shootCloseBonus||0);
-    var enem=getPrimaryCombatEnemy();
-    var sceneHeavyMod=getLegacyCombatSceneModifier(type2,{targetTokenId:enem&&enem.id?String(enem.id):''});
-    flatTotal=Math.max(0,flatTotal+Number(sceneHeavyMod.total||0));
-    var dreadRoll=enem?rollEnemyDreadWithEffects(enem,'Enemy DD'):{total:explodingRoll(S.combat.enemyDread||8,{type:'dread',label:'Enemy DD'}).total};
-    var hit=flatTotal>dreadRoll.total;
-    var dmg=hit?Math.max(1,flatTotal-dreadRoll.total)+2:0;
-    var heavyLines=[];
-    heavyLines.push('Base: d'+die+' / Adv kept = '+ra.total+(ra.breakdown?' '+ra.breakdown:''));
-    heavyLines.push('Heavy Valor bonus: +d'+advDie+'='+advRoll.total);
-    if(S.rollMod&&Number(S.rollMod.flat||0)!==0)heavyLines.push('Manual flat: '+(Number(S.rollMod.flat)>=0?'+':'')+Number(S.rollMod.flat));
-    if(scopedHeavyMods.notes&&scopedHeavyMods.notes.length)heavyLines.push('Scoped attack: '+scopedHeavyMods.notes.join(' · '));
-    if(type2==='shoot'&&Number(affixBonus.shootCloseBonus||0)!==0&&getPrimaryEnemyZoneRelative()==='close')heavyLines.push('Close shoot bonus: +'+Number(affixBonus.shootCloseBonus||0));
-    if(Number(sceneHeavyMod.total||0)!==0)heavyLines.push('Scene modifier: '+(Number(sceneHeavyMod.total)>=0?'+':'')+Number(sceneHeavyMod.total));
-    setRes('<span style="color:'+(hit?'var(--teal)':'var(--red2)')+';">Heavy Attack: '+flatTotal+' vs Dread '+dreadRoll.total+' \u2014 '+(hit?'HIT! '+dmg+' Health damage (+2 bonus)':'MISS')+'</span>'+(Number(sceneHeavyMod.total||0)?('<span style="font-size:.72rem;color:var(--teal);"> (Scene '+(sceneHeavyMod.total>=0?'+':'')+sceneHeavyMod.total+')</span>'):'')+'<div style="margin-top:.2rem;font-size:.7rem;color:var(--muted2);line-height:1.45;">'+heavyLines.join('<br>')+'</div>');
-    if(hit&&enem)applyStressToEnemy(enem,dmg,'Heavy Attack');
-    clearConditionOnUse(type2);
+    rollAttack(type2,{
+      actionCost:2,
+      actionSpendLabel:'Heavy Attack',
+      weaponBonusOptions:getStandardAttackWeaponBonusOptions(),
+      attackLabel:'Heavy '+(type2==='strike'?'Strike':'Shoot'),
+      manualMode:'heavy',
+      extraAddDice:[Math.max(4,Number(S&&S.stats&&S.stats.valor||4))],
+      extraAddDiceLabel:'Heavy Valor Bonus',
+      damageBonus:2,
+      extraNotes:['Heavy attack: +2 damage on hit.']
+    });
+    setRes('<span style="color:var(--muted2);font-size:.78rem;">\u2192 see Heavy Attack result below</span>');
     return;
   }
   if(v==='fast_strike'||v==='fast_shoot'){
@@ -8244,7 +8226,10 @@ function executeWayfarerAction(){
       }
       applyFastAttackSelfVulnerable();
       window.selectedDice={action:baseDie3,dread:enemyDie3};
-      window.fastAttackData={type:type3,advDie:advDie3};
+      window.manualRollData=null;
+      window.heavyAttackData=null;
+      window.dualAttackData=null;
+      window.fastAttackData={type:type3,advDie:advDie3,weaponBonusOptions:getStandardAttackWeaponBonusOptions()};
       performCombatActionManualRoll(type3);
       return;
     }
@@ -10436,6 +10421,25 @@ function consumeCombatAction(label){
   return true;
 }
 
+function consumeCombatActions(count,label){
+  var needed=Math.max(0,Number(count||0));
+  if(needed<=0)return true;
+  if(!requireCampaignTurn('wayfarer'))return false;
+  if(!S.combat)return true;
+  if((S.combat.actionsLeft||0)<needed){
+    showNotif('Need '+needed+' Actions for '+String(label||'this action')+'.','warn');
+    return false;
+  }
+  S.combat.actionsLeft=Math.max(0,(S.combat.actionsLeft||0)-needed);
+  updateCombatUI();
+  if(typeof renderQP==='function')renderQP('combat');
+  if(label)showNotif(label+' (−'+needed+' Actions)','good');
+  if((S.combat.actionsLeft||0)<=0&&maybeAdvanceCampaignInitiativeFromWayfarerExhaustion()){
+    showNotif('Wayfarer turn complete. Initiative advanced.','info');
+  }
+  return true;
+}
+
 function maybeResetActionsAfterDefend(){
   if(!S.combat)return;
   if(maybeAdvanceCampaignInitiativeFromEnemyAction()){
@@ -11174,13 +11178,61 @@ function updateRollModDisplay(){
   });
 }
 
+function getCombatEquipmentSlotText(slotName){
+  if(!S||!S.equipment||!slotName)return '';
+  return String(S.equipment[slotName]||'').trim();
+}
+
+function isShieldLikeWeaponText(text){
+  return /\bshield\b/i.test(String(text||''));
+}
+
+function getStandardAttackWeaponBonusOptions(){
+  return {slots:['weapon1'],includeAffixes:true};
+}
+
+function getDualWieldWeaponBonusOptions(){
+  return {slots:['weapon1','weapon2'],includeAffixes:true,dualWield:true};
+}
+
+function getDefendWeaponBonusOptions(){
+  return {slots:['weapon1','weapon2'],includeAffixes:true,defend:true};
+}
+
+function getPreferredWeaponBonusOptionsForStat(stat){
+  var key=String(stat||'').toLowerCase();
+  if(key==='strike'||key==='shoot')return getStandardAttackWeaponBonusOptions();
+  if(key==='defend')return getDefendWeaponBonusOptions();
+  return null;
+}
+
+function hasDualWieldAttackOption(stat){
+  var key=String(stat||'').toLowerCase();
+  if(key!=='strike'&&key!=='shoot')return false;
+  var offhand=getCombatEquipmentSlotText('weapon2');
+  if(!offhand||isShieldLikeWeaponText(offhand))return false;
+  var offhandBonus=parseWeaponBonuses(key,{slots:['weapon2'],includeAffixes:false});
+  return Number(offhandBonus.flat||0)!==0||Number(offhandBonus.advDie||0)>0||!!offhandBonus.addAdvDie;
+}
+
 // Parse weapon slot texts to find bonuses for a given stat:
-//   flat    — +N bonus always added to total
-//   advDie  — AdN/Advantage die (roll both, keep highest)
+//   flat      — +N bonus always added to total
+//   advDie    — AdN/Advantage die (roll both, keep highest)
 //   addAdvDie — +V.D. bonus: roll the Valor Die and ADD to total
-function parseWeaponBonuses(stat) {
-  if (!S || !S.equipment) return {flat:0, advDie:0, addAdvDie:false};
-  var weapons = [S.equipment.weapon1 || '', S.equipment.weapon2 || '', S.equipment.readied || ''];
+function parseWeaponBonuses(stat, options) {
+  var opts=options&&typeof options==='object'?options:{};
+  var slotNames=Array.isArray(opts.slots)&&opts.slots.length?opts.slots:['weapon1','weapon2','readied'];
+  var weapons=[];
+  slotNames.forEach(function(slotName){
+    var slotText=getCombatEquipmentSlotText(slotName);
+    if(slotText)weapons.push(slotText);
+  });
+  if(Array.isArray(opts.texts)){
+    opts.texts.forEach(function(text){
+      var itemText=String(text||'').trim();
+      if(itemText)weapons.push(itemText);
+    });
+  }
   var flat = 0, advDie = 0, addAdvDie = false;
   var statKey = String(stat || '').toLowerCase();
   function statListIncludes(labelText){
@@ -11220,10 +11272,12 @@ function parseWeaponBonuses(stat) {
       if (statListIncludes(m[1])) addAdvDie = true;
     }
   });
-  var affix=getEquippedAffixCombatBonuses();
-  if(stat==='strike')flat+=Number(affix.strikeFlat||0)+Number(affix.attackFlat||0);
-  if(stat==='shoot')flat+=Number(affix.shootFlat||0)+Number(affix.attackFlat||0);
-  if(stat==='defend')flat+=Number(affix.defendFlat||0);
+  if(opts.includeAffixes!==false){
+    var affix=getEquippedAffixCombatBonuses();
+    if(stat==='strike')flat+=Number(affix.strikeFlat||0)+Number(affix.attackFlat||0);
+    if(stat==='shoot')flat+=Number(affix.shootFlat||0)+Number(affix.attackFlat||0);
+    if(stat==='defend')flat+=Number(affix.defendFlat||0);
+  }
   return {flat: flat, advDie: advDie, addAdvDie: addAdvDie};
 }
 
@@ -11238,12 +11292,20 @@ function parseArmorAdvDie() {
   return 0;
 }
 
-function applyFastAttackSelfVulnerable(){
+function applyCombatSelfVulnerable(){
   if(!S) return;
   if(!S.conditions||typeof S.conditions!=='object') S.conditions={};
   S.conditions.vulnerable=true;
   if(typeof updateConditionButtons==='function') updateConditionButtons();
   if(typeof updateAllStatDisplays==='function') updateAllStatDisplays();
+}
+
+function applyFastAttackSelfVulnerable(){
+  applyCombatSelfVulnerable();
+}
+
+function applyDualWieldSelfVulnerable(){
+  applyCombatSelfVulnerable();
 }
 
 // Auto-clear a positive condition after the player uses the relevant stat.
@@ -11297,77 +11359,117 @@ function getEffectiveCombatDie(type) {
   return Math.max(2, applyDieSteps(baseDie, conditionStep));
 }
 
-function rollAttack(type) {
+function rollAttack(type, options) {
   ensureRollModState();
   if(!requireCampaignTurn('wayfarer'))return;
+  var opts=options&&typeof options==='object'?options:{};
+  var actionCost=Math.max(0,Number(opts.actionCost||1));
+  var actionSpendLabel=String(opts.actionSpendLabel||(type==='strike'?'Strike action':'Shoot action'));
+  var attackLabel=String(opts.attackLabel||(type==='strike'?'Strike':'Shoot'));
+  var manualMode=String(opts.manualMode||'standard');
+  var weaponBonusOptions=opts.weaponBonusOptions||getPreferredWeaponBonusOptionsForStat(type);
+  var extraAddDice=Array.isArray(opts.extraAddDice)?opts.extraAddDice.filter(function(dieSize){return Number(dieSize)>0;}):[];
+  var extraAddDiceLabel=String(opts.extraAddDiceLabel||'Attack Bonus');
+  var damageBonus=Math.max(0,Number(opts.damageBonus||0));
+  var applySelfVulnerable=!!opts.applySelfVulnerable;
+  var extraNotes=Array.isArray(opts.extraNotes)?opts.extraNotes.filter(Boolean):[];
   if(type==='shoot'&&S.combat&&S.combat.weaponLockRounds>0){showNotif('Weapon Glitch: your weapons are locked this round.','warn');return;}
   if(!canUseAttackAtCurrentRange(type)){
     if(type==='strike')showNotif('Strike requires Engaged range. Move first.','warn');
     else showNotif('Shoot requires a valid range for your weapon (default: Nearby).','warn');
     return;
   }
-  if(type==='shoot'&&S.combat&&S.combat.autoReloaderShots>0){
+  if(type==='shoot'&&S.combat&&S.combat.autoReloaderShots>0&&actionCost===1&&!opts.disableAutoReloaderHandling){
     if(!S.combat.autoReloaderActionSpent){
-      if(!consumeCombatAction('Shoot action'))return;
+      if(!consumeCombatAction(actionSpendLabel))return;
       S.combat.autoReloaderActionSpent=true;
     }else{
       showNotif('Auto Reloader: second Shoot shares the same action.','good');
     }
     S.combat.autoReloaderShots=Math.max(0,(S.combat.autoReloaderShots||0)-1);
     if(S.combat.autoReloaderShots<=0)S.combat.autoReloaderActionSpent=false;
-  }else if(!consumeCombatAction(type==='strike'?'Strike action':'Shoot action'))return;
+  }else if(actionCost>1){
+    if(typeof consumeCombatActions==='function'){
+      if(!consumeCombatActions(actionCost,actionSpendLabel))return;
+    }else{
+      for(var spendIdx=0;spendIdx<actionCost;spendIdx++){
+        if(!consumeCombatAction(actionSpendLabel))return;
+      }
+    }
+  }else if(actionCost===1&&!consumeCombatAction(actionSpendLabel))return;
 
-  // Check if manual roll mode is enabled
   if(typeof isManualRollModeEnabled==='function'&&isManualRollModeEnabled()){
-    // Set up dice selection and show manual roll prompt
     var baseDie=type==='strike'?getEffectiveCombatDie('strike'):getEffectiveCombatDie('shoot');
-    var enemyDie=S.combat&&S.combat.enemyDread?S.combat.enemyDread:6;
+    var focusedEnemy=typeof getPrimaryCombatEnemy==='function'?getPrimaryCombatEnemy():null;
+    var enemyDie=focusedEnemy&&Number(focusedEnemy.dread||0)>0?Number(focusedEnemy.dread||0):(S.combat&&S.combat.enemyDread?S.combat.enemyDread:6);
     window.selectedDice={action:baseDie,dread:enemyDie};
+    window.manualRollData={mode:'combat-attack',weaponBonusOptions:weaponBonusOptions};
+    window.heavyAttackData=null;
+    window.fastAttackData=null;
+    window.dualAttackData=null;
+    if(manualMode==='heavy'){
+      window.heavyAttackData={
+        type:type,
+        advDie:Math.max(4,Number(S&&S.stats&&S.stats.valor||4)),
+        weaponBonusOptions:weaponBonusOptions,
+        damageBonus:damageBonus
+      };
+    }else if(manualMode==='dual'){
+      window.dualAttackData={
+        type:type,
+        weaponBonusOptions:weaponBonusOptions,
+        applySelfVulnerable:applySelfVulnerable
+      };
+    }
     performCombatActionManualRoll(type);
     return;
   }
+  window.manualRollData=null;
+  window.heavyAttackData=null;
+  window.fastAttackData=null;
+  window.dualAttackData=null;
 
   var affixBonus=getEquippedAffixCombatBonuses();
   var die = getEffectiveCombatDie(type);
   if(type==='strike'&&Number(affixBonus.strikeDieSteps||0)!==0)die=applyDieSteps(die,Number(affixBonus.strikeDieSteps||0));
   var augDie = getAugBonus(type);
-  var wpBonus = parseWeaponBonuses(type);
+  var wpBonus = parseWeaponBonuses(type,weaponBonusOptions);
   var flBonus = getFlavorBonus(type);
   var mtBonus = getMutationBonus(type);
   var mods = Array.isArray(S.weaponMods) ? S.weaponMods : [];
 
-  // Collect ALL advantage dice from every source — roll each, keep highest
   var advDiceArr = [];
   if(wpBonus.advDie > 0) advDiceArr.push(wpBonus.advDie);
   advDiceArr = advDiceArr.concat(flBonus.advDice||[]).concat(mtBonus.advDice||[]);
   var scopedAttackMods=(typeof consumeScopedAttackAdvantages==='function')?consumeScopedAttackAdvantages(type):{advDice:[],notes:[]};
   advDiceArr = advDiceArr.concat(scopedAttackMods.advDice||[]);
-  // Smart Aim: step-up advantage
   if(type==='shoot' && mods.indexOf('Smart Aim')>=0) advDiceArr.push(stepUp(die));
-  // Manual roll modifier advantage
   if(S.rollMod && Array.isArray(S.rollMod.advDice)) advDiceArr = advDiceArr.concat(S.rollMod.advDice);
 
-  var ra = rollWithAdvantage(die, advDiceArr, {type:'action',major:true,label:type==='strike'?'Strike':'Shoot'});
+  var ra = rollWithAdvantage(die, advDiceArr, {type:'action',major:true,label:attackLabel});
   var critBoost=maybeApplyAffixCritExtension(ra.bestRoll||ra.base, ra.bestDie||die, Number(affixBonus.critShift||0));
   if(critBoost.triggered){
     ra.total=Number((ra.bestRoll||ra.base).total||ra.total||0);
     ra.exploded=true;
   }
   var a = ra.base;
-  // +N flat bonus
   var flatTotal = wpBonus.flat + flBonus.flat + mtBonus.flat + (S.rollMod ? S.rollMod.flat : 0);
   if(type==='shoot'&&getPrimaryEnemyZoneRelative()==='close')flatTotal+=Number(affixBonus.shootCloseBonus||0);
   var baseTotal = ra.total + flatTotal;
-  var queuedValor = consumeQueuedRollModValorDice(type==='strike'?'Strike Queued Valor':'Shoot Queued Valor');
+  var queuedValor = consumeQueuedRollModValorDice(attackLabel+' Queued Valor');
   baseTotal += Number(queuedValor.total||0);
-  // +V.D. additive Valor die
   var adBonus = wpBonus.addAdvDie ? explodingRoll(getValorDieSize(),{type:'action',major:true,label:'Valor Bonus'}) : null;
   if(adBonus) baseTotal += adBonus.total;
   var preciseBonus = affixBonus.addValorDieToAttack ? explodingRoll(getValorDieSize(),{type:'action',major:true,label:'Precise Valor Bonus'}) : null;
   if(preciseBonus) baseTotal += preciseBonus.total;
-  var relicRolls = getPermanentValorBonusRolls(type, type === 'strike' ? 'Strike Relic' : 'Shoot Relic');
+  var relicRolls = getPermanentValorBonusRolls(type, attackLabel+' Relic');
   baseTotal += sumValorBonusRolls(relicRolls);
-  // Augmentation bonus always additive
+  var extraAddRolls=extraAddDice.map(function(dieSize,idx){
+    return explodingRoll(Number(dieSize),{type:'action',major:true,label:extraAddDiceLabel+' d'+Number(dieSize)+' #'+(idx+1)});
+  });
+  extraAddRolls.forEach(function(rollObj){
+    baseTotal += Number(rollObj&&rollObj.total||0);
+  });
   var augRoll = augDie > 0 ? explodingRoll(augDie,{type:'action',major:true,label:'Augment'}) : null;
   var total = baseTotal + (augRoll ? augRoll.total : 0);
   var radPenalty = (typeof getRadPenaltyForStat === 'function') ? getRadPenaltyForStat(type) : 0;
@@ -11423,6 +11525,10 @@ function rollAttack(type) {
       diff*=2;
       affixBreakdown+=' <span style="font-size:.7rem;color:var(--gold2);">(Affinity x2)</span>';
     }
+    if(damageBonus>0){
+      diff+=damageBonus;
+      affixBreakdown+=' <span style="font-size:.7rem;color:var(--gold2);">(+Damage '+damageBonus+')</span>';
+    }
     if(Number(affixBonus.autoKillChance||0)>0&&targetEnemy&&Math.random()<Number(affixBonus.autoKillChance||0)){
       diff=Math.max(diff,Number(targetEnemy.maxStress||diff));
       affixBreakdown+=' <span style="font-size:.7rem;color:var(--red2);">(Void Execute)</span>';
@@ -11435,6 +11541,9 @@ function rollAttack(type) {
   if(Number(queuedValor.total||0)>0) breakdown += ' <span style="font-size:.7rem;color:var(--gold2);">(Queued V.D. +'+Number(queuedValor.total||0)+')</span>';
   if(adBonus) breakdown += ' <span style="font-size:.7rem;color:var(--muted2);">(+V.D.='+adBonus.total+')</span>';
   if(preciseBonus) breakdown += ' <span style="font-size:.7rem;color:var(--muted2);">(+V.D.='+preciseBonus.total+')</span>';
+  if(extraAddRolls.length){
+    breakdown += ' <span style="font-size:.7rem;color:var(--gold2);">(' + extraAddRolls.map(function(rollObj, idx){ return '+'+extraAddDiceLabel+' d'+Number(extraAddDice[idx])+'='+Number(rollObj&&rollObj.total||0); }).join(' ') + ')</span>';
+  }
   breakdown += formatValorBonusRolls(relicRolls);
   if(radPenalty > 0) breakdown += ' <span style="font-size:.7rem;color:var(--red2);">(-'+radPenalty+' Rad)</span>';
   if(enemyBonus > 0) breakdown += ' <span style="font-size:.7rem;color:var(--gold2);">(+Sonic Shock '+enemyBonus+')</span>';
@@ -11444,8 +11553,7 @@ function rollAttack(type) {
   breakdown += formatLegacySceneModBreakdown(sceneMod);
   if(critBoost.triggered) breakdown += ' <span style="font-size:.7rem;color:var(--gold2);">(Affix Crit +'+critBoost.added+')</span>';
   if(forcedAutoCrit) breakdown += ' <span style="font-size:.7rem;color:var(--gold2);">(Eternity\'s Edge)</span>';
-  
-  // Add condition modifiers to breakdown
+
   var conditionNotes = [];
   if (type === 'strike' || type === 'shoot') {
     if (S.conditions && S.conditions.empowered) conditionNotes.push('⚡ Empowered');
@@ -11453,7 +11561,7 @@ function rollAttack(type) {
     if (S.traumaConditions && S.traumaConditions.weakened) conditionNotes.push('🤕 Trauma Weakness');
   }
   if (conditionNotes.length > 0) breakdown += ' <span style="font-size:.7rem;color:var(--gold2);">('+conditionNotes.join(', ')+')</span>';
-  
+
   var augNote = augRoll ? ' <span style="color:var(--gold2);font-size:.78rem;">(+d'+augDie+'='+augRoll.total+')</span>' : '';
 
   var modNotes = [];
@@ -11475,6 +11583,8 @@ function rollAttack(type) {
   if(scopedAttackMods.notes&&scopedAttackMods.notes.length) modNotes.push(scopedAttackMods.notes.join(' · '));
   if(Number(queuedValor.total||0)>0) modNotes.push('Queued Valor: +'+Number(queuedValor.total||0));
   if(S.rollMod && (S.rollMod.advDice.length||S.rollMod.flat||(Array.isArray(S.rollMod.valorDice)&&S.rollMod.valorDice.length))) modNotes.push('Manual Mod active');
+  extraNotes.forEach(function(note){modNotes.push(String(note));});
+  if(applySelfVulnerable) modNotes.push('You become Vulnerable after this attack.');
   var modHtml = modNotes.length ? '<br><span style="font-size:.72rem;color:var(--gold);">'+modNotes.join(' · ')+'</span>' : '';
 
   var el = document.getElementById('attackResult');
@@ -11483,7 +11593,6 @@ function rollAttack(type) {
     +(coverBlocked ? '<strong style="color:var(--red);">Blocked by Full Cover</strong>' : (success ? '<strong style="color:var(--green2);">HIT! '+diff+' Stress</strong>' : '<strong style="color:var(--red);">Miss</strong>'))
     +(ra.exploded ? ' ✦ Crit!' : '')+modHtml;
 
-  // Auto-apply stress to the first tracked enemy on successful Strike/Shoot.
   if(success && Array.isArray(S.enemies) && S.enemies.length){
     applyStressToCurrentEnemy(diff, type);
     if(affixBonus.lifedrinker){
@@ -11541,16 +11650,16 @@ function rollAttack(type) {
       showDccFailureOutcome(type,attackFailedBy,{
         actionTotal:effectiveTotal,
         dreadTotal:targetDreadTotal,
-        context:(type==='strike'?'Strike':'Shoot')+' vs Enemy Dread'
+        context:attackLabel+' vs Enemy Dread'
       });
     }
     addTMWOnFail('combat-attack-failure',{
       failedBy:attackFailedBy,
       actionDie:die,
       dreadDie:Math.max(4,Number(d&&d.effectiveDie||S.combat.enemyDread||6)),
-      actionLabel:type==='strike'?'Strike':'Shoot',
+      actionLabel:attackLabel,
       onConvert:function(payload){
-        var convertedDamage=Math.max(1,Number(payload&&payload.failedBy||attackFailedBy));
+        var convertedDamage=Math.max(1,Number(payload&&payload.failedBy||attackFailedBy))+damageBonus;
         return applyTeamworkConvertedCombatAttack(type,targetEnemy,convertedDamage,{
           actionTotal:effectiveTotal,
           dreadTotal:targetDreadTotal
@@ -11562,11 +11671,12 @@ function rollAttack(type) {
       showDccSuccessOutcome(type,Math.max(1,effectiveTotal-targetDreadTotal),{
         actionTotal:effectiveTotal,
         dreadTotal:targetDreadTotal,
-        context:(type==='strike'?'Strike':'Shoot')+' vs Enemy Dread'
+        context:attackLabel+' vs Enemy Dread'
       });
     }
     addSuccessRoll();
   }
+  if(applySelfVulnerable)applyDualWieldSelfVulnerable();
   clearConditionOnUse(type);
 }
 
@@ -11576,7 +11686,7 @@ function rollDefend(skipEnemyTurnTick) {
 
   var defendDie = (typeof getEffectiveDie === 'function') ? getEffectiveDie('defend') : Math.max(4, Number(S && S.stats && S.stats.defend || 4));
   var armorAdv = parseArmorAdvDie();
-  var wpBonus = parseWeaponBonuses('defend');
+  var wpBonus = parseWeaponBonuses('defend',getDefendWeaponBonusOptions());
   var flBonus = getFlavorBonus('defend');
   var mtBonus = getMutationBonus('defend');
   var augDie = getAugBonus('defend');
@@ -12071,7 +12181,7 @@ function executeMimicAttack(sourceEnemyId){
 function rollPlayerReactionTotal(statKey,label){
   var key=String(statKey||'defend').toLowerCase();
   var baseDie=(typeof getEffectiveDie==='function')?getEffectiveDie(key):((S&&S.stats&&S.stats[key])?S.stats[key]:4);
-  var wpBonus=(key==='defend'||key==='strike'||key==='shoot')?parseWeaponBonuses(key):{flat:0,advDie:0,addAdvDie:false};
+  var wpBonus=(key==='defend'||key==='strike'||key==='shoot')?parseWeaponBonuses(key,getPreferredWeaponBonusOptionsForStat(key)):{flat:0,advDie:0,addAdvDie:false};
   var flBonus=getFlavorBonus(key);
   var mtBonus=getMutationBonus(key);
   var augDie=getAugBonus(key);
@@ -16258,9 +16368,10 @@ function getManualRollConditionEffects(statKey){
   if((key==='defend')&&trauma.vulnerable){step-=1;notes.push('Trauma Vulnerable: die step down (-1).');}
   return {step:step,notes:notes};
 }
-function getManualRollEquipmentModifierLines(statKey,effectiveDie){
+function getManualRollEquipmentModifierLines(statKey,effectiveDie,options){
   var key=String(statKey||'').toLowerCase();
   var die=Math.max(2,Number(effectiveDie||4));
+  var opts=options&&typeof options==='object'?options:{};
   var lines=[];
   var affix=(typeof getEquippedAffixCombatBonuses==='function')?getEquippedAffixCombatBonuses():{};
   var flBonus=(typeof getFlavorBonus==='function')?getFlavorBonus(key):{flat:0,advDice:[]};
@@ -16282,7 +16393,7 @@ function getManualRollEquipmentModifierLines(statKey,effectiveDie){
     if(S&&S.rollMod&&Number(S.rollMod.holyShieldDie||0)>0)lines.push('Holy Shield: roll Spirit d'+Math.max(4,Number(S.rollMod.holyShieldDie||0))+' and add it to the final Action total.');
   }
   if(key==='strike'||key==='shoot'||key==='defend'){
-    var wpBonus=parseWeaponBonuses(key);
+    var wpBonus=parseWeaponBonuses(key,opts.weaponBonusOptions||getPreferredWeaponBonusOptionsForStat(key));
     if(Number(wpBonus.flat||0)!==0)lines.push('Weapon bonus: '+(Number(wpBonus.flat||0)>0?'+':'')+Number(wpBonus.flat||0)+' to your final Action total.');
     if(Number(wpBonus.advDie||0)>0)lines.push('Weapon advantage: roll Ad'+Number(wpBonus.advDie||0)+' with your normal die and keep the highest result.');
     if(wpBonus.addAdvDie){
@@ -16333,7 +16444,7 @@ function buildManualRollModifierLines(statKey,actionDie,cfg){
   var flat=Number(rollMod.flat||0);
   if(Number(baseDie)>0&&Number(baseDie)!==Number(effectiveDie))lines.push('Stat die adjusted by conditions: d'+baseDie+' -> d'+effectiveDie+'.');
   condFx.notes.forEach(function(n){lines.push(n);});
-  getManualRollEquipmentModifierLines(key,effectiveDie).forEach(function(line){lines.push(line);});
+  getManualRollEquipmentModifierLines(key,effectiveDie,{weaponBonusOptions:opts.weaponBonusOptions||getPreferredWeaponBonusOptionsForStat(key)}).forEach(function(line){lines.push(line);});
   if(advDice.length)lines.push('Roll modifier advantage dice active: '+advDice.join(', ')+' (roll all listed and keep highest before applying flat bonus).');
   if(flat!==0)lines.push('Roll modifier flat bonus: '+(flat>0?'+':'')+flat+' to your final Action total.');
   if(Array.isArray(opts.extraLines))opts.extraLines.forEach(function(line){if(line)lines.push(String(line));});
@@ -23605,7 +23716,7 @@ function runWhenIdle(fn, timeoutMs){
     try{
       var die = (typeof getEffectiveDie==='function') ? getEffectiveDie(statKey) : ((S.stats && S.stats[statKey]) ? S.stats[statKey] : 4);
       var rr = qpRollWithAdvMode(die);
-      var wpBonus = (statKey==='strike' || statKey==='shoot' || statKey==='defend') ? parseWeaponBonuses(statKey) : {flat:0,advDie:0,addAdvDie:false};
+      var wpBonus = (statKey==='strike' || statKey==='shoot' || statKey==='defend') ? parseWeaponBonuses(statKey,getPreferredWeaponBonusOptionsForStat(statKey)) : {flat:0,advDie:0,addAdvDie:false};
       var queuedValor = consumeQueuedRollModValorDice((label||String(statKey||'Roll'))+' Queued Valor');
       var wpValor = wpBonus.addAdvDie ? explodingRoll(getValorDieSize(),{type:'action',major:true,label:'Weapon Valor Bonus'}) : null;
       var relicRolls = (typeof getPermanentValorBonusRolls==='function') ? getPermanentValorBonusRolls(statKey, label + ' Relic') : [];
@@ -28947,7 +29058,7 @@ function runWhenIdle(fn, timeoutMs){
     var key=String(statKey||'lead').toLowerCase();
     var die=Math.max(4,Number(actionDie||4));
     var opts=options&&typeof options==='object'?options:{};
-    var wpBonus=(key==='defend'||key==='strike'||key==='shoot')?parseWeaponBonuses(key):{flat:0,advDie:0,addAdvDie:false};
+    var wpBonus=(key==='defend'||key==='strike'||key==='shoot')?parseWeaponBonuses(key,opts.weaponBonusOptions||getPreferredWeaponBonusOptionsForStat(key)):{flat:0,advDie:0,addAdvDie:false};
     var flBonus=(typeof getFlavorBonus==='function')?getFlavorBonus(key):{flat:0,advDice:[]};
     var mtBonus=(typeof getMutationBonus==='function')?getMutationBonus(key):{flat:0,advDice:[]};
     var augDie=(typeof getAugBonus==='function')?getAugBonus(key):0;
