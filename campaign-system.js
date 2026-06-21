@@ -70,6 +70,7 @@
     lastCampaignCombatPromptAt: 0,
     lastCampaignActorPromptKey: "",
     lastCampaignVttPromptAt: 0,
+    lastAppliedCampaignSoundtrackHash: "",
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
     lastProvinceMapHash: "",
@@ -3500,12 +3501,15 @@
     if (!audio) return;
     var settings = ensureGmSettings(sharedState && typeof sharedState === "object" ? sharedState : getCampaignSharedState());
     var soundtrack = normalizeCampaignSoundtrackSettings(settings.soundtrack);
+    var nextHash = JSON.stringify(soundtrack);
+    if (state.lastAppliedCampaignSoundtrackHash === nextHash) return;
+    state.lastAppliedCampaignSoundtrackHash = nextHash;
     if (soundtrack.enabled && typeof audio.applyCampaignSoundtrack === "function") {
       audio.applyCampaignSoundtrack(soundtrack, { fadeIn: true });
       return;
     }
     if (typeof audio.clearCampaignSoundtrack === "function") {
-      audio.clearCampaignSoundtrack({ fadeIn: true });
+      audio.clearCampaignSoundtrack({ fadeIn: true, forceRestore: true });
     }
   }
 
@@ -7673,6 +7677,7 @@
     state.activePromptId = "";
     state.lastAppliedSelfCharacterAt = 0;
     state.lastCharacterHash = "";
+    state.lastAppliedCampaignSoundtrackHash = "";
     state.uiDraft.joinPassword = "";
     state.lastPlayerDockSeed = "";
     if (typeof window.AudioManager !== "undefined" && window.AudioManager && typeof window.AudioManager.clearCampaignSoundtrack === "function") {

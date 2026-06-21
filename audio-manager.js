@@ -154,6 +154,29 @@
       };
     },
 
+    hashCampaignSoundtrack(config) {
+      var normalized = this.normalizeCampaignSoundtrack(config);
+      return JSON.stringify({
+        enabled: !!normalized.enabled,
+        mood: String(normalized.mood || ''),
+        suiteId: String(normalized.suiteId || ''),
+        styleName: String(normalized.styleName || ''),
+        ambienceIds: Array.isArray(normalized.ambienceIds) ? normalized.ambienceIds.slice() : []
+      });
+    },
+
+    getCurrentAmbienceIds() {
+      if (!Array.isArray(this.currentAmbiences) || !this.currentAmbiences.length) return [];
+      var seen = Object.create(null);
+      return this.currentAmbiences.map(function (entry) {
+        return entry && entry.id ? String(entry.id) : '';
+      }).filter(function (entry) {
+        if (!entry || seen[entry]) return false;
+        seen[entry] = true;
+        return true;
+      });
+    },
+
     hasCampaignSoundtrackOverride() {
       var config = this.campaignSoundtrackOverride;
       return !!(config && config.enabled && config.suiteId);
@@ -192,31 +215,47 @@
       var previous = this.normalizeCampaignSoundtrack(this.campaignSoundtrackOverride);
       var next = this.normalizeCampaignSoundtrack(config);
       if (!next.enabled) return this.clearCampaignSoundtrack(options);
+      var previousHash = this.hashCampaignSoundtrack(previous);
+      var nextHash = this.hashCampaignSoundtrack(next);
+      var sameOverride = previousHash === nextHash;
       this.campaignSoundtrackOverride = next;
       if (!this.enabled || !this.musicConsent) return next;
       var variantPool = this.resolveSuiteStylePool(next.suiteId, next.styleName);
-      var previousHash = JSON.stringify(previous);
-      var nextHash = JSON.stringify(next);
       var currentPoolHash = JSON.stringify(Array.isArray(this.currentMusicPool) ? this.currentMusicPool : []);
       var desiredPoolHash = JSON.stringify(variantPool);
-      var forceVariant = options.forceVariantChange === true
-        || previousHash !== nextHash
-        || (String(this.currentMusicBaseId || '') === String(next.suiteId || '') && currentPoolHash !== desiredPoolHash);
-      this.stopAmbience(options.fadeOut !== false);
-      next.ambienceIds.forEach((ambienceId) => {
-        if (this.ambienceProfiles[ambienceId]) this.playAmbience(ambienceId, 1, true);
-      });
-      this.playMusic(next.suiteId, options.fadeIn !== false, {
-        allowCampaignOverride: true,
-        forceVariantChange: forceVariant,
-        variantPool: variantPool
-      });
+      var currentAmbienceHash = JSON.stringify(this.getCurrentAmbienceIds());
+      var desiredAmbienceHash = JSON.stringify(Array.isArray(next.ambienceIds) ? next.ambienceIds : []);
+      var needsAmbienceRefresh = options.forceAmbienceRefresh === true
+        || !sameOverride
+        || currentAmbienceHash !== desiredAmbienceHash;
+      var currentMusicBaseId = String(this.currentMusicBaseId || '');
+      var needsMusicRefresh = options.forceVariantChange === true
+        || !this.currentMusic
+        || currentMusicBaseId !== String(next.suiteId || '')
+        || currentPoolHash !== desiredPoolHash;
+      if (!needsAmbienceRefresh && !needsMusicRefresh) return next;
+      if (needsAmbienceRefresh) {
+        this.stopAmbience(options.fadeOut !== false);
+        next.ambienceIds.forEach((ambienceId) => {
+          if (this.ambienceProfiles[ambienceId]) this.playAmbience(ambienceId, 1, true);
+        });
+      }
+      if (needsMusicRefresh) {
+        this.playMusic(next.suiteId, options.fadeIn !== false, {
+          allowCampaignOverride: true,
+          forceVariantChange: options.forceVariantChange === true
+            || (currentMusicBaseId === String(next.suiteId || '') && currentPoolHash !== desiredPoolHash),
+          variantPool: variantPool
+        });
+      }
       return next;
     },
 
     clearCampaignSoundtrack(options = {}) {
+      var hadOverride = this.hasCampaignSoundtrackOverride();
       this.campaignSoundtrackOverride = null;
       if (!this.enabled || !this.musicConsent) return null;
+      if (!hadOverride && options.forceRestore !== true) return null;
       if (this.currentScenario) {
         this.playScenarioAudio(this.currentScenario, {
           fadeIn: options.fadeIn !== false,
