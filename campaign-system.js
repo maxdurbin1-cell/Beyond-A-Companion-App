@@ -64,7 +64,17 @@
     uiDraft: {
       name: "",
       code: "",
-      joinPassword: ""
+      joinPassword: "",
+      soundtrack: {
+        mood: "custom",
+        suiteId: "",
+        styleName: "",
+        ambienceA: "",
+        ambienceB: "",
+        dirty: false,
+        activeControl: "",
+        lastInteractionAt: 0
+      }
     },
     activeRosterSheetToken: "",
     lastCampaignCombatPromptAt: 0,
@@ -94,7 +104,9 @@
     lastDockTimelineEntryKey: "",
     tableSceneMode: "auto",
     effectiveTableSceneMode: "exploration",
-    timelineFilterManual: false
+    timelineFilterManual: false,
+    pendingSettingsRender: false,
+    settingsRenderTimer: null
   };
 
   var readyCheckCallbacks = {};
@@ -124,6 +136,14 @@
     }
   };
 
+  var CAMPAIGN_SOUNDTRACK_CONTROL_IDS = [
+    "campaignMusicMood",
+    "campaignMusicSuite",
+    "campaignMusicStyle",
+    "campaignMusicAmbienceA",
+    "campaignMusicAmbienceB"
+  ];
+
   var PLAYER_SHARED_PATCH_KEYS = {
     renown: true,
     credits: true,
@@ -143,6 +163,7 @@
     partyStash: true,
     characterInventories: true,
     economyLedger: true,
+    combatScene: true,
     readyCheck: true,
     pendingChecks: true
   };
@@ -1211,6 +1232,32 @@
       if (PLAYER_LOCAL_ONLY_KEYS[key]) return;
       if (!PLAYER_SHARED_PATCH_KEYS[key]) return;
       if ((key === "provinceMap" || key === "campaignCombat") && (!patch[key] || typeof patch[key] !== "object")) return;
+      if (key === "combatScene") {
+        var combatScenePatch = patch.combatScene && typeof patch.combatScene === "object"
+          ? (deepCloneJson(patch.combatScene) || null)
+          : null;
+        var sharedForCombatScene = getCampaignSharedState();
+        var sharedCombatState = sharedForCombatScene && sharedForCombatScene.campaignCombat && typeof sharedForCombatScene.campaignCombat === "object"
+          ? sharedForCombatScene.campaignCombat
+          : null;
+        var activeCombatToken = String(getCampaignCombatActiveToken(sharedCombatState) || "");
+        var canMutateCombatScene = !!(
+          state.token
+          && state.role === "player"
+          && sharedCombatState
+          && sharedCombatState.active
+          && String(sharedCombatState.phase || "wayfarer") === "wayfarer"
+          && activeCombatToken
+          && activeCombatToken === String(state.token || "")
+        );
+        if (!combatScenePatch || !canMutateCombatScene) return;
+        combatScenePatch.syncMeta = {
+          by: String(state.playerName || ensureName() || "Wayfarer"),
+          at: Date.now()
+        };
+        sanitized.combatScene = combatScenePatch;
+        return;
+      }
       if (key === "readyCheck") {
         var readyPatch = patch.readyCheck && typeof patch.readyCheck === "object" ? patch.readyCheck : null;
         var response = readyPatch && readyPatch.response && typeof readyPatch.response === "object" ? readyPatch.response : null;
@@ -1984,11 +2031,98 @@
     return true;
   }
 
+  function forEachCampaignParticipantSource(source, iteratee) {
+    if (!source || typeof iteratee !== "function") return;
+    if (typeof Map !== "undefined" && source instanceof Map) {
+      source.forEach(function (value, key) {
+        if (!value || typeof value !== "object") return;
+        var row = Object.assign({}, value);
+        if (!row.token && key != null) row.token = key;
+        iteratee(row);
+      });
+      return;
+    }
+    if (Array.isArray(source)) {
+      source.forEach(function (row) {
+        if (!row || typeof row !== "object") return;
+        iteratee(Object.assign({}, row));
+      });
+      return;
+    }
+    if (typeof source === "object") {
+      Object.keys(source).forEach(function (key) {
+        var value = source[key];
+        if (!value || typeof value !== "object") return;
+        var row = Object.assign({}, value);
+        if (!row.token) row.token = key;
+        iteratee(row);
+      });
+    }
+  }
+
+  function getCampaignParticipantRecords() {
+    if (!state.campaign || typeof state.campaign !== "object") return [];
+    var merged = {};
+    var orderedTokens = [];
+
+    function upsert(row) {
+      if (!row || typeof row !== "object") return;
+      var token = String(row.token || "").trim();
+      if (!token) return;
+      var existing = merged[token] && typeof merged[token] === "object" ? merged[token] : { token: token };
+      var next = Object.assign({}, existing, row, { token: token });
+      if (row.character && typeof row.character === "object") {
+        next.character = row.character;
+      } else if (existing.character && typeof existing.character === "object") {
+        next.character = existing.character;
+      }
+      if (!next.name) {
+        next.name = String(
+          (next.character && next.character.name)
+          || row.playerName
+          || existing.playerName
+          || "Wayfarer"
+        );
+      }
+      next.role = String(next.role || existing.role || "player");
+      if (typeof row.online === "boolean") {
+        next.online = row.online;
+      } else if (typeof existing.online === "boolean") {
+        next.online = existing.online;
+      } else {
+        next.online = true;
+      }
+      var lastSeenAt = Number(row.lastSeenAt || existing.lastSeenAt || 0) || 0;
+      if (lastSeenAt) next.lastSeenAt = lastSeenAt;
+      merged[token] = next;
+      if (orderedTokens.indexOf(token) === -1) orderedTokens.push(token);
+    }
+
+    forEachCampaignParticipantSource(state.campaign.members, upsert);
+    forEachCampaignParticipantSource(state.campaign.participants, upsert);
+    forEachCampaignParticipantSource(state.campaign.roster, upsert);
+
+    return orderedTokens.map(function (token) {
+      return merged[token];
+    }).filter(Boolean);
+  }
+
+  function getCampaignParticipantRecord(token) {
+    var wanted = String(token || "").trim();
+    if (!wanted) return null;
+    var rows = getCampaignParticipantRecords();
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      if (!row || String(row.token || "").trim() !== wanted) continue;
+      return row;
+    }
+    return null;
+  }
+
   function findOnlineParticipantTokens() {
     var out = [];
     var seen = {};
-    var participants = state.campaign && Array.isArray(state.campaign.participants) ? state.campaign.participants : [];
-    var roster = state.campaign && Array.isArray(state.campaign.roster) ? state.campaign.roster : [];
+    var participants = getCampaignParticipantRecords();
     var now = Date.now();
 
     participants.forEach(function (member) {
@@ -1998,14 +2132,6 @@
       var online = member.online !== false;
       var lastSeenAt = Number(member.lastSeenAt || 0);
       if (!online && (!lastSeenAt || (now - lastSeenAt) > 120000)) return;
-      seen[token] = true;
-      out.push(token);
-    });
-
-    roster.forEach(function (member) {
-      if (!member || !member.online) return;
-      var token = String(member.token || "").trim();
-      if (!token || seen[token]) return;
       seen[token] = true;
       out.push(token);
     });
@@ -2046,15 +2172,7 @@
   }
 
   function getCampaignRosterMember(token) {
-    var wanted = String(token || "").trim();
-    if (!wanted) return null;
-    var roster = state.campaign && Array.isArray(state.campaign.roster) ? state.campaign.roster : [];
-    for (var i = 0; i < roster.length; i += 1) {
-      var row = roster[i];
-      if (!row || String(row.token || "").trim() !== wanted) continue;
-      return row;
-    }
-    return null;
+    return getCampaignParticipantRecord(token);
   }
 
   function getCampaignCharacterSnapshot(token) {
@@ -3557,6 +3675,202 @@
     return renderCampaignSelectOptions([], "", "Auto / Any Cue");
   }
 
+  function ensureCampaignSoundtrackDraftState() {
+    if (!state.uiDraft || typeof state.uiDraft !== "object") state.uiDraft = {};
+    if (!state.uiDraft.soundtrack || typeof state.uiDraft.soundtrack !== "object") {
+      state.uiDraft.soundtrack = {
+        mood: "custom",
+        suiteId: "",
+        styleName: "",
+        ambienceA: "",
+        ambienceB: "",
+        dirty: false,
+        activeControl: "",
+        lastInteractionAt: 0
+      };
+    }
+    if (!Number.isFinite(Number(state.uiDraft.soundtrack.lastInteractionAt || 0))) {
+      state.uiDraft.soundtrack.lastInteractionAt = 0;
+    }
+    return state.uiDraft.soundtrack;
+  }
+
+  function setCampaignSoundtrackDraftFromConfig(config, options) {
+    var draft = ensureCampaignSoundtrackDraftState();
+    var normalized = normalizeCampaignSoundtrackSettings(config);
+    var opts = options && typeof options === "object" ? options : {};
+    draft.mood = String(normalized.mood || "custom");
+    draft.suiteId = String(normalized.suiteId || "");
+    draft.styleName = String(normalized.styleName || "");
+    draft.ambienceA = String(normalized.ambienceIds && normalized.ambienceIds[0] || "");
+    draft.ambienceB = String(normalized.ambienceIds && normalized.ambienceIds[1] || "");
+    draft.dirty = !!opts.dirty;
+    if (!opts.preserveActiveControl) draft.activeControl = "";
+    if (!opts.preserveInteraction) draft.lastInteractionAt = 0;
+    return draft;
+  }
+
+  function isCampaignSoundtrackControlId(controlId) {
+    return CAMPAIGN_SOUNDTRACK_CONTROL_IDS.indexOf(String(controlId || "")) >= 0;
+  }
+
+  function isCampaignSettingsEditorVisible() {
+    var settingsPanel = document.getElementById("settingsPanel");
+    if (!settingsPanel || !settingsPanel.classList.contains("open")) return false;
+    var campaignPanel = document.getElementById("settingsTabPanel-campaign");
+    if (!campaignPanel) return false;
+    return String(campaignPanel.getAttribute("aria-hidden") || "false") !== "true";
+  }
+
+  function markCampaignSoundtrackInteraction(controlId) {
+    var draft = ensureCampaignSoundtrackDraftState();
+    draft.lastInteractionAt = Date.now();
+    if (isCampaignSoundtrackControlId(controlId)) {
+      draft.activeControl = String(controlId || "");
+    }
+  }
+
+  function isCampaignSoundtrackEditorBusy() {
+    if (!isCampaignSettingsEditorVisible()) return false;
+    var draft = ensureCampaignSoundtrackDraftState();
+    var activeId = document.activeElement && document.activeElement.id
+      ? String(document.activeElement.id || "")
+      : "";
+    var focusedControl = isCampaignSoundtrackControlId(activeId) || isCampaignSoundtrackControlId(draft.activeControl);
+    var lastInteractionAt = Number(draft.lastInteractionAt || 0);
+    var interactedRecently = lastInteractionAt > 0 && (Date.now() - lastInteractionAt) < 2500;
+    return focusedControl || (!!draft.dirty && interactedRecently);
+  }
+
+  function flushDeferredSettingsRender() {
+    if (!state.pendingSettingsRender) return;
+    if (state.settingsRenderTimer) {
+      clearTimeout(state.settingsRenderTimer);
+      state.settingsRenderTimer = null;
+    }
+    if (isCampaignSoundtrackEditorBusy()) {
+      scheduleDeferredSettingsRender();
+      return;
+    }
+    state.pendingSettingsRender = false;
+    renderSettingsSection({ bypassSoundtrackDeferral: true });
+  }
+
+  function scheduleDeferredSettingsRender() {
+    state.pendingSettingsRender = true;
+    if (state.settingsRenderTimer) return;
+    state.settingsRenderTimer = setTimeout(function () {
+      state.settingsRenderTimer = null;
+      flushDeferredSettingsRender();
+    }, 240);
+  }
+
+  function getCampaignSoundtrackDraftReference(referenceSoundtrack) {
+    if (referenceSoundtrack && typeof referenceSoundtrack === "object") {
+      return normalizeCampaignSoundtrackSettings(referenceSoundtrack);
+    }
+    var shared = getCampaignSharedState();
+    var settings = ensureGmSettings(shared && typeof shared === "object" ? shared : getMutableCampaignSharedState());
+    return normalizeCampaignSoundtrackSettings(settings.soundtrack);
+  }
+
+  function syncCampaignSoundtrackDraftDirtyFlag(referenceSoundtrack) {
+    var draft = ensureCampaignSoundtrackDraftState();
+    var normalized = getCampaignSoundtrackDraftReference(referenceSoundtrack);
+    var dirty = String(draft.mood || "custom") !== String(normalized.mood || "custom")
+      || String(draft.suiteId || "") !== String(normalized.suiteId || "")
+      || String(draft.styleName || "") !== String(normalized.styleName || "")
+      || String(draft.ambienceA || "") !== String(normalized.ambienceIds && normalized.ambienceIds[0] || "")
+      || String(draft.ambienceB || "") !== String(normalized.ambienceIds && normalized.ambienceIds[1] || "");
+    draft.dirty = dirty;
+    return dirty;
+  }
+
+  function captureCampaignSoundtrackDraftInputs(referenceSoundtrack) {
+    var draft = ensureCampaignSoundtrackDraftState();
+    var ids = {
+      campaignMusicMood: "mood",
+      campaignMusicSuite: "suiteId",
+      campaignMusicStyle: "styleName",
+      campaignMusicAmbienceA: "ambienceA",
+      campaignMusicAmbienceB: "ambienceB"
+    };
+    var hasControls = false;
+    Object.keys(ids).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      hasControls = true;
+      draft[ids[id]] = String(el.value || "");
+    });
+    var activeId = document.activeElement && document.activeElement.id
+      ? String(document.activeElement.id || "")
+      : "";
+    draft.activeControl = ids[activeId] ? activeId : "";
+    if (hasControls) syncCampaignSoundtrackDraftDirtyFlag(referenceSoundtrack);
+  }
+
+  function bindCampaignSoundtrackInputs(referenceSoundtrack) {
+    var ids = CAMPAIGN_SOUNDTRACK_CONTROL_IDS.slice();
+    ids.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el || el.dataset.campaignSoundtrackBound === "1") return;
+      el.dataset.campaignSoundtrackBound = "1";
+      var update = function () {
+        markCampaignSoundtrackInteraction(id);
+        captureCampaignSoundtrackDraftInputs(referenceSoundtrack);
+      };
+      el.addEventListener("pointerdown", function () {
+        markCampaignSoundtrackInteraction(id);
+      });
+      el.addEventListener("keydown", function () {
+        markCampaignSoundtrackInteraction(id);
+      });
+      el.addEventListener("input", update);
+      el.addEventListener("change", update);
+      el.addEventListener("focus", function () {
+        markCampaignSoundtrackInteraction(id);
+      });
+      el.addEventListener("blur", function () {
+        setTimeout(function () {
+          var draft = ensureCampaignSoundtrackDraftState();
+          if (draft.activeControl === id && (!document.activeElement || document.activeElement.id !== id)) {
+            draft.activeControl = "";
+          }
+          flushDeferredSettingsRender();
+        }, 0);
+      });
+    });
+  }
+
+  function restoreCampaignSoundtrackDraftFocus() {
+    var draft = ensureCampaignSoundtrackDraftState();
+    var controlId = String(draft.activeControl || "");
+    if (!controlId) return;
+    var el = document.getElementById(controlId);
+    if (!el) return;
+    if (document.activeElement === el) return;
+    try {
+      el.focus({ preventScroll: true });
+    } catch (_err) {
+      try { el.focus(); } catch (_err2) {}
+    }
+  }
+
+  function getCampaignSoundtrackEditorState(soundtrack) {
+    var normalized = normalizeCampaignSoundtrackSettings(soundtrack);
+    var draft = ensureCampaignSoundtrackDraftState();
+    if (!draft.dirty) {
+      setCampaignSoundtrackDraftFromConfig(normalized, { dirty: false, preserveActiveControl: true });
+    }
+    return {
+      mood: String(draft.mood || "custom"),
+      suiteId: String(draft.suiteId || ""),
+      styleName: String(draft.styleName || ""),
+      ambienceA: String(draft.ambienceA || ""),
+      ambienceB: String(draft.ambienceB || "")
+    };
+  }
+
   function getCampaignSoundtrackSummary(soundtrack) {
     var config = normalizeCampaignSoundtrackSettings(soundtrack);
     var presets = getCampaignSoundtrackPresets();
@@ -3634,8 +3948,9 @@
       var shared = getMutableCampaignSharedState();
       var settings = ensureGmSettings(shared);
       settings.soundtrack = nextSoundtrack;
+      setCampaignSoundtrackDraftFromConfig(nextSoundtrack, { dirty: false });
       applyCampaignSoundtrackFromSharedState(shared);
-      renderSettingsSection();
+      renderSettingsSection({ bypassSoundtrackDeferral: true });
       if (state.code && state.connected) {
         syncSharedPatch({ gmSettings: deepCloneJson(settings) || settings }, "set-gm-soundtrack").then(function (res) {
           if (!res || !res.ok) {
@@ -3703,6 +4018,7 @@
     styleSelect.innerHTML = buildCampaignSoundtrackStyleOptions(suiteId, desired);
     styleSelect.value = desired;
     if (desired && styleSelect.value !== desired) styleSelect.value = "";
+    captureCampaignSoundtrackDraftInputs();
   }
 
   function syncCampaignSoundtrackMoodToEditor() {
@@ -3716,6 +4032,7 @@
     refreshCampaignSoundtrackStyleOptions(preset.styleName);
     if (ambienceA) ambienceA.value = preset.ambienceIds[0] || "";
     if (ambienceB) ambienceB.value = preset.ambienceIds[1] || "";
+    captureCampaignSoundtrackDraftInputs();
   }
 
   function resolveCharacterMaxHealth(character) {
@@ -3754,9 +4071,10 @@
 
   // Get party roster from campaign (all participants with character data)
   function buildPartyRoster() {
-    if (!state.campaign || !state.campaign.participants) return [];
+    var participants = getCampaignParticipantRecords();
+    if (!participants.length) return [];
     var roster = [];
-    state.campaign.participants.forEach(function(participant) {
+    participants.forEach(function (participant) {
       if (!participant.character) return;
       if (String(participant.role || "") === "gm") return;
       roster.push({
@@ -4587,8 +4905,7 @@
 
   // Get character's current status (health, stress, conditions)
   function getCharacterStatus(token) {
-    if (!state.campaign || !state.campaign.participants) return null;
-    var participant = state.campaign.participants.get(token);
+    var participant = getCampaignParticipantRecord(token);
     if (!participant || !participant.character) return null;
     
     return {
@@ -4607,11 +4924,12 @@
 
   // Get all party members' status (for party status panel)
   function getPartyStatus() {
-    if (!state.campaign || !state.campaign.participants) return [];
+    var participants = getCampaignParticipantRecords();
+    if (!participants.length) return [];
     var statuses = [];
-    state.campaign.participants.forEach(function(participant, token) {
+    participants.forEach(function (participant) {
       if (participant.character) {
-        statuses.push(getCharacterStatus(token));
+        statuses.push(getCharacterStatus(participant.token));
       }
     });
     return statuses;
@@ -4739,7 +5057,7 @@
       if (state.code && state.connected) {
         syncSharedState("set-character-dead");
       }
-      var p = state.campaign && state.campaign.participants ? state.campaign.participants.get(token) : null;
+      var p = getCampaignParticipantRecord(token);
       var pname = p ? (p.name || "Character") : "Character";
       safeNotif((isDead ? "DEATH: " : "Revived: ") + escapeHtml(pname));
       if (callback) callback({ ok: true });
@@ -5724,6 +6042,7 @@
     if (nameEl) state.uiDraft.name = String(nameEl.value || "");
     if (codeEl) state.uiDraft.code = String(codeEl.value || "");
     if (passEl) state.uiDraft.joinPassword = String(passEl.value || "");
+    captureCampaignSoundtrackDraftInputs();
   }
 
   function bindDraftInputs() {
@@ -5737,13 +6056,24 @@
         if (id === "campaignPasswordInput") state.uiDraft.joinPassword = String(el.value || "");
       });
     });
+    bindCampaignSoundtrackInputs();
   }
 
-  function renderSettingsSection() {
+  function renderSettingsSection(options) {
     var section = document.getElementById("campaignSettingsSection");
     if (!section) return;
 
     captureDraftInputs();
+    var opts = options && typeof options === "object" ? options : {};
+    if (!opts.bypassSoundtrackDeferral && isCampaignSoundtrackEditorBusy()) {
+      scheduleDeferredSettingsRender();
+      return;
+    }
+    state.pendingSettingsRender = false;
+    if (state.settingsRenderTimer) {
+      clearTimeout(state.settingsRenderTimer);
+      state.settingsRenderTimer = null;
+    }
 
     var ioReady = canUseSockets();
     var campaign = state.campaign;
@@ -5779,6 +6109,7 @@
       : ensureCampaignTravelState(sharedState);
     var gmSettings = ensureGmSettings(sharedState);
     var soundtrackSettings = normalizeCampaignSoundtrackSettings(gmSettings.soundtrack);
+    var soundtrackEditor = getCampaignSoundtrackEditorState(soundtrackSettings);
     var soundtrackSummary = getCampaignSoundtrackSummary(soundtrackSettings);
     var soundtrackCatalog = getCampaignSoundtrackCatalog();
     var soundtrackSuites = Array.isArray(soundtrackCatalog.suites) ? soundtrackCatalog.suites : [];
@@ -5786,11 +6117,11 @@
     var soundtrackPresets = [{ id: "custom", label: "Custom" }].concat(getCampaignSoundtrackPresets().map(function (preset) {
       return { id: preset.id, label: preset.label };
     }));
-    var soundtrackMoodOptionsHtml = renderCampaignSelectOptions(soundtrackPresets, soundtrackSettings.mood, "");
-    var soundtrackSuiteOptionsHtml = renderCampaignSelectOptions(soundtrackSuites, soundtrackSettings.suiteId, "Choose Playlist");
-    var soundtrackStyleOptionsHtml = buildCampaignSoundtrackStyleOptions(soundtrackSettings.suiteId, soundtrackSettings.styleName);
-    var soundtrackPrimaryAmbience = Array.isArray(soundtrackSettings.ambienceIds) ? String(soundtrackSettings.ambienceIds[0] || "") : "";
-    var soundtrackSecondaryAmbience = Array.isArray(soundtrackSettings.ambienceIds) ? String(soundtrackSettings.ambienceIds[1] || "") : "";
+    var soundtrackMoodOptionsHtml = renderCampaignSelectOptions(soundtrackPresets, soundtrackEditor.mood, "");
+    var soundtrackSuiteOptionsHtml = renderCampaignSelectOptions(soundtrackSuites, soundtrackEditor.suiteId, "Choose Playlist");
+    var soundtrackStyleOptionsHtml = buildCampaignSoundtrackStyleOptions(soundtrackEditor.suiteId, soundtrackEditor.styleName);
+    var soundtrackPrimaryAmbience = String(soundtrackEditor.ambienceA || "");
+    var soundtrackSecondaryAmbience = String(soundtrackEditor.ambienceB || "");
     var soundtrackAmbienceOptionsHtml = renderCampaignSelectOptions(soundtrackAmbiences, soundtrackPrimaryAmbience, "No Ambience");
     var soundtrackAmbienceOptionsHtmlSecondary = renderCampaignSelectOptions(soundtrackAmbiences, soundtrackSecondaryAmbience, "No Ambience");
     var strictCameraLock = !!(gmSettings && gmSettings.cameraLock);
@@ -6316,6 +6647,7 @@
     bindDraftInputs();
     applyGmCompactLayout();
     applyPlayerCompactLayout();
+    restoreCampaignSoundtrackDraftFocus();
   }
 
   function applyGmCompactLayout() {
@@ -7688,6 +8020,7 @@
     state.lastCharacterHash = "";
     state.uiDraft.code = res.code;
     state.uiDraft.joinPassword = "";
+    setCampaignSoundtrackDraftFromConfig(createDefaultCampaignSoundtrackSettings(), { dirty: false });
     persistSession();
 
     refreshSettingsModeFromCampaign();
@@ -7752,6 +8085,7 @@
     state.lastCharacterHash = "";
     state.uiDraft.code = res.code;
     state.uiDraft.joinPassword = "";
+    setCampaignSoundtrackDraftFromConfig(createDefaultCampaignSoundtrackSettings(), { dirty: false });
     persistSession();
 
     refreshSettingsModeFromCampaign();
@@ -7785,6 +8119,7 @@
     state.lastAppliedCampaignSoundtrackHash = "";
     state.uiDraft.joinPassword = "";
     state.lastPlayerDockSeed = "";
+    setCampaignSoundtrackDraftFromConfig(createDefaultCampaignSoundtrackSettings(), { dirty: false });
     if (typeof window.AudioManager !== "undefined" && window.AudioManager && typeof window.AudioManager.clearCampaignSoundtrack === "function") {
       try {
         window.AudioManager.clearCampaignSoundtrack({ fadeIn: true });
@@ -8183,6 +8518,7 @@
     state.uiDraft.code = "";
     state.uiDraft.joinPassword = "";
     state.lastPlayerDockSeed = "";
+    setCampaignSoundtrackDraftFromConfig(createDefaultCampaignSoundtrackSettings(), { dirty: false });
     clearSession();
     refreshSettingsModeFromCampaign();
     safeNotif("Deleted campaign " + oldCode + ".", "warn");

@@ -2184,7 +2184,7 @@
       } catch (_err) {
         return;
       }
-      if (!cs || cs.role !== 'gm' || !cs.connected || !cs.code) return;
+      if (!cs || !cs.connected || !cs.code || !canCurrentUserSyncCampaignCombatScene()) return;
       var scene = buildCampaignCombatSceneSyncPayload();
       var hash = '';
       try {
@@ -3100,6 +3100,80 @@
     }
     if (faction !== 'player' && !token.isPlayer) return false;
     return !!(ownerToken && String(cs.token || '') === ownerToken);
+  }
+
+  function getCampaignCombatTurnState() {
+    var cs = getCampaignCombatSceneSession();
+    if (!cs || !cs.code || !window.campaignSystem || typeof window.campaignSystem.getSharedState !== 'function') return null;
+    try {
+      var shared = window.campaignSystem.getSharedState() || null;
+      var combat = shared && shared.campaignCombat && typeof shared.campaignCombat === 'object'
+        ? shared.campaignCombat
+        : null;
+      return combat && combat.active ? combat : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function getCampaignCombatParticipantName(combatState, token) {
+    var participants = combatState && Array.isArray(combatState.participants) ? combatState.participants : [];
+    var row = participants.find(function (entry) {
+      return String(entry && entry.token || '') === String(token || '');
+    }) || null;
+    return String(row && row.name || 'Wayfarer');
+  }
+
+  function canCurrentUserDriveTokenTurn(token) {
+    var cs = getCampaignCombatSceneSession();
+    if (!cs || !cs.code) return true;
+    if (!canCurrentUserManipulateToken(token)) return false;
+    if (String(cs.role || '') === 'gm') return true;
+    var combatState = getCampaignCombatTurnState();
+    if (!combatState) return true;
+    if (String(combatState.phase || 'wayfarer') !== 'wayfarer') return false;
+    return String(combatState.activeToken || '') === String(cs.token || '');
+  }
+
+  function getCampaignCombatTurnDeniedMessage(token) {
+    if (!canCurrentUserManipulateToken(token)) {
+      return getCombatSceneManipulationDeniedMessage(token);
+    }
+    var cs = getCampaignCombatSceneSession();
+    if (!cs || !cs.code || String(cs.role || '') === 'gm') {
+      return 'You cannot act with that token right now.';
+    }
+    var combatState = getCampaignCombatTurnState();
+    if (!combatState) return 'Wait for the GM to prompt your turn in the shared VTT.';
+    if (String(combatState.phase || 'wayfarer') === 'enemy') {
+      return 'Enemy phase is active. Wait for the GM to resolve enemy actions.';
+    }
+    var activeToken = String(combatState.activeToken || '');
+    if (!activeToken) {
+      return 'The GM is choosing who acts next.';
+    }
+    if (activeToken !== String(cs.token || '')) {
+      return 'Wait for the GM to prompt ' + getCampaignCombatParticipantName(combatState, activeToken) + ' before acting.';
+    }
+    return 'You cannot act with that token right now.';
+  }
+
+  function canCurrentUserSyncCampaignCombatScene() {
+    var cs = getCampaignCombatSceneSession();
+    if (!cs || !cs.connected || !cs.code) return false;
+    if (String(cs.role || '') === 'gm') return true;
+    var combatState = getCampaignCombatTurnState();
+    if (!combatState) return false;
+    if (String(combatState.phase || 'wayfarer') !== 'wayfarer') return false;
+    return !!(combatState.activeToken && String(combatState.activeToken || '') === String(cs.token || ''));
+  }
+
+  function guardCampaignGmSceneControl(message) {
+    var cs = getCampaignCombatSceneSession();
+    if (!cs || !cs.code) return true;
+    if (String(cs.role || '') === 'gm') return true;
+    safeNotif(String(message || 'Only the GM can change that shared VTT control.'), 'warn');
+    return false;
   }
 
   function ensureLootDrops(state) {
@@ -6455,6 +6529,10 @@
       safeNotif('Select a token first.', 'warn');
       return;
     }
+    if (!canCurrentUserDriveTokenTurn(actor)) {
+      safeNotif(getCampaignCombatTurnDeniedMessage(actor), 'warn');
+      return;
+    }
     var actionType = String(state.sceneRules && state.sceneRules.defaultActionType || 'ranged');
     var manualMode = !state.autoRoll || isManualRollModeActive();
     var base = 0;
@@ -7232,6 +7310,10 @@
       safeNotif(getCombatSceneManipulationDeniedMessage(actor), 'warn');
       return;
     }
+    if (!canCurrentUserDriveTokenTurn(actor)) {
+      safeNotif(getCampaignCombatTurnDeniedMessage(actor), 'warn');
+      return;
+    }
     if (isTokenDead(actor)) return;
     var fromQ = Number(actor.q || 0);
     var fromR = Number(actor.r || 0);
@@ -7285,6 +7367,10 @@
     if (!anchor) return false;
     if (!canCurrentUserManipulateToken(anchor)) {
       safeNotif(getCombatSceneManipulationDeniedMessage(anchor), 'warn');
+      return false;
+    }
+    if (!canCurrentUserDriveTokenTurn(anchor)) {
+      safeNotif(getCampaignCombatTurnDeniedMessage(anchor), 'warn');
       return false;
     }
     var blockedToken = (state.tokens || []).find(function (token) {
@@ -11974,6 +12060,7 @@
     if (startSceneBtn && !startSceneBtn._bound) {
       startSceneBtn._bound = true;
       startSceneBtn.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can start or restart the shared VTT scene.')) return;
         var wasActive = !!(window.S && window.S.combat && window.S.combat.active);
         var state = store.getState();
         if ((!state.scenes || !state.scenes.length) && typeof window.createNewCombatScene === 'function') {
@@ -12068,6 +12155,7 @@
     if (nextTurn && !nextTurn._bound) {
       nextTurn._bound = true;
       nextTurn.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can advance shared VTT turns.')) return;
         store.setState(function (state) {
           var size = Math.max(1, (state.initiative || []).length);
           var prevIdx = Number(state.initiativeIndex || 0);
@@ -12114,6 +12202,7 @@
     if (delayTurnBtn && !delayTurnBtn._bound) {
       delayTurnBtn._bound = true;
       delayTurnBtn.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can reorder shared VTT turns.')) return;
         var st = store.getState();
         var active = st.initiative[st.initiativeIndex] || null;
         applyInitiativeTurnState('delay-turn', active && active.tokenId);
@@ -12125,6 +12214,7 @@
     if (holdTurnBtn && !holdTurnBtn._bound) {
       holdTurnBtn._bound = true;
       holdTurnBtn.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can reorder shared VTT turns.')) return;
         var st = store.getState();
         var active = st.initiative[st.initiativeIndex] || null;
         applyInitiativeTurnState('hold-turn', active && active.tokenId);
@@ -12149,6 +12239,7 @@
     if (saveToken && !saveToken._bound) {
       saveToken._bound = true;
       saveToken.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can edit shared VTT token stats.')) return;
         var nameInput = document.getElementById('combatSelectedName');
         var dreadInput = document.getElementById('combatSelectedDread');
         var hpInput = document.getElementById('combatSelectedHp');
@@ -12189,6 +12280,7 @@
     if (applyRoundEffectBtn && !applyRoundEffectBtn._bound) {
       applyRoundEffectBtn._bound = true;
       applyRoundEffectBtn.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can apply shared VTT conditions directly.')) return;
         var state = store.getState();
         var selectedToken = byId(state.selectedTokenId);
         var targetSel = document.getElementById('combatTokenTargetSel');
@@ -12218,6 +12310,7 @@
     if (deleteTokenBtn && !deleteTokenBtn._bound) {
       deleteTokenBtn._bound = true;
       deleteTokenBtn.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can delete shared VTT tokens.')) return;
         var state = store.getState();
         var token = byId(state.selectedTokenId);
         if (!token) return;
@@ -13396,6 +13489,7 @@
     if (applyWeather && !applyWeather._bound) {
       applyWeather._bound = true;
       applyWeather.onclick = function () {
+        if (!guardCampaignGmSceneControl('Only the GM can change shared VTT weather.')) return;
         var weatherSelect = document.getElementById('combatWeatherSelect');
         var weatherIntensity = document.getElementById('combatWeatherIntensity');
         var weather = String(weatherSelect && weatherSelect.value || 'none');
@@ -13574,6 +13668,10 @@
         var actor = byId(store.getState().selectedTokenId);
         if (!actor) {
           safeNotif('Select a token first.', 'warn');
+          return;
+        }
+        if (!canCurrentUserDriveTokenTurn(actor)) {
+          safeNotif(getCampaignCombatTurnDeniedMessage(actor), 'warn');
           return;
         }
         if (String(actor.faction) === 'monster') {
