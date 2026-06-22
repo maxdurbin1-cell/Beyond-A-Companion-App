@@ -267,7 +267,13 @@ function wireMainUiDelegates() {
     if (act === 'roll-shoot' && typeof rollAttack === 'function') return rollAttack('shoot');
     if (act === 'roll-defend' && typeof rollDefend === 'function') return rollDefend();
     if (act === 'roll-trauma' && typeof rollTraumaCheck === 'function') return rollTraumaCheck();
-    if (act === 'enemy-action' && typeof triggerEnemyActionEvent === 'function') return triggerEnemyActionEvent();
+    if (act === 'enemy-action') {
+      if (typeof runCampaignPromptedEnemyAction === 'function') {
+        var out = runCampaignPromptedEnemyAction();
+        if (out !== false) return out;
+      }
+      if (typeof triggerEnemyActionEvent === 'function') return triggerEnemyActionEvent();
+    }
     if (act === 'attempt-flee' && typeof attemptFlee === 'function') return attemptFlee();
     if (act === 'add-enemy' && typeof addEnemy === 'function') return addEnemy();
     if (act === 'clear-enemies' && typeof clearEnemies === 'function') return clearEnemies();

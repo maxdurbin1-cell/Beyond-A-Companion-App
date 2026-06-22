@@ -79,6 +79,7 @@
     activeRosterSheetToken: "",
     lastCampaignCombatPromptAt: 0,
     lastCampaignActorPromptKey: "",
+    lastCampaignEnemyPromptKey: "",
     lastCampaignVttPromptAt: 0,
     lastCampaignScenePromptKey: "",
     lastAppliedCampaignSoundtrackHash: "",
@@ -163,6 +164,7 @@
     partyStash: true,
     characterInventories: true,
     economyLedger: true,
+    campaignCombat: true,
     combatScene: true,
     readyCheck: true,
     pendingChecks: true
@@ -829,11 +831,20 @@
     return String(activeScene && activeScene.name || "Campaign Shared Scene");
   }
 
+  function hasRenderableCombatSceneEditorSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return false;
+    if (Array.isArray(snapshot.tokens) && snapshot.tokens.length) return true;
+    var scenes = Array.isArray(snapshot.scenes) ? snapshot.scenes : [];
+    return scenes.some(function (scene) {
+      return !!(scene && Array.isArray(scene.tokens) && scene.tokens.length);
+    });
+  }
+
   function getSharedCombatSceneEditorSnapshot() {
     var localScene = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
       ? window.S.combat.sceneEditor
       : null;
-    if (localScene) return localScene;
+    if (hasRenderableCombatSceneEditorSnapshot(localScene)) return localScene;
     var sharedState = null;
     try {
       sharedState = typeof getCampaignSharedState === "function"
@@ -850,7 +861,7 @@
     var snapshot = sharedScene && sharedScene.sceneEditor && typeof sharedScene.sceneEditor === "object"
       ? (deepCloneJson(sharedScene.sceneEditor) || sharedScene.sceneEditor)
       : null;
-    if (!snapshot) return null;
+    if (!hasRenderableCombatSceneEditorSnapshot(snapshot)) return null;
     if (window.S && typeof window.S === "object") {
       if (!window.S.combat || typeof window.S.combat !== "object") {
         window.S.combat = {};
@@ -864,6 +875,16 @@
   function joinSharedCampaignCombatMode() {
     var sceneSnapshot = getSharedCombatSceneEditorSnapshot();
     if (!sceneSnapshot) {
+      if (typeof window.openCombatSceneEditorFromExpedition === "function") {
+        try {
+          window.openCombatSceneEditorFromExpedition();
+          var overlay = document.getElementById("combatModeOverlay");
+          if (overlay && overlay.classList.contains("open")) {
+            safeNotif("Joined the shared Combat Mode scene.", "good");
+            return true;
+          }
+        } catch (_fallbackErr) {}
+      }
       safeNotif("The shared VTT is still syncing. Try again in a moment.", "warn");
       return false;
     }
@@ -1232,6 +1253,58 @@
       if (PLAYER_LOCAL_ONLY_KEYS[key]) return;
       if (!PLAYER_SHARED_PATCH_KEYS[key]) return;
       if ((key === "provinceMap" || key === "campaignCombat") && (!patch[key] || typeof patch[key] !== "object")) return;
+      if (key === "campaignCombat") {
+        var combatPatch = patch.campaignCombat && typeof patch.campaignCombat === "object"
+          ? (deepCloneJson(patch.campaignCombat) || {})
+          : null;
+        var sharedCombat = ensureCampaignCombatState(getCampaignSharedState() || getMutableCampaignSharedState());
+        var liveEnemyRequest = getCampaignEnemyActionRequest(sharedCombat);
+        var incomingEnemyRequest = combatPatch && combatPatch.enemyActionRequest && typeof combatPatch.enemyActionRequest === "object"
+          ? combatPatch.enemyActionRequest
+          : null;
+        var canResolveEnemyRequest = !!(
+          combatPatch
+          && incomingEnemyRequest
+          && sharedCombat
+          && sharedCombat.active
+          && String(sharedCombat.phase || "wayfarer") === "enemy"
+          && liveEnemyRequest
+          && state.role === "player"
+          && state.token
+          && String(incomingEnemyRequest.id || "") === String(liveEnemyRequest.id || "")
+          && isCampaignEnemyActionTargetToken(liveEnemyRequest, state.token)
+        );
+        if (!canResolveEnemyRequest) return;
+        var nextEnemyRequest = deepCloneJson(liveEnemyRequest) || liveEnemyRequest;
+        nextEnemyRequest.resolutionSummary = String(incomingEnemyRequest.resolutionSummary || "").trim().slice(0, 240);
+        nextEnemyRequest.lastResolvedByToken = String(state.token || "");
+        nextEnemyRequest.lastResolvedBy = String(state.playerName || ensureName() || "Wayfarer");
+        nextEnemyRequest.lastResolvedAt = Date.now();
+        if (String(nextEnemyRequest.mode || "single") === "aoe") {
+          var resolvedMap = {};
+          (Array.isArray(nextEnemyRequest.resolvedTokens) ? nextEnemyRequest.resolvedTokens : []).forEach(function (token) {
+            var keyResolved = String(token || "");
+            if (keyResolved) resolvedMap[keyResolved] = true;
+          });
+          resolvedMap[String(state.token || "")] = true;
+          nextEnemyRequest.resolvedTokens = getCampaignEnemyActionTargetTokens(nextEnemyRequest).filter(function (token) {
+            return !!resolvedMap[String(token || "")];
+          });
+          nextEnemyRequest.status = nextEnemyRequest.resolvedTokens.length >= getCampaignEnemyActionTargetTokens(nextEnemyRequest).length
+            ? "resolved"
+            : "pending";
+        } else {
+          nextEnemyRequest.resolvedByToken = String(state.token || "");
+          nextEnemyRequest.resolvedBy = String(state.playerName || ensureName() || "Wayfarer");
+          nextEnemyRequest.resolvedAt = Date.now();
+          nextEnemyRequest.resolvedTokens = [String(state.token || "")];
+          nextEnemyRequest.status = "resolved";
+        }
+        sanitized.campaignCombat = {
+          enemyActionRequest: sanitizeCampaignEnemyActionRequest(nextEnemyRequest, sharedCombat)
+        };
+        return;
+      }
       if (key === "combatScene") {
         var combatScenePatch = patch.combatScene && typeof patch.combatScene === "object"
           ? (deepCloneJson(patch.combatScene) || null)
@@ -3128,9 +3201,25 @@
         } else if (!activeToken) {
           state.lastCampaignActorPromptKey = "";
         }
+        var enemyActionRequest = getCampaignEnemyActionRequest(mergedCombat);
+        var enemyPromptKey = enemyActionRequest
+          ? [
+            String(enemyActionRequest.id || ""),
+            String(enemyActionRequest.status || "pending"),
+            (Array.isArray(enemyActionRequest.resolvedTokens) ? enemyActionRequest.resolvedTokens : []).join(",")
+          ].join("|")
+          : "";
+        var enemyTargetedToMe = !!(state.role === "player" && state.token && enemyActionRequest && isCampaignEnemyActionTargetToken(enemyActionRequest, state.token));
+        if (mergedCombat.active && enemyTargetedToMe && String(enemyActionRequest.status || "pending") === "pending" && enemyPromptKey && enemyPromptKey !== state.lastCampaignEnemyPromptKey) {
+          state.lastCampaignEnemyPromptKey = enemyPromptKey;
+          safeNotif("Enemy action targeting you. Click Enemy Action in the Combat tab to resolve it.", "warn");
+        } else if (!enemyTargetedToMe || !enemyActionRequest || String(enemyActionRequest.status || "") === "resolved") {
+          state.lastCampaignEnemyPromptKey = "";
+        }
         if (!mergedCombat.active) {
           state.lastCampaignCombatPromptAt = 0;
           state.lastCampaignActorPromptKey = "";
+          state.lastCampaignEnemyPromptKey = "";
           state.lastCampaignVttPromptAt = 0;
           state.lastCampaignScenePromptKey = "";
         }
@@ -3550,6 +3639,7 @@
         activeToken: "",
         pendingWayfarers: [],
         actedWayfarers: [],
+        enemyActionRequest: null,
         vttSession: null
       };
     }
@@ -3559,6 +3649,9 @@
     if (!Array.isArray(sharedState.campaignCombat.actedWayfarers)) sharedState.campaignCombat.actedWayfarers = [];
     if (sharedState.campaignCombat.phase !== "enemy") sharedState.campaignCombat.phase = "wayfarer";
     if (typeof sharedState.campaignCombat.activeToken !== "string") sharedState.campaignCombat.activeToken = "";
+    if (sharedState.campaignCombat.enemyActionRequest && typeof sharedState.campaignCombat.enemyActionRequest !== "object") {
+      sharedState.campaignCombat.enemyActionRequest = null;
+    }
     if (!Number.isFinite(Number(sharedState.campaignCombat.currentActorIndex))) {
       sharedState.campaignCombat.currentActorIndex = -1;
     }
@@ -4137,6 +4230,116 @@
     return "enemy:phase";
   }
 
+  function normalizeCampaignEnemyActionRange(range) {
+    var key = String(range || "").trim().toLowerCase();
+    if (key === "engaged" || key === "close" || key === "nearby" || key === "far") return key;
+    return "engaged";
+  }
+
+  function getCampaignEnemyActionTargetTokens(request) {
+    if (!request || typeof request !== "object") return [];
+    if (Array.isArray(request.targetTokens)) {
+      var seen = {};
+      return request.targetTokens.map(function (entry) {
+        return String(entry || "");
+      }).filter(function (token) {
+        if (!token || seen[token]) return false;
+        seen[token] = true;
+        return true;
+      });
+    }
+    var single = String(request.targetToken || "");
+    return single ? [single] : [];
+  }
+
+  function isCampaignEnemyActionTargetToken(request, token) {
+    var key = String(token || "");
+    if (!key) return false;
+    return getCampaignEnemyActionTargetTokens(request).indexOf(key) >= 0;
+  }
+
+  function sanitizeCampaignEnemyActionRequest(request, combatState) {
+    var raw = request && typeof request === "object" ? (deepCloneJson(request) || {}) : null;
+    if (!raw || !raw.id) return null;
+    var stateRef = combatState && typeof combatState === "object" ? combatState : ensureCampaignCombatState();
+    var participantRows = Array.isArray(stateRef.participants) ? stateRef.participants : [];
+    var participantNames = {};
+    participantRows.forEach(function (row) {
+      if (!row || !row.token || row.isEnemy || String(row.role || "player") === "gm") return;
+      participantNames[String(row.token || "")] = String(row.name || row.token || "Wayfarer");
+    });
+    raw.mode = String(raw.mode || "single").toLowerCase() === "aoe" ? "aoe" : "single";
+    raw.enemyId = String(raw.enemyId || "");
+    raw.enemyName = String(raw.enemyName || "Enemy Turn");
+    raw.rangeBand = normalizeCampaignEnemyActionRange(raw.rangeBand || raw.aoeBand || raw.targetBand);
+    raw.targetZoneLabel = String(raw.targetZoneLabel || raw.rangeBand || "").trim();
+    raw.requestedBy = String(raw.requestedBy || "GM");
+    raw.requestedAt = Math.max(0, Number(raw.requestedAt || Date.now()));
+    raw.round = Math.max(1, Number(raw.round || stateRef.round || 1));
+    raw.resolutionSummary = String(raw.resolutionSummary || "").trim().slice(0, 240);
+    raw.lastResolvedByToken = String(raw.lastResolvedByToken || "");
+    raw.lastResolvedBy = String(raw.lastResolvedBy || "");
+    raw.lastResolvedAt = Math.max(0, Number(raw.lastResolvedAt || 0));
+    raw.resolvedByToken = String(raw.resolvedByToken || "");
+    raw.resolvedBy = String(raw.resolvedBy || "");
+    raw.resolvedAt = Math.max(0, Number(raw.resolvedAt || 0));
+
+    if (raw.mode === "aoe") {
+      raw.targetTokens = getCampaignEnemyActionTargetTokens(raw).filter(function (token) {
+        return !!participantNames[token];
+      });
+      raw.targetNames = raw.targetTokens.map(function (token) {
+        return participantNames[token] || token;
+      });
+      if (!raw.targetTokens.length) return null;
+      var resolvedMap = {};
+      (Array.isArray(raw.resolvedTokens) ? raw.resolvedTokens : []).forEach(function (token) {
+        var resolvedToken = String(token || "");
+        if (resolvedToken) resolvedMap[resolvedToken] = true;
+      });
+      raw.resolvedTokens = raw.targetTokens.filter(function (token) {
+        return !!resolvedMap[String(token || "")];
+      });
+      raw.status = raw.resolvedTokens.length >= raw.targetTokens.length ? "resolved" : "pending";
+      raw.targetToken = "";
+      raw.targetName = raw.targetNames.length ? raw.targetNames.join(", ") : "Wayfarers";
+      raw.aoeBand = raw.rangeBand;
+      return raw;
+    }
+
+    raw.targetToken = String(raw.targetToken || getCampaignEnemyActionTargetTokens(raw)[0] || "");
+    if (!raw.targetToken || !participantNames[raw.targetToken]) return null;
+    raw.targetName = String(raw.targetName || participantNames[raw.targetToken] || raw.targetToken);
+    raw.targetTokens = [raw.targetToken];
+    raw.targetNames = [raw.targetName];
+    raw.resolvedTokens = [];
+    if (String(raw.status || "") === "resolved" || raw.resolvedByToken === raw.targetToken) {
+      raw.status = "resolved";
+      raw.resolvedTokens = [raw.targetToken];
+      if (!raw.resolvedByToken) raw.resolvedByToken = raw.targetToken;
+    } else {
+      raw.status = "pending";
+    }
+    raw.aoeBand = "";
+    return raw;
+  }
+
+  function getCampaignEnemyActionRequest(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : ensureCampaignCombatState();
+    if (!stateRef) return null;
+    var normalized = sanitizeCampaignEnemyActionRequest(stateRef.enemyActionRequest, stateRef);
+    if (!normalized) return null;
+    stateRef.enemyActionRequest = normalized;
+    return stateRef.enemyActionRequest;
+  }
+
+  function clearCampaignEnemyActionRequest(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : ensureCampaignCombatState();
+    if (!stateRef) return stateRef;
+    stateRef.enemyActionRequest = null;
+    return stateRef;
+  }
+
   function sanitizeCampaignCombatTurnState(combatState) {
     var stateRef = combatState && typeof combatState === "object" ? combatState : null;
     if (!stateRef) return stateRef;
@@ -4190,6 +4393,11 @@
       stateRef.activeToken = enemyToken;
     } else if (activeToken === enemyToken || (activeToken && !participantMap[activeToken])) {
       stateRef.activeToken = "";
+    }
+    if (phase !== "enemy") {
+      clearCampaignEnemyActionRequest(stateRef);
+    } else {
+      stateRef.enemyActionRequest = sanitizeCampaignEnemyActionRequest(stateRef.enemyActionRequest, stateRef);
     }
     syncCampaignCombatCurrentActorIndex(stateRef);
     syncCampaignCombatParticipantFlags(stateRef);
@@ -4245,6 +4453,7 @@
     stateRef.activeToken = "";
     stateRef.pendingWayfarers = nextRoster.slice();
     stateRef.actedWayfarers = [];
+    stateRef.enemyActionRequest = null;
     syncCampaignCombatParticipantFlags(stateRef);
     syncCampaignCombatCurrentActorIndex(stateRef);
     return stateRef;
@@ -4254,6 +4463,9 @@
     var stateRef = combatState && typeof combatState === "object" ? combatState : null;
     if (!stateRef) return stateRef;
     stateRef.activeToken = String(token || "");
+    if (String(stateRef.phase || "wayfarer") !== "enemy") {
+      stateRef.enemyActionRequest = null;
+    }
     syncCampaignCombatCurrentActorIndex(stateRef);
     syncCampaignCombatParticipantFlags(stateRef);
     return stateRef;
@@ -4335,6 +4547,7 @@
       combatState.activeToken = "";
       combatState.pendingWayfarers = wayfarerTokens.slice();
       combatState.actedWayfarers = [];
+      combatState.enemyActionRequest = null;
       combatState.currentActorIndex = -1;
       combatState.vttSession = null;
 
@@ -4438,6 +4651,120 @@
     }
   }
 
+  function promptEnemyAction(request, callback) {
+    var isGm = !state.role || state.role === "gm";
+    if (!isGm) {
+      if (callback) callback({ ok: false, error: "Only GM can prompt enemy actions." });
+      return;
+    }
+    if (!guardRiskySharedAction("prompt enemy action", callback)) return;
+    try {
+      var combatState = ensureCampaignCombatState();
+      if (!combatState.active) {
+        if (callback) callback({ ok: false, error: "No active combat" });
+        return;
+      }
+      if (String(combatState.phase || "wayfarer") !== "enemy") {
+        if (callback) callback({ ok: false, error: "Enemy phase is not active" });
+        return;
+      }
+      var raw = request && typeof request === "object" ? request : {};
+      var normalized = sanitizeCampaignEnemyActionRequest({
+        id: raw.id || ("enemy-action:" + Date.now() + ":" + Math.random().toString(36).slice(2, 8)),
+        mode: raw.mode,
+        enemyId: raw.enemyId,
+        enemyName: raw.enemyName,
+        rangeBand: raw.rangeBand,
+        aoeBand: raw.aoeBand,
+        targetZoneLabel: raw.targetZoneLabel,
+        targetToken: raw.targetToken,
+        targetName: raw.targetName,
+        targetTokens: raw.targetTokens,
+        targetNames: raw.targetNames,
+        requestedBy: String(state.playerName || ensureName() || "GM"),
+        requestedAt: Date.now(),
+        round: Math.max(1, Number(combatState.round || 1)),
+        resolutionSummary: "",
+        resolvedTokens: [],
+        status: "pending"
+      }, combatState);
+      if (!normalized) {
+        if (callback) callback({ ok: false, error: "Choose a valid target before prompting the enemy action." });
+        return;
+      }
+      if (normalized.rangeBand === "far") {
+        if (callback) callback({ ok: false, error: "That target is out of range. Move or retarget first." });
+        return;
+      }
+      combatState.enemyActionRequest = normalized;
+      persistCampaignCombatState(combatState, "prompt-enemy-action");
+      if (callback) callback({ ok: true, request: normalized });
+    } catch (err) {
+      if (callback) callback({ ok: false, error: String(err) });
+    }
+  }
+
+  function clearEnemyActionRequest(callback) {
+    var isGm = !state.role || state.role === "gm";
+    if (!isGm) {
+      if (callback) callback({ ok: false, error: "Only GM can clear enemy prompts." });
+      return;
+    }
+    if (!guardRiskySharedAction("clear enemy action prompt", callback)) return;
+    try {
+      var combatState = ensureCampaignCombatState();
+      clearCampaignEnemyActionRequest(combatState);
+      persistCampaignCombatState(combatState, "clear-enemy-action");
+      if (callback) callback({ ok: true });
+    } catch (err) {
+      if (callback) callback({ ok: false, error: String(err) });
+    }
+  }
+
+  function resolveEnemyActionRequest(resolution, callback) {
+    var payload = resolution && typeof resolution === "object" ? resolution : {};
+    var combatState = ensureCampaignCombatState();
+    var liveEnemyRequest = getCampaignEnemyActionRequest(combatState);
+    if (!liveEnemyRequest) {
+      if (callback) callback({ ok: false, error: "No pending enemy action request." });
+      return;
+    }
+    if (state.role === "player") {
+      if (!state.token || !isCampaignEnemyActionTargetToken(liveEnemyRequest, state.token)) {
+        if (callback) callback({ ok: false, error: "This enemy action targets another Wayfarer." });
+        return;
+      }
+      syncPlayerSharedPatch({
+        campaignCombat: {
+          enemyActionRequest: {
+            id: String(payload.id || liveEnemyRequest.id || ""),
+            resolutionSummary: String(payload.resolutionSummary || "").trim().slice(0, 240)
+          }
+        }
+      }, "resolve-enemy-action").then(function (res) {
+        if (callback) callback(res || { ok: false, error: "Could not resolve enemy action." });
+      }).catch(function (err) {
+        if (callback) callback({ ok: false, error: String(err) });
+      });
+      return;
+    }
+    if (!guardRiskySharedAction("resolve enemy action", callback)) return;
+    try {
+      var nextEnemyRequest = deepCloneJson(liveEnemyRequest) || liveEnemyRequest;
+      nextEnemyRequest.status = "resolved";
+      nextEnemyRequest.resolvedAt = Date.now();
+      nextEnemyRequest.resolvedBy = String(state.playerName || ensureName() || "GM");
+      nextEnemyRequest.resolvedByToken = String(state.token || "gm");
+      nextEnemyRequest.resolvedTokens = getCampaignEnemyActionTargetTokens(nextEnemyRequest);
+      nextEnemyRequest.resolutionSummary = String(payload.resolutionSummary || nextEnemyRequest.resolutionSummary || "").trim().slice(0, 240);
+      combatState.enemyActionRequest = sanitizeCampaignEnemyActionRequest(nextEnemyRequest, combatState);
+      persistCampaignCombatState(combatState, "resolve-enemy-action-gm");
+      if (callback) callback({ ok: true, request: combatState.enemyActionRequest });
+    } catch (err) {
+      if (callback) callback({ ok: false, error: String(err) });
+    }
+  }
+
   // Advance campaign combat from the current acting Wayfarer to the next prompt, or from enemy phase to a new round.
   function nextCombatActor(callback) {
     if (!state.role || state.role !== "gm") {
@@ -4474,6 +4801,7 @@
       } else {
         combatState.phase = "enemy";
         setCampaignCombatActorToken(combatState, getCampaignEnemyTurnToken());
+        combatState.enemyActionRequest = null;
       }
       persistCampaignCombatState(combatState, "next-combat-turn");
       if (callback) callback({ ok: true });
@@ -4500,6 +4828,7 @@
       combatState.activeToken = "";
       combatState.pendingWayfarers = [];
       combatState.actedWayfarers = [];
+      combatState.enemyActionRequest = null;
       combatState.vttSession = null;
       appendSessionTimeline("combat", "Campaign combat ended.", {});
 
@@ -6989,6 +7318,7 @@
 
       if (actor.active) {
         var now = Date.now();
+        var enemyRequest = getCampaignEnemyActionRequest(combatState);
         if (actor.key && actor.key !== state.lastDockActorKey) {
           state.lastDockActorKey = actor.key;
           state.dockActorFlashUntil = now + 3200;
@@ -6998,7 +7328,15 @@
           ? "GM is choosing who goes next"
           : (actor.isMe
             ? "your call to act"
-            : (actor.isEnemy ? "storyteller resolves enemy action" : "waiting on that wayfarer"));
+            : (actor.isEnemy
+              ? (enemyRequest
+                ? (String(enemyRequest.status || "pending") === "resolved"
+                  ? "enemy action resolved; GM can prompt again or end the round"
+                  : (String(enemyRequest.mode || "single") === "aoe"
+                    ? ("AOE targeting " + String(enemyRequest.rangeBand || "close").toUpperCase() + " lane")
+                    : ("targeting " + String(enemyRequest.targetName || "a Wayfarer"))))
+                : "GM is lining up the next enemy action")
+              : "waiting on that wayfarer"));
         cards.push(''
           + '<div class="' + actorCardClass + '">'
           + '<div class="campaign-dock-status-label">Current Actor</div>'
@@ -9323,10 +9661,16 @@
     syncCampaignSoundtrackMoodToEditor: syncCampaignSoundtrackMoodToEditor,
     startCampaignCombat: startCampaignCombat,
     setCombatActor: setCombatActor,
+    promptEnemyAction: promptEnemyAction,
+    clearEnemyActionRequest: clearEnemyActionRequest,
+    resolveEnemyActionRequest: resolveEnemyActionRequest,
     nextCombatActor: nextCombatActor,
     endCampaignCombat: endCampaignCombat,
     joinSharedCombatMode: joinSharedCampaignCombatMode,
     getCurrentCombatActor: getCurrentCombatActor,
+    getEnemyActionRequest: function () {
+      return getCampaignEnemyActionRequest(ensureCampaignCombatState());
+    },
     gmInitiateTravel: gmInitiateTravel,
     promptCampaignTravel: promptCampaignTravel,
     gmAdvanceTime: gmAdvanceTime,

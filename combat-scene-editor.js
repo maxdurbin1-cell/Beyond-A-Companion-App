@@ -2394,6 +2394,41 @@
     };
   }
 
+  function getActiveSceneSnapshot(state) {
+    var sceneState = state && typeof state === 'object' ? state : null;
+    if (!sceneState || !Array.isArray(sceneState.scenes) || !sceneState.scenes.length) return null;
+    var activeId = String(sceneState.activeSceneId || '');
+    if (!activeId) return null;
+    return sceneState.scenes.find(function (scene) {
+      return scene && String(scene.id || '') === activeId;
+    }) || null;
+  }
+
+  function hydrateActiveSceneState(state, options) {
+    var sceneState = normalizeCombatSceneState(Object.assign({}, state || {}));
+    var activeScene = getActiveSceneSnapshot(sceneState);
+    if (!activeScene) return sceneState;
+    var opts = options && typeof options === 'object' ? options : {};
+    var topTokens = Array.isArray(sceneState.tokens) ? sceneState.tokens : [];
+    var activeTokens = Array.isArray(activeScene.tokens) ? activeScene.tokens : [];
+    var shouldHydrate = !!opts.force || (!topTokens.length && activeTokens.length);
+    if (!shouldHydrate) return sceneState;
+    sceneState.board = normalizeBoard(Object.assign({}, sceneState.board || {}, clone(activeScene.board || {})));
+    sceneState.layers = clone(activeScene.layers || {});
+    sceneState.fog = clone(activeScene.fog || {});
+    sceneState.sceneRules = clone(activeScene.sceneRules || {});
+    sceneState.tokens = clone(activeTokens);
+    sceneState.tokenRoundEffects = clone(activeScene.tokenRoundEffects || sceneState.tokenRoundEffects || []);
+    sceneState.initiative = clone(activeScene.initiative || []);
+    sceneState.actionHistory = clone(activeScene.actionHistory || []);
+    sceneState.combatLog = clone(activeScene.combatLog || sceneState.combatLog || []);
+    sceneState.turnStates = clone(activeScene.turnStates || sceneState.turnStates || {});
+    if (!sceneState.selectedTokenId && sceneState.tokens.length) {
+      sceneState.selectedTokenId = String(sceneState.tokens[0] && sceneState.tokens[0].id || '');
+    }
+    return sceneState;
+  }
+
   function withActiveSceneSnapshot(state) {
     if (!state || !Array.isArray(state.scenes) || !state.activeSceneId) return state;
     var sceneIdx = state.scenes.findIndex(function (scene) {
@@ -2484,10 +2519,66 @@
     if (window.S) {
       if (!window.S.combat || typeof window.S.combat !== 'object') window.S.combat = {};
       window.S.combat.sceneEditor = clone(synced);
+      syncWindowCombatMapFromSceneState(synced);
       if (!applyingSharedCombatSceneEditorState) {
         queueCampaignCombatSceneSync('combat-scene-editor-persist');
       }
     }
+  }
+
+  function sceneHexToCombatZone(token) {
+    var q = Number(token && token.q || 0);
+    if (q <= 1) return 'Engaged';
+    if (q <= 3) return 'Close';
+    if (q <= 5) return 'Nearby';
+    return 'Far';
+  }
+
+  function buildCombatMapUnitFromSceneToken(token, index) {
+    if (!token || typeof token !== 'object') return null;
+    var faction = String(token.faction || 'neutral');
+    var isEnemy = faction === 'monster' || faction === 'enemy';
+    var trackerKey = token.trackerKey
+      ? String(token.trackerKey || '')
+      : (isEnemy && Number(token.sourceEnemyId || 0) > 0 ? ('enemy:' + String(token.sourceEnemyId || '')) : '');
+    var fallbackId = isEnemy ? (500000 + Math.max(0, Number(index || 0))) : (900000 + Math.max(0, Number(index || 0)));
+    var mappedId = isEnemy
+      ? Math.max(1, Number(token.sourceEnemyId || token.mapUnitId || fallbackId))
+      : Math.max(1, Number(token.mapUnitId || fallbackId));
+    return {
+      id: mappedId,
+      name: String(token.name || (isEnemy ? 'Enemy' : 'Wayfarer')),
+      side: isEnemy ? 'enemy' : 'ally',
+      zone: sceneHexToCombatZone(token),
+      isPlayer: !!token.isPlayer,
+      fromTracker: !!trackerKey,
+      trackerKey: trackerKey,
+      hp: Math.max(0, Number(token.hp || 0)),
+      maxHp: Math.max(1, Number(token.maxHp || token.hp || 1)),
+      dead: !!token.dead || Number(token.hp || 0) <= 0,
+      dread: Math.max(1, Number(token.dread || token.codexDread || token.deathNumber || 0)) || undefined,
+      deathNumber: Math.max(1, Number(token.deathNumber || token.dread || token.codexDread || 1)),
+      sourceEnemyId: Math.max(0, Number(token.sourceEnemyId || 0)),
+      ownerToken: String(token.ownerToken || ''),
+      status: Array.isArray(token.status) ? token.status.slice() : []
+    };
+  }
+
+  function syncWindowCombatMapFromSceneState(sceneState) {
+    if (!window.S || !sceneState || typeof sceneState !== 'object') return null;
+    var hydrated = hydrateActiveSceneState(sceneState);
+    var tokens = Array.isArray(hydrated.tokens) ? hydrated.tokens : [];
+    if (!window.S.combatMap || typeof window.S.combatMap !== 'object') {
+      window.S.combatMap = { units: [], aoeTemplates: [], aoeSeq: 0, activeAoeTemplateId: '' };
+    }
+    if (!Array.isArray(window.S.combatMap.aoeTemplates)) window.S.combatMap.aoeTemplates = [];
+    if (!Number.isFinite(Number(window.S.combatMap.aoeSeq || 0))) window.S.combatMap.aoeSeq = 0;
+    if (typeof window.S.combatMap.activeAoeTemplateId !== 'string') window.S.combatMap.activeAoeTemplateId = '';
+    if (!tokens.length) return window.S.combatMap;
+    window.S.combatMap.units = tokens.map(function (token, index) {
+      return buildCombatMapUnitFromSceneToken(token, index);
+    }).filter(Boolean);
+    return window.S.combatMap;
   }
 
   function actionModeFor(action) {
@@ -14861,7 +14952,9 @@
       }
       store.setState(function (state) {
         if (seed.sceneEditorState && typeof seed.sceneEditorState === 'object') {
-          var sharedSnapshot = normalizeCampaignCombatSceneState(normalizeCombatSceneState(Object.assign({}, state || {}, clone(seed.sceneEditorState) || {})));
+          var sharedSnapshot = hydrateActiveSceneState(
+            normalizeCampaignCombatSceneState(normalizeCombatSceneState(Object.assign({}, state || {}, clone(seed.sceneEditorState) || {})))
+          );
           persist(sharedSnapshot);
           return sharedSnapshot;
         }
@@ -15113,6 +15206,11 @@
         ? shared.campaignCombat
         : null;
       if (combat && combat.active) {
+        var hasOpenSharedVtt = !!(combat.vttSession && typeof combat.vttSession === 'object' && Number(combat.vttSession.enteredAt || 0));
+        if (hasOpenSharedVtt) {
+          var fallbackSeed = expeditionSeed() || buildLiveCombatSeed() || buildSharedCampaignCombatSceneSeed();
+          if (fallbackSeed) return fallbackSeed;
+        }
         safeNotif('The GM has not opened the shared VTT yet. Stay on the Combat Tab or wait for the join prompt.', 'info');
         return false;
       }
@@ -15152,7 +15250,7 @@
     applyingSharedCombatSceneEditorState = true;
     try {
       store.setState(function (state) {
-        var merged = normalizeCombatSceneState(Object.assign({}, state || {}, cloned));
+        var merged = hydrateActiveSceneState(normalizeCombatSceneState(Object.assign({}, state || {}, cloned)));
         merged.open = !!(state && state.open);
         merged.entering = false;
         persist(merged);

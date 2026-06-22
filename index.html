@@ -7632,6 +7632,125 @@ function getCampaignDisplayWayfarerTokens(cc, byToken){
   return out;
 }
 
+function normalizeCampaignEnemyRangeBand(range){
+  var key=String(range||'').trim().toLowerCase();
+  if(key==='engaged'||key==='close'||key==='nearby'||key==='far')return key;
+  return '';
+}
+
+function getCampaignEnemyActionRequest(){
+  if(!window.campaignSystem||typeof window.campaignSystem.getEnemyActionRequest!=='function')return null;
+  try{return window.campaignSystem.getEnemyActionRequest()||null;}catch(_err){return null;}
+}
+
+function getCampaignEnemyActionTargetTokens(request){
+  if(!request||typeof request!=='object')return[];
+  if(Array.isArray(request.targetTokens)){
+    var seen={};
+    return request.targetTokens.map(function(entry){return String(entry||'');}).filter(function(token){
+      if(!token||seen[token])return false;
+      seen[token]=true;
+      return true;
+    });
+  }
+  var single=String(request.targetToken||'');
+  return single?[single]:[];
+}
+
+function isCampaignEnemyActionTargetedToToken(request, token){
+  var key=String(token||'');
+  if(!key)return false;
+  return getCampaignEnemyActionTargetTokens(request).indexOf(key)>=0;
+}
+
+function getCampaignEnemyActionTargetLabel(request){
+  if(!request||typeof request!=='object')return'';
+  var mode=String(request.mode||'single');
+  if(mode==='aoe'){
+    var names=Array.isArray(request.targetNames)?request.targetNames.filter(Boolean):[];
+    if(names.length===1)return names[0];
+    if(names.length>1)return names.join(', ');
+    var band=normalizeCampaignEnemyRangeBand(request.rangeBand||request.aoeBand);
+    return band?String(band).toUpperCase()+' lane':'the affected lane';
+  }
+  return String(request.targetName||request.targetToken||'the target');
+}
+
+function getCampaignCombatPromptDraft(){
+  if(!window.__campaignCombatPromptDraft||typeof window.__campaignCombatPromptDraft!=='object'){
+    window.__campaignCombatPromptDraft={mode:'single',targetToken:'',aoeBand:'close'};
+  }
+  return window.__campaignCombatPromptDraft;
+}
+
+function updateCampaignCombatPromptDraft(patch){
+  var draft=getCampaignCombatPromptDraft();
+  var next=patch&&typeof patch==='object'?patch:{};
+  Object.keys(next).forEach(function(key){
+    draft[key]=next[key];
+  });
+  return draft;
+}
+
+function getCombatRangeBandFromZoneLabels(actorZone, targetZone){
+  var order={engaged:0,close:1,nearby:2,far:3};
+  var actorKey=String(actorZone||'').trim().toLowerCase();
+  var targetKey=String(targetZone||'').trim().toLowerCase();
+  if(typeof order[actorKey]!=='number'||typeof order[targetKey]!=='number')return'';
+  var delta=Math.abs(order[actorKey]-order[targetKey]);
+  if(delta<=0)return'engaged';
+  if(delta===1)return'close';
+  if(delta===2)return'nearby';
+  return'far';
+}
+
+function getCampaignCombatUnitForParticipant(row){
+  if(!row||!S||!S.combatMap||!Array.isArray(S.combatMap.units))return null;
+  var wanted=String(row.name||row.token||'').trim().toLowerCase();
+  if(!wanted)return null;
+  return S.combatMap.units.find(function(unit){
+    if(!unit||unit.side!=='ally')return false;
+    return String(unit.name||'').trim().toLowerCase()===wanted;
+  })||null;
+}
+
+function getCampaignEnemyRangeInfo(enemyId, targetToken, byToken){
+  var info={band:'',enemyZone:'',targetZone:'',targetName:''};
+  var targetRow=byToken&&targetToken?byToken[String(targetToken||'')]:null;
+  info.targetName=String(targetRow&&targetRow.name?targetRow.name:targetToken||'');
+  var enemy=null;
+  if(enemyId&&typeof getCombatEnemyById==='function')enemy=getCombatEnemyById(enemyId);
+  if(!enemy&&typeof getPrimaryCombatEnemy==='function')enemy=getPrimaryCombatEnemy();
+  var enemyUnit=enemy&&typeof getCombatMapUnitForEnemy==='function'?getCombatMapUnitForEnemy(enemy):null;
+  var targetUnit=getCampaignCombatUnitForParticipant(targetRow);
+  var enemyZone=enemyUnit&&enemyUnit.zone?String(enemyUnit.zone):'';
+  var targetZone=targetUnit&&targetUnit.zone?String(targetUnit.zone):'';
+  info.enemyZone=enemyZone;
+  info.targetZone=targetZone;
+  info.band=normalizeCampaignEnemyRangeBand(getCombatRangeBandFromZoneLabels(enemyZone,targetZone));
+  return info;
+}
+
+function getCampaignEnemyAoeTargets(enemyId, band, byToken, wayfarerTokens){
+  var targetBand=normalizeCampaignEnemyRangeBand(band);
+  return (Array.isArray(wayfarerTokens)?wayfarerTokens:[]).map(function(token){
+    var info=getCampaignEnemyRangeInfo(enemyId, token, byToken);
+    return {token:String(token||''),info:info,row:byToken[String(token||'')]||null};
+  }).filter(function(entry){
+    return entry.token&&entry.info&&normalizeCampaignEnemyRangeBand(entry.info.band)===targetBand;
+  });
+}
+
+function getCombatEnemyById(rawId){
+  var targetId=String(rawId===undefined||rawId===null?'':rawId);
+  if(!targetId||!Array.isArray(S&&S.enemies?S.enemies:[]))return null;
+  for(var i=0;i<S.enemies.length;i++){
+    var enemy=S.enemies[i];
+    if(enemy&&!enemy.ally&&combatIdsMatch(enemy.id,targetId))return enemy;
+  }
+  return null;
+}
+
 function getCampaignTurnGate(actorKind){
   if(!window.campaignSystem||typeof window.campaignSystem.getState!=='function'||typeof window.campaignSystem.getSharedState!=='function')return{ok:true};
   var st=window.campaignSystem.getState();
@@ -7641,10 +7760,22 @@ function getCampaignTurnGate(actorKind){
   if(!cc||!cc.active||!Array.isArray(cc.turnOrder)||!cc.turnOrder.length)return{ok:true};
   var token=getCampaignCombatActiveToken(cc);
   var enemyTurn=String(cc.phase||'wayfarer')==='enemy';
+  var enemyRequest=getCampaignEnemyActionRequest();
   if(actorKind==='enemy'){
     if(!enemyTurn)return{ok:false,msg:'Campaign initiative: this is a Wayfarer turn.'};
     if(st.role!=='gm')return{ok:false,msg:'Campaign initiative: only GM can resolve enemy turns.'};
     return{ok:true};
+  }
+  if(actorKind==='enemy-action'){
+    if(!enemyTurn)return{ok:false,msg:'Campaign initiative: this is a Wayfarer turn.'};
+    if(st.role==='gm')return{ok:false,msg:'Campaign initiative: the GM should prompt a Wayfarer, then let that player click Enemy Action.'};
+    if(!enemyRequest||String(enemyRequest.status||'pending')==='resolved'){
+      return{ok:false,msg:'Campaign initiative: wait for the GM to prompt the next enemy action.'};
+    }
+    if(!isCampaignEnemyActionTargetedToToken(enemyRequest, st.token)){
+      return{ok:false,msg:'Campaign initiative: enemy action is targeting '+getCampaignEnemyActionTargetLabel(enemyRequest)+'.'};
+    }
+    return{ok:true,request:enemyRequest};
   }
   if(enemyTurn)return{ok:false,msg:'Campaign initiative: this is an Enemy turn.'};
   if(!token)return{ok:false,msg:'Campaign initiative: wait for the GM to prompt the next Wayfarer.'};
@@ -7665,18 +7796,6 @@ function requireCampaignTurn(actorKind){
 }
 
 function maybeAdvanceCampaignInitiativeFromEnemyAction(){
-  if(!window.campaignSystem||typeof window.campaignSystem.getState!=='function'||typeof window.campaignSystem.getSharedState!=='function')return false;
-  var st=window.campaignSystem.getState();
-  if(!st||!st.code||st.role!=='gm')return false;
-  var shared=window.campaignSystem.getSharedState();
-  var cc=shared&&shared.campaignCombat&&typeof shared.campaignCombat==='object'?shared.campaignCombat:null;
-  if(!cc||!cc.active||!Array.isArray(cc.turnOrder)||!cc.turnOrder.length)return false;
-  var token=getCampaignCombatActiveToken(cc);
-  if(String(cc.phase||'wayfarer')!=='enemy'||token!=='enemy:phase')return false;
-  if(typeof window.campaignSystem.nextCombatActor==='function'){
-    window.campaignSystem.nextCombatActor();
-    return true;
-  }
   return false;
 }
 
@@ -8352,6 +8471,97 @@ function executeWayfarerAction(){
   showNotif('Selected combat action is not implemented: '+String(v)+'.','warn');
   setRes('<span style="color:var(--red2);">Action "'+String(v)+'" is unavailable.</span>');
 }
+
+window.setCampaignCombatPromptMode=function(mode){
+  updateCampaignCombatPromptDraft({mode:String(mode||'single')==='aoe'?'aoe':'single'});
+  renderCampaignInitiativePanel();
+};
+
+window.setCampaignCombatPromptTarget=function(token){
+  updateCampaignCombatPromptDraft({targetToken:String(token||'')});
+  renderCampaignInitiativePanel();
+};
+
+window.setCampaignCombatPromptBand=function(band){
+  updateCampaignCombatPromptDraft({aoeBand:normalizeCampaignEnemyRangeBand(band)||'close'});
+  renderCampaignInitiativePanel();
+};
+
+window.submitCampaignEnemyActionPrompt=function(){
+  if(!window.campaignSystem||typeof window.campaignSystem.promptEnemyAction!=='function')return;
+  var shared=window.campaignSystem.getSharedState?window.campaignSystem.getSharedState():null;
+  var combat=shared&&shared.campaignCombat&&typeof shared.campaignCombat==='object'?shared.campaignCombat:null;
+  if(!combat||!combat.active)return;
+  var byToken=getCampaignCombatParticipantMap(combat);
+  var wayfarerTokens=getCampaignDisplayWayfarerTokens(combat,byToken);
+  var draft=getCampaignCombatPromptDraft();
+  var focusedEnemy=getPrimaryCombatEnemy();
+  var enemyId=focusedEnemy&&focusedEnemy.id!==undefined&&focusedEnemy.id!==null?String(focusedEnemy.id):String((S&&S.combat&&S.combat.focusEnemyId)||'');
+  var enemyName=String((focusedEnemy&&focusedEnemy.name)||'Enemy');
+  if(!enemyId&&!focusedEnemy){
+    showNotif('Choose or add an enemy first.','warn');
+    return;
+  }
+  var mode=String(draft.mode||'single')==='aoe'?'aoe':'single';
+  var payload={mode:mode,enemyId:enemyId,enemyName:enemyName};
+  if(mode==='aoe'){
+    var band=normalizeCampaignEnemyRangeBand(draft.aoeBand)||'close';
+    var aoeTargets=getCampaignEnemyAoeTargets(enemyId,band,byToken,wayfarerTokens);
+    if(!aoeTargets.length){
+      showNotif('No Wayfarers are currently in that range band.','warn');
+      return;
+    }
+    payload.rangeBand=band;
+    payload.aoeBand=band;
+    payload.targetZoneLabel=band.charAt(0).toUpperCase()+band.slice(1);
+    payload.targetTokens=aoeTargets.map(function(entry){return entry.token;});
+    payload.targetNames=aoeTargets.map(function(entry){return String(entry.row&&entry.row.name?entry.row.name:entry.token);});
+  }else{
+    var targetToken=String(draft.targetToken||wayfarerTokens[0]||'');
+    if(!targetToken){
+      showNotif('Choose a Wayfarer target first.','warn');
+      return;
+    }
+    var info=getCampaignEnemyRangeInfo(enemyId,targetToken,byToken);
+    var targetRow=byToken[targetToken]||null;
+    payload.targetToken=targetToken;
+    payload.targetName=String(targetRow&&targetRow.name?targetRow.name:targetToken);
+    payload.rangeBand=normalizeCampaignEnemyRangeBand(info.band)||normalizeCampaignEnemyRangeBand(getPrimaryEnemyZoneRelative())||'engaged';
+    payload.targetZoneLabel=String(info.targetZone||payload.rangeBand.charAt(0).toUpperCase()+payload.rangeBand.slice(1));
+    if(payload.rangeBand==='far'){
+      showNotif('That Wayfarer is out of range. Move or pick another target.','warn');
+      return;
+    }
+  }
+  var liveRequest=getCampaignEnemyActionRequest();
+  var reusingExistingAction=!!(liveRequest&&String(liveRequest.status||'pending')!=='resolved');
+  if(!reusingExistingAction&&typeof getEnemyActionsRemaining==='function'&&Number(getEnemyActionsRemaining()||0)<=0){
+    showNotif('Enemy prompt: no enemy actions remaining this cycle.','warn');
+    return;
+  }
+  window.campaignSystem.promptEnemyAction(payload,function(res){
+    if(!res||res.ok===false){
+      showNotif(res&&res.error?res.error:'Could not prompt enemy action.','warn');
+      return;
+    }
+    if(!reusingExistingAction&&typeof consumeEnemyActionBudget==='function')consumeEnemyActionBudget('enemy prompt');
+    showNotif('Enemy action prompt sent'+(mode==='aoe'?' to the affected lane.':'.'),'good');
+    renderCampaignInitiativePanel();
+  });
+};
+
+window.clearCampaignEnemyPrompt=function(){
+  if(!window.campaignSystem||typeof window.campaignSystem.clearEnemyActionRequest!=='function')return;
+  window.campaignSystem.clearEnemyActionRequest(function(res){
+    if(res&&res.ok===false){
+      showNotif(res.error||'Could not clear enemy prompt.','warn');
+      return;
+    }
+    showNotif('Enemy action prompt cleared.','info');
+    renderCampaignInitiativePanel();
+  });
+};
+
 function renderCampaignInitiativePanel(){
   var panel=document.getElementById('campaignInitiativePanel');
   if(!panel)return;
@@ -8385,6 +8595,16 @@ function renderCampaignInitiativePanel(){
   });
   var pending=wayfarerTokens.filter(function(token){return !!pendingMap[String(token||'')];});
   var acted=wayfarerTokens.filter(function(token){return !!actedMap[String(token||'')];});
+  var enemyRequest=getCampaignEnemyActionRequest();
+  var promptDraft=getCampaignCombatPromptDraft();
+  if(!promptDraft.targetToken||wayfarerTokens.indexOf(String(promptDraft.targetToken||''))<0){
+    promptDraft.targetToken=String(wayfarerTokens[0]||'');
+  }
+  promptDraft.mode=String(promptDraft.mode||'single')==='aoe'?'aoe':'single';
+  promptDraft.aoeBand=normalizeCampaignEnemyRangeBand(promptDraft.aoeBand)||'close';
+  var focusedEnemy=getPrimaryCombatEnemy();
+  var focusedEnemyId=focusedEnemy&&focusedEnemy.id!==undefined&&focusedEnemy.id!==null?String(focusedEnemy.id):String((S&&S.combat&&S.combat.focusEnemyId)||'');
+  var focusedEnemyName=String((focusedEnemy&&focusedEnemy.name)||'Enemy');
   var displayTokens=wayfarerTokens.concat([enemyToken]);
   var rows=displayTokens.map(function(token,idx){
     var p=byToken[String(token)]||null;
@@ -8403,9 +8623,27 @@ function renderCampaignInitiativePanel(){
   var activeName=activeRow&&activeRow.name?String(activeRow.name):'Wayfarer';
   var summaryTitle='';
   var summaryText='';
+  var openerNote='';
+  if(S&&S.combat&&S.combat.sceneOpener){
+    var opener=S.combat.sceneOpener;
+    var openerBits=[];
+    if(opener.zoneTerrain)openerBits.push(String(opener.zoneTerrain));
+    if(opener.coverDesc)openerBits.push(String(opener.coverDesc));
+    openerNote=openerBits.join(' · ');
+  }
   if(phase==='enemy'){
-    summaryTitle='Enemy turn is active';
-    summaryText='GM resolves the enemy action, then ends the turn to begin the next round.';
+    if(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'){
+      summaryTitle='Enemy turn is active';
+      summaryText=String(enemyRequest.mode||'single')==='aoe'
+        ? ('AOE prompt is live for '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+' at '+String(enemyRequest.rangeBand||'close').toUpperCase()+'.')
+        : ('Targeting '+esc(String(enemyRequest.targetName||'a Wayfarer'))+' at '+String(enemyRequest.rangeBand||'close').toUpperCase()+'.');
+    }else if(enemyRequest&&String(enemyRequest.status||'')==='resolved'){
+      summaryTitle='Enemy action resolved';
+      summaryText='The GM can retarget for another enemy action or end the round.';
+    }else{
+      summaryTitle='Enemy turn is active';
+      summaryText='GM chooses who the enemy attacks, then prompts that Wayfarer to click Enemy Action.';
+    }
   }else if(activeToken&&String(activeToken)!==enemyToken){
     summaryTitle=esc(activeName)+' is acting now';
     summaryText='The GM can complete that turn after the Wayfarer finishes their actions.';
@@ -8420,6 +8658,29 @@ function renderCampaignInitiativePanel(){
     }else if(combat.vttSession){
       vttButton='<button class="btn btn-xs btn-teal" onclick="window.campaignSystem&&window.campaignSystem.joinSharedCombatMode&&window.campaignSystem.joinSharedCombatMode()">Join Shared VTT</button>';
     }
+  }
+  var selectedTargetInfo=getCampaignEnemyRangeInfo(focusedEnemyId,promptDraft.targetToken,byToken);
+  var promptTargetOptions=wayfarerTokens.map(function(token){
+    var row=byToken[String(token)]||null;
+    var label=String(row&&row.name?row.name:token);
+    var info=getCampaignEnemyRangeInfo(focusedEnemyId,token,byToken);
+    var bandLabel=normalizeCampaignEnemyRangeBand(info.band)||'unknown';
+    return '<option value="'+String(token).replace(/"/g,'&quot;')+'"'+(String(token)===String(promptDraft.targetToken||'')?' selected':'')+'>'+esc(label)+' · '+bandLabel.toUpperCase()+'</option>';
+  }).join('');
+  var promptRequestSummary='';
+  if(enemyRequest){
+    var resolvedCount=Array.isArray(enemyRequest.resolvedTokens)?enemyRequest.resolvedTokens.length:0;
+    var targetCount=getCampaignEnemyActionTargetTokens(enemyRequest).length;
+    promptRequestSummary='<div style="margin-top:.32rem;padding:.34rem .44rem;border:1px solid rgba(232,122,65,.28);border-radius:5px;background:rgba(232,122,65,.08);font-size:.72rem;color:var(--text2);">'
+      +'<strong style="color:var(--red2);">Live Prompt:</strong> '
+      +(String(enemyRequest.mode||'single')==='aoe'
+        ? ('AOE · '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+' · '+String(enemyRequest.rangeBand||'close').toUpperCase())
+        : ('Target '+esc(String(enemyRequest.targetName||'Wayfarer'))+' · '+String(enemyRequest.rangeBand||'close').toUpperCase()))
+      +(String(enemyRequest.status||'pending')==='resolved'
+        ? ' · resolved'
+        : (String(enemyRequest.mode||'single')==='aoe'?' · '+resolvedCount+'/'+Math.max(1,targetCount)+' resolved':' · waiting on player'))
+      +(enemyRequest.resolutionSummary?('<div style="margin-top:.16rem;color:var(--muted2);">'+esc(String(enemyRequest.resolutionSummary))+'</div>'):'')
+      +'</div>';
   }
   var gmControls='';
   if(cs.role==='gm'&&window.campaignSystem){
@@ -8449,8 +8710,34 @@ function renderCampaignInitiativePanel(){
           +'</div>';
       }
     }else{
-      gmControls='<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.45rem;">'
-        +'<button class="btn btn-sm btn-red" onclick="window.campaignSystem.nextCombatActor()">End Enemy Turn / Next Round</button>'
+      var singlePreview=normalizeCampaignEnemyRangeBand(selectedTargetInfo.band)||'unknown';
+      gmControls='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase prompt:</div>'
+        +'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.28rem;margin-top:.24rem;">'
+        +'<label style="font-size:.68rem;color:var(--muted2);">Focused Enemy'
+          +'<div style="margin-top:.08rem;padding:.34rem .44rem;border:1px solid rgba(232,122,65,.24);border-radius:5px;background:rgba(232,122,65,.08);color:var(--text2);">'+esc(focusedEnemyName)+'</div>'
+        +'</label>'
+        +'<label style="font-size:.68rem;color:var(--muted2);">Prompt Mode'
+          +'<select style="width:100%;margin-top:.08rem;" onchange="window.setCampaignCombatPromptMode(this.value)">'
+            +'<option value="single"'+(promptDraft.mode==='single'?' selected':'')+'>Single Target</option>'
+            +'<option value="aoe"'+(promptDraft.mode==='aoe'?' selected':'')+'>AOE Lane</option>'
+          +'</select>'
+        +'</label>'
+        +(promptDraft.mode==='aoe'
+          ? ('<label style="grid-column:1 / -1;font-size:.68rem;color:var(--muted2);">AOE Range Band'
+            +'<select style="width:100%;margin-top:.08rem;" onchange="window.setCampaignCombatPromptBand(this.value)">'
+              +['engaged','close','nearby'].map(function(band){return'<option value="'+band+'"'+(promptDraft.aoeBand===band?' selected':'')+'>'+band.toUpperCase()+'</option>';}).join('')
+            +'</select>'
+            +'</label>')
+          : ('<label style="grid-column:1 / -1;font-size:.68rem;color:var(--muted2);">Target Wayfarer'
+            +'<select style="width:100%;margin-top:.08rem;" onchange="window.setCampaignCombatPromptTarget(this.value)">'+promptTargetOptions+'</select>'
+            +'<div style="margin-top:.14rem;font-size:.66rem;color:'+(singlePreview==='far'?'var(--red2)':'var(--gold2)')+';">Range: '+singlePreview.toUpperCase()+(selectedTargetInfo.targetZone?(' · Zone '+esc(selectedTargetInfo.targetZone)):'')+(singlePreview==='far'?' · Out of range':'')+'</div>'
+            +'</label>'))
+        +'</div>'
+        +(promptRequestSummary||'')
+        +'<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.42rem;">'
+        +'<button class="btn btn-sm btn-red" onclick="window.submitCampaignEnemyActionPrompt()">'+(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'?'Retarget Enemy Action':'Prompt Enemy Action')+'</button>'
+        +'<button class="btn btn-sm" onclick="window.clearCampaignEnemyPrompt()">Clear Prompt</button>'
+        +'<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.nextCombatActor()">End Enemy Turn / Next Round</button>'
         +(vttButton?vttButton:'')
         +'</div>';
     }
@@ -8458,7 +8745,16 @@ function renderCampaignInitiativePanel(){
   var playerHint='';
   if(cs.role!=='gm'){
     if(phase==='enemy'){
-      playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase. Wait for the GM to resolve the enemy action.</div>';
+      if(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'&&isCampaignEnemyActionTargetedToToken(enemyRequest,cs.token)){
+        var promptBand=normalizeCampaignEnemyRangeBand(enemyRequest.rangeBand||enemyRequest.aoeBand)||'close';
+        playerHint='<div style="font-size:.7rem;color:var(--red2);margin-top:.42rem;">Enemy targeting you from '+promptBand.toUpperCase()+'. Click <strong>Enemy Action</strong> on the Combat Tab to resolve it.</div>';
+      }else if(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'){
+        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase. Waiting on '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+' to resolve the enemy action.</div>';
+      }else if(enemyRequest&&String(enemyRequest.status||'')==='resolved'){
+        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy action resolved. Waiting for the GM to retarget or end the round.</div>';
+      }else{
+        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase. Wait for the GM to prompt the next enemy action.</div>';
+      }
     }else if(activeToken&&String(cs.token||'')===String(activeToken)){
       playerHint='<div style="font-size:.7rem;color:var(--teal);margin-top:.42rem;">You are up. Resolve your action from the Combat Tab, Quick Panel, or shared VTT.</div>';
     }else if(!activeToken){
@@ -8481,6 +8777,7 @@ function renderCampaignInitiativePanel(){
       +'<div>'
         +'<div style="font-size:.76rem;color:var(--text2);font-weight:700;">'+summaryTitle+'</div>'
         +'<div style="font-size:.7rem;color:var(--muted2);margin-top:.12rem;">Round '+Math.max(1,Number(combat.round||1))+' \u00b7 '+(phase==='enemy'?'Enemy phase':'Wayfarer phase')+' \u00b7 '+summaryText+'</div>'
+        +(openerNote?'<div style="font-size:.66rem;color:var(--gold2);margin-top:.14rem;">Scene Opener: '+esc(openerNote)+'</div>':'')
       +'</div>'
       +'<div style="font-size:.68rem;color:var(--muted2);text-align:right;white-space:nowrap;">'
         +'<div>Ready: '+pending.length+'</div>'
@@ -10542,18 +10839,74 @@ function normalizeGenericEnemySaveStat(statKey){
   return 'defend';
 }
 
-function triggerEnemyActionEvent(){
-  if(!requireCampaignTurn('enemy'))return;
+function stripCombatResultHtml(html){
+  return String(html||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function finalizeCampaignEnemyActionRequestResolution(request, summaryText){
+  if(!request||!window.campaignSystem||typeof window.campaignSystem.resolveEnemyActionRequest!=='function')return;
+  var summary=String(summaryText||'').trim().slice(0,240);
+  window.campaignSystem.resolveEnemyActionRequest({
+    id:String(request.id||''),
+    resolutionSummary:summary
+  },function(res){
+    if(res&&res.ok===false)showNotif(res.error||'Could not mark enemy action as resolved.','warn');
+  });
+}
+
+function runCampaignPromptedEnemyAction(){
+  if(!window.campaignSystem||typeof window.campaignSystem.getState!=='function'||typeof window.campaignSystem.getSharedState!=='function')return false;
+  var st=window.campaignSystem.getState();
+  var shared=window.campaignSystem.getSharedState();
+  var combat=shared&&shared.campaignCombat&&typeof shared.campaignCombat==='object'?shared.campaignCombat:null;
+  if(!st||!st.code||!combat||!combat.active||String(combat.phase||'wayfarer')!=='enemy')return false;
+  var gate=getCampaignTurnGate('enemy-action');
+  if(gate&&gate.ok===false){
+    showNotif(gate.msg||'Campaign initiative: wait for the GM prompt.','warn');
+    return true;
+  }
+  var request=gate&&gate.request?gate.request:getCampaignEnemyActionRequest();
+  if(!request){
+    showNotif('Campaign initiative: wait for the GM to prompt the next enemy action.','warn');
+    return true;
+  }
+  var band=normalizeCampaignEnemyRangeBand(request.rangeBand||request.aoeBand);
+  if(request.enemyId&&typeof setCombatFocusEnemy==='function')setCombatFocusEnemy(request.enemyId);
+  if(band==='far'){
+    showNotif('Enemy is out of range for that target. Wait for the GM to move or retarget.','warn');
+    return true;
+  }
+  triggerEnemyActionEvent({
+    campaignRequest:request,
+    rangeBand:band,
+    targetZoneLabel:String(request.targetZoneLabel||''),
+    skipTurnGate:true,
+    skipBudget:true,
+    skipEnemyMutation:true
+  });
+  return true;
+}
+
+function triggerEnemyActionEvent(options){
+  var opts=options&&typeof options==='object'?options:{};
+  if(!opts.skipTurnGate){
+    if(!requireCampaignTurn('enemy'))return;
+  }
   var actingEnemy=getPrimaryCombatEnemy();
   if(!actingEnemy){showNotif('Add an enemy first.','warn');return;}
-  if(!consumeEnemyActionBudget('enemy event'))return;
-  if(consumeEnemyTurnBlock(actingEnemy))return;
-  var enemyRange=getPrimaryEnemyZoneRelative();
+  if(!opts.skipBudget&& !consumeEnemyActionBudget('enemy event'))return;
+  if(!opts.skipEnemyMutation&&consumeEnemyTurnBlock(actingEnemy))return;
+  var enemyRange=normalizeCampaignEnemyRangeBand(opts.rangeBand)||getPrimaryEnemyZoneRelative();
+  if(enemyRange==='far'){
+    showNotif('Enemy is out of range for that target.','warn');
+    return;
+  }
+  var playerZoneLabel=String(opts.targetZoneLabel||getCurrentPlayerZoneLabel()||'Engaged');
   var rangeKinds=enemyRange==='engaged'
     ? ['defendCheck','healthStrike','forceTrauma']
     : enemyRange==='close'
-      ? ['saveCondition','hack','defendCheck','directStress']
-      : ['directStress','radiation','healthStrike'];
+      ? ['saveCondition','hack','directStress']
+      : ['defendCheck','directStress','radiation'];
   var poolSource=getActiveEnemyActionEventPool();
   var evPool=poolSource.filter(function(entry){
     var kindOk=rangeKinds.indexOf(entry.kind)>=0;
@@ -10577,7 +10930,7 @@ function triggerEnemyActionEvent(){
       summary=getFlavorShortName()+': first '+ev.element+' event ignored this scene.';
     }else if(typeof isManualRollModeEnabled==='function'&&isManualRollModeEnabled()){
       var defDieManual=(typeof getEffectiveDie==='function')?getEffectiveDie('defend'):(S.stats.defend||4);
-      var coverTierManual=getSceneCoverTierForZone(getCurrentPlayerZoneLabel());
+      var coverTierManual=getSceneCoverTierForZone(playerZoneLabel);
       var coverBonusManual=getCoverDefenseBonusForTier(coverTierManual);
       openManualVsDreadPrompt('Enemy Event: Defend Check',defDieManual,dd,function(successManual,actionTotalManual,dreadTotalManual){
         var targetDDManual=Math.max(1,Number(dreadTotalManual||0)+Number(coverBonusManual||0));
@@ -10591,15 +10944,16 @@ function triggerEnemyActionEvent(){
         var resManual=document.getElementById('enemyActionResult');
         if(resManual)resManual.innerHTML='<strong style="color:var(--red2);">'+ev.name+'</strong> — '+manualSummary+' <span style="font-size:.74rem;color:var(--muted2);">(manual · '+enemyRange.toUpperCase()+(sourceLabelManual?' · '+sourceLabelManual:'')+' · Cadence x'+cadenceManual+')</span>';
         showNotif('Enemy Action: '+ev.name,'warn');
-        finalizeEnemyTurn(actingEnemy);
+        if(!opts.skipEnemyMutation)finalizeEnemyTurn(actingEnemy);
         updateCombatUI();
         if(typeof renderQP==='function')renderQP('combat');
+        finalizeCampaignEnemyActionRequestResolution(opts.campaignRequest,stripCombatResultHtml(manualSummary));
       });
       return;
     }else{
       var defDie=(typeof getEffectiveDie==='function')?getEffectiveDie('defend'):(S.stats.defend||4);
       var pr=explodingRoll(defDie,{type:'action',major:true,label:'Defend'});
-      var playerCoverTier=getSceneCoverTierForZone(getCurrentPlayerZoneLabel());
+      var playerCoverTier=getSceneCoverTierForZone(playerZoneLabel);
       var coverBonus=getCoverDefenseBonusForTier(playerCoverTier);
       var targetDD=dr.total+coverBonus;
       var adjustedPrTotal=Math.max(0,Number(pr.total||0)+sceneEnemyModTotal);
@@ -10636,9 +10990,10 @@ function triggerEnemyActionEvent(){
         var resManual=document.getElementById('enemyActionResult');
         if(resManual)resManual.innerHTML='<strong style="color:var(--red2);">'+ev.name+'</strong> — '+manualSummary+' <span style="font-size:.74rem;color:var(--muted2);">(manual · '+enemyRange.toUpperCase()+(sourceLabelManual?' · '+sourceLabelManual:'')+' · Cadence x'+cadenceManual+')</span>';
         showNotif('Enemy Action: '+ev.name,'warn');
-        finalizeEnemyTurn(actingEnemy);
+        if(!opts.skipEnemyMutation)finalizeEnemyTurn(actingEnemy);
         updateCombatUI();
         if(typeof renderQP==='function')renderQP('combat');
+        finalizeCampaignEnemyActionRequestResolution(opts.campaignRequest,stripCombatResultHtml(manualSummary));
       });
       return;
     }else{
@@ -10656,7 +11011,7 @@ function triggerEnemyActionEvent(){
       summary=saveStat.toUpperCase()+' d'+statDie+'='+adjustedSrTotal+' vs DD'+dd+'='+dr.total+' — '+(ok?'saved.':'failed, '+ev.condition+' applied.')+sceneEnemyModHtml;
     }
   }else if(ev.kind==='directStress'){
-    var playerCoverTier2=getSceneCoverTierForZone(getCurrentPlayerZoneLabel());
+    var playerCoverTier2=getSceneCoverTierForZone(playerZoneLabel);
     if(playerCoverTier2==='full'){
       summary='Full Cover blocks the ranged threat.';
     }else if(shouldNegateEnemyEventByFlavor(ev.element,ev.kind)){
@@ -10687,9 +11042,10 @@ function triggerEnemyActionEvent(){
         var resManual=document.getElementById('enemyActionResult');
         if(resManual)resManual.innerHTML='<strong style="color:var(--red2);">'+ev.name+'</strong> — '+manualSummary+' <span style="font-size:.74rem;color:var(--muted2);">(manual · '+enemyRange.toUpperCase()+(sourceLabelManual?' · '+sourceLabelManual:'')+' · Cadence x'+cadenceManual+')</span>';
         showNotif('Enemy Action: '+ev.name,'warn');
-        finalizeEnemyTurn(actingEnemy);
+        if(!opts.skipEnemyMutation)finalizeEnemyTurn(actingEnemy);
         updateCombatUI();
         if(typeof renderQP==='function')renderQP('combat');
+        finalizeCampaignEnemyActionRequestResolution(opts.campaignRequest,stripCombatResultHtml(manualSummary));
       });
       return;
     }else{
@@ -10740,9 +11096,10 @@ function triggerEnemyActionEvent(){
   var res=document.getElementById('enemyActionResult');
   if(res)res.innerHTML='<strong style="color:var(--red2);">'+ev.name+'</strong> — '+summary+' <span style="font-size:.74rem;color:var(--muted2);">(DD'+dd+'='+dr.total+' · '+enemyRange.toUpperCase()+(sourceLabel?' · '+sourceLabel:'')+' · Cadence x'+cadence+')</span>';
   showNotif('Enemy Action: '+ev.name,'warn');
-  finalizeEnemyTurn(actingEnemy);
+  if(!opts.skipEnemyMutation)finalizeEnemyTurn(actingEnemy);
   updateCombatUI();
   if(typeof renderQP==='function')renderQP('combat');
+  finalizeCampaignEnemyActionRequestResolution(opts.campaignRequest,stripCombatResultHtml((ev.name?ev.name+' — ':'')+summary));
 }
 
 // Flavor / Mutation bonuses for roll functions.
