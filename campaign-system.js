@@ -3,6 +3,26 @@
   var SESSION_KEY = "beyond-light-campaign-session";
   var STALE_SYNC_MS = 12000;
 
+  function getSessionStorageSafe() {
+    try {
+      return window.sessionStorage || null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function readSessionPayload(storageArea) {
+    if (!storageArea || typeof storageArea.getItem !== "function") return null;
+    try {
+      var raw = storageArea.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
   var state = {
     socket: null,
     connected: false,
@@ -3588,20 +3608,14 @@
   }
 
   function loadSession() {
-    try {
-      var raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return null;
-      var parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return null;
-      return {
-        code: formatCode(parsed.code || ""),
-        token: String(parsed.token || "").trim(),
-        name: String(parsed.name || "").trim().slice(0, 32),
-        role: parsed.role === "gm" ? "gm" : "player"
-      };
-    } catch (_err) {
-      return null;
-    }
+    var parsed = readSessionPayload(getSessionStorageSafe());
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      code: formatCode(parsed.code || ""),
+      token: String(parsed.token || "").trim(),
+      name: String(parsed.name || "").trim().slice(0, 32),
+      role: parsed.role === "gm" ? "gm" : "player"
+    };
   }
 
   function persistSession() {
@@ -3612,12 +3626,24 @@
       name: state.playerName || ensureName(),
       role: state.role === "gm" ? "gm" : "player"
     };
+    var sessionStore = getSessionStorageSafe();
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+      if (sessionStore && typeof sessionStore.setItem === "function") {
+        sessionStore.setItem(SESSION_KEY, JSON.stringify(payload));
+      }
+    } catch (_err) {}
+    try {
+      localStorage.removeItem(SESSION_KEY);
     } catch (_err) {}
   }
 
   function clearSession() {
+    var sessionStore = getSessionStorageSafe();
+    try {
+      if (sessionStore && typeof sessionStore.removeItem === "function") {
+        sessionStore.removeItem(SESSION_KEY);
+      }
+    } catch (_err) {}
     try {
       localStorage.removeItem(SESSION_KEY);
     } catch (_err) {}
@@ -8429,6 +8455,9 @@
     refreshSettingsModeFromCampaign();
     maybePrimePlayerDock();
     if (res.role === "gm") closeCampaignOnboardingIfOpen();
+    if (res.role === "player" && window.settingsSystem && typeof window.settingsSystem.closeSettings === "function") {
+      window.settingsSystem.closeSettings();
+    }
 
     if (!opts.silent) {
       safeNotif(

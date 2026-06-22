@@ -289,12 +289,12 @@ async function runScenario(browser, baseUrl) {
 
     const participants = await gmPage.evaluate(() => {
       const s = window.S = window.S || {};
-      s.combat = { active: true, enemyDread: 8, spacing: "Nearby", round: 1, actionsLeft: 3 };
-      s.enemies = [
+      const combat = { active: true, enemyDread: 8, spacing: "Nearby", round: 1, actionsLeft: 3 };
+      const enemies = [
         { id: "risk-e1", name: "Ash Raider", stress: 1, maxStress: 6, ally: false, conditions: [] },
         { id: "risk-e2", name: "Pale Hound", stress: 0, maxStress: 6, ally: false, conditions: [] }
       ];
-      s.combatMap = {
+      const combatMap = {
         units: [
           { id: 1, name: "Music Risk GM", side: "ally", zone: "Engaged", isPlayer: true },
           { id: 2, name: "Ash Raider", side: "enemy", zone: "Nearby", fromTracker: true, trackerKey: "enemy:risk-e1" },
@@ -302,6 +302,9 @@ async function runScenario(browser, baseUrl) {
         ],
         lastRelativeZone: "Nearby"
       };
+      s.combat = combat;
+      s.enemies = enemies;
+      s.combatMap = combatMap;
       if (typeof window.updateCombatUI === "function") {
         try { window.updateCombatUI(); } catch (_err) {}
       }
@@ -314,30 +317,62 @@ async function runScenario(browser, baseUrl) {
       const members = ((window.campaignSystem.getState().campaign || {}).roster || []);
       const gmMember = members.find((entry) => entry && entry.role === "gm") || members[0];
       const playerMember = members.find((entry) => entry && entry.role !== "gm") || members[members.length - 1];
-      return [
-        {
-          token: String(gmMember && gmMember.token || "gm-token"),
-          name: String(gmMember && gmMember.name || "GM"),
-          role: "gm",
-          character: { name: String(gmMember && gmMember.name || "GM"), stats: { valor: 10 } }
-        },
-        {
-          token: String(playerMember && playerMember.token || "player-token"),
-          name: String(playerMember && playerMember.name || "Player"),
-          role: "player",
-          character: { name: String(playerMember && playerMember.name || "Player"), stats: { valor: 6 } }
+      return {
+        participants: [
+          {
+            token: String(gmMember && gmMember.token || "gm-token"),
+            name: String(gmMember && gmMember.name || "GM"),
+            role: "gm",
+            character: { name: String(gmMember && gmMember.name || "GM"), stats: { valor: 10 } }
+          },
+          {
+            token: String(playerMember && playerMember.token || "player-token"),
+            name: String(playerMember && playerMember.name || "Player"),
+            role: "player",
+            character: { name: String(playerMember && playerMember.name || "Player"), stats: { valor: 6 } }
+          }
+        ],
+        combatScene: {
+          combat,
+          enemies,
+          combatMap,
+          combatAugState: null,
+          naval: null,
+          caravan: null
         }
-      ];
+      };
     });
 
     const combatStart = await gmPage.evaluate(async (parts) => {
       return await new Promise((resolve) => {
-        window.campaignSystem.startCampaignCombat(parts, (res) => resolve(res || { ok: false }), { skipReadyCheck: true });
+        window.campaignSystem.startCampaignCombat(parts.participants, (res) => resolve(res || { ok: false }), { skipReadyCheck: true });
       });
     }, participants);
     if (!combatStart || !combatStart.ok) {
       throw new Error(`Combat start failed: ${JSON.stringify(combatStart)}`);
     }
+
+    const seeded = await gmPage.evaluate(async (payload) => {
+      return window.campaignSystem.syncSharedPatch({ combatScene: payload.combatScene }, "music-risk-combat-seed");
+    }, participants);
+    if (!seeded || !seeded.ok) {
+      throw new Error(`Combat scene seed failed: ${JSON.stringify(seeded)}`);
+    }
+
+    await playerPage.waitForFunction(
+      () => {
+        const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+          ? window.campaignSystem.getSharedState()
+          : null;
+        const scene = shared && shared.combatScene && typeof shared.combatScene === "object"
+          ? shared.combatScene
+          : null;
+        const enemies = scene && Array.isArray(scene.enemies) ? scene.enemies : [];
+        return enemies.some((enemy) => enemy && enemy.name === "Ash Raider");
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
 
     await gmPage.evaluate(() => {
       const btn = document.getElementById("combatEnterModeBtn");
@@ -430,8 +465,8 @@ async function runScenario(browser, baseUrl) {
     );
     await playerPage.waitForFunction(
       () => {
-        const units = window.S && window.S.combatMap && Array.isArray(window.S.combatMap.units)
-          ? window.S.combatMap.units
+        const units = window.S && window.S.combat && window.S.combat.sceneEditor && Array.isArray(window.S.combat.sceneEditor.tokens)
+          ? window.S.combat.sceneEditor.tokens
           : [];
         return units.some((unit) => unit && unit.name === "Ash Raider");
       },
@@ -442,7 +477,7 @@ async function runScenario(browser, baseUrl) {
     const playerSummary = await playerPage.evaluate(() => ({
       overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
       soundtrackMood: window.AudioManager?.campaignSoundtrackOverride?.mood || "",
-      unitNames: (window.S?.combatMap?.units || []).map((unit) => unit && unit.name).filter(Boolean)
+      unitNames: (window.S?.combat?.sceneEditor?.tokens || []).map((unit) => unit && unit.name).filter(Boolean)
     }));
     const gmSummary = await gmPage.evaluate(() => ({
       overlayOpen: !!document.querySelector("#combatModeOverlay.open"),

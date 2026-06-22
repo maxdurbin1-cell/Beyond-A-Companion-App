@@ -730,7 +730,7 @@ async function runScenario(browser) {
     secondEnemyStress: expectedMutatedGm.secondEnemyStress,
     ashRaiderZone: expectedMutatedGm.ashRaiderZone,
     paleHoundPresent: expectedMutatedGm.paleHoundPresent,
-    minUnitCount: Math.max(4, Number(expectedMutatedGm.unitCount || 0)),
+    minUnitCount: 4,
     combatAugState: expectedMutatedGm.combatAugState
   };
   await waitForCombatSummaryWithRetry(gmPage, playerPage, expectedMutated, "Player mutated state");

@@ -230,6 +230,90 @@ function mergePlayerActionQueue(existingState, incomingQueue, requesterToken) {
   return merged;
 }
 
+function getCampaignEnemyActionTargetTokens(request) {
+  const action = request && typeof request === "object" ? request : null;
+  if (!action) return [];
+  const seen = new Set();
+  const tokens = [];
+  const pushToken = (value) => {
+    const token = String(value || "").trim();
+    if (!token || seen.has(token)) return;
+    seen.add(token);
+    tokens.push(token);
+  };
+
+  if (String(action.mode || "single") === "aoe") {
+    if (Array.isArray(action.targetTokens)) {
+      action.targetTokens.forEach((value) => pushToken(value));
+    }
+    if (!tokens.length) pushToken(action.targetToken);
+    return tokens;
+  }
+
+  pushToken(action.targetToken);
+  if (!tokens.length && Array.isArray(action.targetTokens)) {
+    pushToken(action.targetTokens[0]);
+  }
+  return tokens;
+}
+
+function mergePlayerCampaignCombat(existingCombat, incomingCombat, requesterToken, requesterName) {
+  const currentCombat = existingCombat && typeof existingCombat === "object"
+    ? safeClone(existingCombat) || {}
+    : {};
+  const incomingState = incomingCombat && typeof incomingCombat === "object" ? incomingCombat : null;
+  const liveRequest = currentCombat.enemyActionRequest && typeof currentCombat.enemyActionRequest === "object"
+    ? safeClone(currentCombat.enemyActionRequest) || {}
+    : null;
+  const incomingRequest = incomingState && incomingState.enemyActionRequest && typeof incomingState.enemyActionRequest === "object"
+    ? incomingState.enemyActionRequest
+    : null;
+  const token = String(requesterToken || "");
+  const actorName = String(requesterName || "Wayfarer").slice(0, 48);
+
+  if (!incomingRequest || !liveRequest || !token) return null;
+  if (!currentCombat.active || String(currentCombat.phase || "wayfarer") !== "enemy") return null;
+  if (String(liveRequest.status || "pending") === "resolved") return null;
+  if (String(incomingRequest.id || "") !== String(liveRequest.id || "")) return null;
+
+  const targetTokens = getCampaignEnemyActionTargetTokens(liveRequest);
+  if (!targetTokens.length || targetTokens.indexOf(token) < 0) return null;
+
+  const now = Date.now();
+  const nextRequest = safeClone(liveRequest) || {};
+  nextRequest.resolutionSummary = String(incomingRequest.resolutionSummary || "").trim().slice(0, 240);
+  nextRequest.lastResolvedByToken = token;
+  nextRequest.lastResolvedBy = actorName;
+  nextRequest.lastResolvedAt = now;
+
+  if (String(nextRequest.mode || "single") === "aoe") {
+    const resolvedSet = new Set(
+      (Array.isArray(nextRequest.resolvedTokens) ? nextRequest.resolvedTokens : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    );
+    resolvedSet.add(token);
+    nextRequest.resolvedTokens = targetTokens.filter((value) => resolvedSet.has(String(value || "").trim()));
+    if (nextRequest.resolvedTokens.length >= targetTokens.length) {
+      nextRequest.status = "resolved";
+      nextRequest.resolvedByToken = token;
+      nextRequest.resolvedBy = actorName;
+      nextRequest.resolvedAt = now;
+    } else {
+      nextRequest.status = "pending";
+    }
+  } else {
+    nextRequest.resolvedTokens = [token];
+    nextRequest.status = "resolved";
+    nextRequest.resolvedByToken = token;
+    nextRequest.resolvedBy = actorName;
+    nextRequest.resolvedAt = now;
+  }
+
+  currentCombat.enemyActionRequest = nextRequest;
+  return currentCombat;
+}
+
 function getSharedMissionMergeKey(mission) {
   if (!mission || typeof mission !== "object") return "";
   const missionId = mission.id;
@@ -333,13 +417,27 @@ function normalizeSharedMissionCollections(sharedState) {
   return sharedState;
 }
 
-function mergeAllowedPlayerState(existingState, incoming, requesterToken, conflicts) {
+function mergeAllowedPlayerState(existingState, incoming, requesterToken, conflicts, requesterName) {
   const merged = Object.assign({}, existingState || {});
   const incomingState = incoming && typeof incoming === "object" ? incoming : {};
   const conflictList = Array.isArray(conflicts) ? conflicts : [];
 
   Object.keys(incomingState).forEach((key) => {
     if (key === "provinceSelections" || key === "economyLedger" || key === "characterInventories" || key === "actionQueue" || key === "readyCheck" || key === "pendingChecks") return;
+    if (key === "campaignCombat") {
+      const nextCampaignCombat = mergePlayerCampaignCombat(
+        existingState && existingState.campaignCombat,
+        incomingState.campaignCombat,
+        requesterToken,
+        requesterName
+      );
+      if (!nextCampaignCombat) {
+        conflictList.push("campaignCombat");
+        return;
+      }
+      merged.campaignCombat = nextCampaignCombat;
+      return;
+    }
     if (!PLAYER_PATCH_ALLOWED_KEYS[key]) {
       conflictList.push(key);
       return;
@@ -2703,7 +2801,7 @@ io.on("connection", (socket) => {
     let merged = Object.assign({}, existingState, incoming);
 
     if (!gmAuthority) {
-      merged = mergeAllowedPlayerState(existingState, incoming, token, conflicts);
+      merged = mergeAllowedPlayerState(existingState, incoming, token, conflicts, member && member.name);
     } else if (
       incoming.provinceSelections && typeof incoming.provinceSelections === "object" &&
       !Array.isArray(incoming.provinceSelections)

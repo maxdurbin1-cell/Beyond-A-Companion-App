@@ -2054,6 +2054,22 @@
           return row;
         })
       : [];
+    var sceneEditorState = (window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object')
+      ? (deepCloneJson(normalizeCampaignCombatSceneState(window.S.combat.sceneEditor)) || null)
+      : null;
+    if (!sceneEditorState && store && typeof store.getState === 'function') {
+      try {
+        var storeState = store.getState();
+        if (storeState && typeof storeState === 'object' && Array.isArray(storeState.tokens)) {
+          sceneEditorState = deepCloneJson(normalizeCampaignCombatSceneState(storeState)) || null;
+        }
+      } catch (_err) {
+        sceneEditorState = null;
+      }
+    }
+    if (sceneEditorState && window.S && window.S.combat && (!window.S.combat.sceneEditor || typeof window.S.combat.sceneEditor !== 'object')) {
+      window.S.combat.sceneEditor = deepCloneJson(sceneEditorState) || sceneEditorState;
+    }
     return {
       syncMeta: {
         by: String(window.S && window.S.name || 'GM'),
@@ -2065,9 +2081,7 @@
       caravan: (window.S && window.S.caravan && typeof window.S.caravan === 'object') ? (deepCloneJson(window.S.caravan) || null) : null,
       combatMap: (window.S && window.S.combatMap && typeof window.S.combatMap === 'object') ? (deepCloneJson(window.S.combatMap) || null) : null,
       combatAugState: (window.S && window.S.combatAugState && typeof window.S.combatAugState === 'object') ? (deepCloneJson(window.S.combatAugState) || null) : null,
-      sceneEditor: (window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object')
-        ? (deepCloneJson(normalizeCampaignCombatSceneState(window.S.combat.sceneEditor)) || null)
-        : null
+      sceneEditor: sceneEditorState
     };
   }
 
@@ -15208,7 +15222,7 @@
       if (combat && combat.active) {
         var hasOpenSharedVtt = !!(combat.vttSession && typeof combat.vttSession === 'object' && Number(combat.vttSession.enteredAt || 0));
         if (hasOpenSharedVtt) {
-          var fallbackSeed = expeditionSeed() || buildLiveCombatSeed() || buildSharedCampaignCombatSceneSeed();
+          var fallbackSeed = buildLiveCombatSeed() || buildSeedFromSharedCombatScene() || expeditionSeed() || buildSharedCampaignCombatSceneSeed();
           if (fallbackSeed) return fallbackSeed;
         }
         safeNotif('The GM has not opened the shared VTT yet. Stay on the Combat Tab or wait for the join prompt.', 'info');
@@ -15216,7 +15230,7 @@
       }
     }
 
-    return expeditionSeed() || buildLiveCombatSeed() || buildSharedCampaignCombatSceneSeed();
+    return buildLiveCombatSeed() || buildSeedFromSharedCombatScene() || expeditionSeed() || buildSharedCampaignCombatSceneSeed();
   }
 
   function syncCombatScenesTabNavigation() {
@@ -15531,6 +15545,52 @@
       };
     }
     return null;
+  }
+
+  function buildSeedFromSharedCombatScene() {
+    if (!window.campaignSystem || typeof window.campaignSystem.getSharedState !== 'function') return null;
+    var shared = null;
+    try {
+      shared = window.campaignSystem.getSharedState() || null;
+    } catch (_err) {
+      shared = null;
+    }
+    var sharedScene = shared && shared.combatScene && typeof shared.combatScene === 'object'
+      ? shared.combatScene
+      : null;
+    if (!sharedScene) return null;
+    if (sharedScene.sceneEditor && typeof sharedScene.sceneEditor === 'object') {
+      var sceneEditorState = clone(sharedScene.sceneEditor) || sharedScene.sceneEditor;
+      var activeSceneId = String(sceneEditorState.activeSceneId || 'campaign-shared-scene');
+      var scenes = Array.isArray(sceneEditorState.scenes) ? sceneEditorState.scenes : [];
+      var activeScene = activeSceneId
+        ? (scenes.find(function (scene) { return scene && String(scene.id || '') === activeSceneId; }) || null)
+        : null;
+      return {
+        id: activeSceneId || 'campaign-shared-scene',
+        name: String(activeScene && activeScene.name || 'Campaign Shared Scene'),
+        sceneEditorState: sceneEditorState
+      };
+    }
+    if (!(sharedScene.combatMap && Array.isArray(sharedScene.combatMap.units) && sharedScene.combatMap.units.length)) return null;
+    var stateRef = window.S = window.S || {};
+    var prevCombat = stateRef.combat;
+    var prevEnemies = stateRef.enemies;
+    var prevCombatMap = stateRef.combatMap;
+    try {
+      stateRef.combat = sharedScene.combat && typeof sharedScene.combat === 'object'
+        ? (clone(sharedScene.combat) || sharedScene.combat)
+        : prevCombat;
+      stateRef.enemies = Array.isArray(sharedScene.enemies)
+        ? (clone(sharedScene.enemies) || sharedScene.enemies)
+        : prevEnemies;
+      stateRef.combatMap = clone(sharedScene.combatMap) || sharedScene.combatMap;
+      return buildLiveCombatSeed();
+    } finally {
+      stateRef.combat = prevCombat;
+      stateRef.enemies = prevEnemies;
+      stateRef.combatMap = prevCombatMap;
+    }
   }
 
   window.openCombatSceneEditor = function (seed) {

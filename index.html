@@ -1295,6 +1295,7 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
       </div>
       <div id="combatStatus" style="font-family:'Rajdhani',sans-serif;font-size:.85rem;color:var(--muted2);margin-bottom:.6rem;"></div>
       <div id="campaignInitiativePanel" style="margin-bottom:.6rem;"></div>
+      <div id="campaignCombatTurnGate" style="display:none;margin-bottom:.6rem;"></div>
             <!-- Auto-rolls fired when combat starts -->
             <div id="combatOpenerPanel" style="display:none;background:rgba(201,64,64,.06);border:1px solid rgba(201,64,64,.3);border-radius:5px;padding:.4rem .55rem;margin-bottom:.55rem;">
               <div style="font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.1em;color:var(--red2);text-transform:uppercase;margin-bottom:.3rem;">⚡ Scene Opener</div>
@@ -1413,6 +1414,7 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
         </div>
         <div><span class="sub-label">Enemy Action</span><br>
           <button class="btn btn-sm btn-red" data-combat-click="enemy-action">☠ Enemy Action</button>
+          <div style="font-size:.65rem;color:var(--muted2);margin-top:.18rem;line-height:1.35;">Use this when the GM targets you during the enemy phase.</div>
           <div id="enemyActionResult" style="margin-top:.3rem;font-size:.85rem;"></div>
         </div>
         <div><span class="sub-label">Escape</span><br>
@@ -8564,13 +8566,25 @@ window.clearCampaignEnemyPrompt=function(){
 
 function renderCampaignInitiativePanel(){
   var panel=document.getElementById('campaignInitiativePanel');
+  var gateEl=document.getElementById('campaignCombatTurnGate');
   if(!panel)return;
   var shared=(window.campaignSystem&&typeof window.campaignSystem.getSharedState==='function')?window.campaignSystem.getSharedState():null;
   var cs=(window.campaignSystem&&typeof window.campaignSystem.getState==='function')?window.campaignSystem.getState():null;
-  if(!cs||!cs.code){panel.innerHTML='';return;}
+  if(!cs||!cs.code){
+    panel.innerHTML='';
+    if(gateEl){
+      gateEl.innerHTML='';
+      gateEl.style.display='none';
+    }
+    return;
+  }
   var combat=shared&&shared.campaignCombat&&typeof shared.campaignCombat==='object'?shared.campaignCombat:null;
   if(!combat||!combat.active||!Array.isArray(combat.turnOrder)||!combat.turnOrder.length){
     panel.innerHTML='<div style="padding:.4rem .5rem;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:5px;font-size:.74rem;color:var(--muted2);">Campaign Initiative: inactive</div>';
+    if(gateEl){
+      gateEl.innerHTML='';
+      gateEl.style.display='none';
+    }
     return;
   }
   var esc=function(v){return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
@@ -8596,6 +8610,16 @@ function renderCampaignInitiativePanel(){
   var pending=wayfarerTokens.filter(function(token){return !!pendingMap[String(token||'')];});
   var acted=wayfarerTokens.filter(function(token){return !!actedMap[String(token||'')];});
   var enemyRequest=getCampaignEnemyActionRequest();
+  var enemyActionTotal=Math.max(1,Number((typeof getEnemyActionsPerCycle==='function')?getEnemyActionsPerCycle():0)||0);
+  var enemyActionRemaining=Math.max(0,Number((typeof getEnemyActionsRemaining==='function')?getEnemyActionsRemaining():enemyActionTotal)||0);
+  var enemyActionSpent=Math.max(0,enemyActionTotal-enemyActionRemaining);
+  var enemyActionCurrentNumber=Math.min(enemyActionTotal,Math.max(1,enemyActionSpent||1));
+  var enemyActionNextNumber=Math.min(enemyActionTotal,Math.max(1,enemyActionSpent+1));
+  var enemyActionCurrentLabel=enemyActionCurrentNumber+'/'+enemyActionTotal;
+  var enemyActionNextLabel=enemyActionNextNumber+'/'+enemyActionTotal;
+  var enemyActionPending=!!(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved');
+  var enemyActionResolved=!!(enemyRequest&&String(enemyRequest.status||'')==='resolved');
+  var enemyActionPromptLabel=enemyActionPending?enemyActionCurrentLabel:enemyActionNextLabel;
   var promptDraft=getCampaignCombatPromptDraft();
   if(!promptDraft.targetToken||wayfarerTokens.indexOf(String(promptDraft.targetToken||''))<0){
     promptDraft.targetToken=String(wayfarerTokens[0]||'');
@@ -8632,20 +8656,22 @@ function renderCampaignInitiativePanel(){
     openerNote=openerBits.join(' · ');
   }
   if(phase==='enemy'){
-    if(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'){
+    if(enemyActionPending){
       summaryTitle='Enemy turn is active';
       summaryText=String(enemyRequest.mode||'single')==='aoe'
-        ? ('AOE prompt is live for '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+' at '+String(enemyRequest.rangeBand||'close').toUpperCase()+'.')
-        : ('Targeting '+esc(String(enemyRequest.targetName||'a Wayfarer'))+' at '+String(enemyRequest.rangeBand||'close').toUpperCase()+'.');
-    }else if(enemyRequest&&String(enemyRequest.status||'')==='resolved'){
-      summaryTitle='Enemy action resolved';
-      summaryText='The GM can retarget for another enemy action or end the round.';
+        ? ('Enemy Action '+enemyActionCurrentLabel+' is live for '+getCampaignEnemyActionTargetLabel(enemyRequest)+' at '+String(enemyRequest.rangeBand||'close').toUpperCase()+'.')
+        : ('Enemy Action '+enemyActionCurrentLabel+' is targeting '+String(enemyRequest.targetName||'a Wayfarer')+' at '+String(enemyRequest.rangeBand||'close').toUpperCase()+'.');
+    }else if(enemyActionResolved){
+      summaryTitle='Enemy action '+enemyActionCurrentLabel+' resolved';
+      summaryText=enemyActionRemaining>0
+        ? ('The GM can prompt Enemy Action '+enemyActionNextLabel+' or end the round.')
+        : 'All enemy actions are spent. The GM can end the round.';
     }else{
       summaryTitle='Enemy turn is active';
-      summaryText='GM chooses who the enemy attacks, then prompts that Wayfarer to click Enemy Action.';
+      summaryText='GM chooses who the enemy attacks, then prompts Enemy Action '+enemyActionPromptLabel+'.';
     }
   }else if(activeToken&&String(activeToken)!==enemyToken){
-    summaryTitle=esc(activeName)+' is acting now';
+    summaryTitle=activeName+' is acting now';
     summaryText='The GM can complete that turn after the Wayfarer finishes their actions.';
   }else{
     summaryTitle='GM chooses the next Wayfarer';
@@ -8672,7 +8698,7 @@ function renderCampaignInitiativePanel(){
     var resolvedCount=Array.isArray(enemyRequest.resolvedTokens)?enemyRequest.resolvedTokens.length:0;
     var targetCount=getCampaignEnemyActionTargetTokens(enemyRequest).length;
     promptRequestSummary='<div style="margin-top:.32rem;padding:.34rem .44rem;border:1px solid rgba(232,122,65,.28);border-radius:5px;background:rgba(232,122,65,.08);font-size:.72rem;color:var(--text2);">'
-      +'<strong style="color:var(--red2);">Live Prompt:</strong> '
+      +'<strong style="color:var(--red2);">Live Prompt:</strong> Enemy Action '+esc(enemyActionCurrentLabel)+' · '
       +(String(enemyRequest.mode||'single')==='aoe'
         ? ('AOE · '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+' · '+String(enemyRequest.rangeBand||'close').toUpperCase())
         : ('Target '+esc(String(enemyRequest.targetName||'Wayfarer'))+' · '+String(enemyRequest.rangeBand||'close').toUpperCase()))
@@ -8711,7 +8737,12 @@ function renderCampaignInitiativePanel(){
       }
     }else{
       var singlePreview=normalizeCampaignEnemyRangeBand(selectedTargetInfo.band)||'unknown';
+      var promptButtonLabel=enemyActionPending
+        ? ('Retarget Enemy Action '+enemyActionCurrentLabel)
+        : (enemyActionRemaining>0?'Prompt Enemy Action '+enemyActionNextLabel:'Enemy Actions Spent');
+      var promptButtonDisabled=(!enemyActionPending&&enemyActionRemaining<=0)?' disabled':'';
       gmControls='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase prompt:</div>'
+        +'<div style="font-size:.7rem;color:var(--gold2);margin-top:.16rem;">Enemy actions left this turn: '+enemyActionRemaining+'/'+enemyActionTotal+'</div>'
         +'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.28rem;margin-top:.24rem;">'
         +'<label style="font-size:.68rem;color:var(--muted2);">Focused Enemy'
           +'<div style="margin-top:.08rem;padding:.34rem .44rem;border:1px solid rgba(232,122,65,.24);border-radius:5px;background:rgba(232,122,65,.08);color:var(--text2);">'+esc(focusedEnemyName)+'</div>'
@@ -8735,7 +8766,7 @@ function renderCampaignInitiativePanel(){
         +'</div>'
         +(promptRequestSummary||'')
         +'<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.42rem;">'
-        +'<button class="btn btn-sm btn-red" onclick="window.submitCampaignEnemyActionPrompt()">'+(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'?'Retarget Enemy Action':'Prompt Enemy Action')+'</button>'
+        +'<button class="btn btn-sm btn-red" onclick="window.submitCampaignEnemyActionPrompt()"'+promptButtonDisabled+'>'+promptButtonLabel+'</button>'
         +'<button class="btn btn-sm" onclick="window.clearCampaignEnemyPrompt()">Clear Prompt</button>'
         +'<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.nextCombatActor()">End Enemy Turn / Next Round</button>'
         +(vttButton?vttButton:'')
@@ -8745,15 +8776,15 @@ function renderCampaignInitiativePanel(){
   var playerHint='';
   if(cs.role!=='gm'){
     if(phase==='enemy'){
-      if(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'&&isCampaignEnemyActionTargetedToToken(enemyRequest,cs.token)){
+      if(enemyActionPending&&isCampaignEnemyActionTargetedToToken(enemyRequest,cs.token)){
         var promptBand=normalizeCampaignEnemyRangeBand(enemyRequest.rangeBand||enemyRequest.aoeBand)||'close';
-        playerHint='<div style="font-size:.7rem;color:var(--red2);margin-top:.42rem;">Enemy targeting you from '+promptBand.toUpperCase()+'. Click <strong>Enemy Action</strong> on the Combat Tab to resolve it.</div>';
-      }else if(enemyRequest&&String(enemyRequest.status||'pending')!=='resolved'){
-        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase. Waiting on '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+' to resolve the enemy action.</div>';
-      }else if(enemyRequest&&String(enemyRequest.status||'')==='resolved'){
-        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy action resolved. Waiting for the GM to retarget or end the round.</div>';
+        playerHint='<div style="font-size:.7rem;color:var(--red2);margin-top:.42rem;">Enemy Action '+esc(enemyActionCurrentLabel)+' is targeting you from '+promptBand.toUpperCase()+'. Click <strong>Enemy Action</strong> on the Combat Tab to resolve it.</div>';
+      }else if(enemyActionPending){
+        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy Action '+esc(enemyActionCurrentLabel)+' is waiting on '+esc(getCampaignEnemyActionTargetLabel(enemyRequest))+'.</div>';
+      }else if(enemyActionResolved){
+        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy Action '+esc(enemyActionCurrentLabel)+' resolved. '+(enemyActionRemaining>0?('Waiting for the GM to prompt Enemy Action '+esc(enemyActionNextLabel)+'.'):'Waiting for the GM to end the enemy turn.')+'</div>';
       }else{
-        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase. Wait for the GM to prompt the next enemy action.</div>';
+        playerHint='<div style="font-size:.7rem;color:var(--muted2);margin-top:.42rem;">Enemy phase. Wait for the GM to prompt Enemy Action '+esc(enemyActionPromptLabel)+'.</div>';
       }
     }else if(activeToken&&String(cs.token||'')===String(activeToken)){
       playerHint='<div style="font-size:.7rem;color:var(--teal);margin-top:.42rem;">You are up. Resolve your action from the Combat Tab, Quick Panel, or shared VTT.</div>';
@@ -8771,23 +8802,105 @@ function renderCampaignInitiativePanel(){
       playerHint+='<div style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.38rem;">'+vttButton+'</div>';
     }
   }
+  var turnGateTone='muted';
+  var turnGateTitle='Wait for the next prompt';
+  var turnGateText='Follow the Campaign Initiative panel to keep the table in sync.';
+  if(phase==='enemy'){
+    if(cs.role==='gm'){
+      if(enemyActionPending){
+        turnGateTone='red';
+        turnGateTitle='Wait for '+getCampaignEnemyActionTargetLabel(enemyRequest)+' to resolve Enemy Action '+enemyActionCurrentLabel;
+        turnGateText='If the target changes, retarget the live prompt. Otherwise let the targeted Wayfarer click Enemy Action now.';
+      }else if(enemyActionRemaining>0){
+        turnGateTone='gold';
+        turnGateTitle='Prompt Enemy Action '+enemyActionNextLabel;
+        turnGateText='Choose the target or lane, send the prompt, then let that player resolve it before spending the next action.';
+      }else{
+        turnGateTone='teal';
+        turnGateTitle='End the enemy turn';
+        turnGateText='All enemy actions are spent. Advance to the next round when the table is ready.';
+      }
+    }else if(enemyActionPending&&isCampaignEnemyActionTargetedToToken(enemyRequest,cs.token)){
+      turnGateTone='red';
+      turnGateTitle='Click Enemy Action now';
+      turnGateText='Enemy Action '+enemyActionCurrentLabel+' is targeting you. Resolve it from the Combat Tab, Quick Panel, or shared VTT.';
+    }else if(enemyActionPending){
+      turnGateTone='muted';
+      turnGateTitle='Wait for '+getCampaignEnemyActionTargetLabel(enemyRequest);
+      turnGateText='They need to resolve Enemy Action '+enemyActionCurrentLabel+' before the GM can move on.';
+    }else if(enemyActionResolved&&enemyActionRemaining>0){
+      turnGateTone='gold';
+      turnGateTitle='Wait for Enemy Action '+enemyActionNextLabel;
+      turnGateText='The GM is choosing the next enemy target.';
+    }else if(enemyActionResolved){
+      turnGateTone='teal';
+      turnGateTitle='Wait for the GM to end the enemy turn';
+      turnGateText='The last enemy action is resolved. The next click should start the next round.';
+    }else{
+      turnGateTone='gold';
+      turnGateTitle='Wait for Enemy Action '+enemyActionPromptLabel;
+      turnGateText='The GM needs to choose a target and send the next enemy prompt.';
+    }
+  }else if(cs.role==='gm'){
+    if(activeToken&&String(activeToken)!==enemyToken){
+      turnGateTone='teal';
+      turnGateTitle='Wait for '+activeName+' to finish';
+      turnGateText='When they are done spending actions, click Complete '+activeName+'\'s Turn.';
+    }else if(pending.length){
+      turnGateTone='gold';
+      turnGateTitle='Prompt the next Wayfarer';
+      turnGateText=pending.length+' Wayfarer turn'+(pending.length===1?' remains':'s remain')+' this round. Choose who acts next.';
+    }else{
+      turnGateTone='red';
+      turnGateTitle='Start the enemy turn';
+      turnGateText='Every Wayfarer has acted. The next click should hand the round over to the enemy.';
+    }
+  }else if(activeToken&&String(cs.token||'')===String(activeToken)){
+    turnGateTone='teal';
+    turnGateTitle='You act now';
+    turnGateText='Resolve your action from the Combat Tab, Quick Panel, or shared VTT, then wait for the GM to pass the turn.';
+  }else if(!activeToken){
+    turnGateTone='gold';
+    turnGateTitle='Wait for the GM prompt';
+    turnGateText='The GM is deciding who acts first or next.';
+  }else{
+    turnGateTone='muted';
+    turnGateTitle='Wait for '+(activeRow&&activeRow.name?String(activeRow.name):'another Wayfarer');
+    turnGateText='They are the current acting Wayfarer.';
+  }
   panel.innerHTML='<div style="padding:.4rem .5rem;background:rgba(46,196,182,.05);border:1px solid rgba(46,196,182,.3);border-radius:6px;">'
     +'<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:var(--teal);text-transform:uppercase;margin-bottom:.2rem;">Campaign Initiative</div>'
     +'<div style="display:flex;justify-content:space-between;gap:.5rem;align-items:flex-start;margin-bottom:.34rem;">'
       +'<div>'
-        +'<div style="font-size:.76rem;color:var(--text2);font-weight:700;">'+summaryTitle+'</div>'
-        +'<div style="font-size:.7rem;color:var(--muted2);margin-top:.12rem;">Round '+Math.max(1,Number(combat.round||1))+' \u00b7 '+(phase==='enemy'?'Enemy phase':'Wayfarer phase')+' \u00b7 '+summaryText+'</div>'
+        +'<div style="font-size:.76rem;color:var(--text2);font-weight:700;">'+esc(summaryTitle)+'</div>'
+        +'<div style="font-size:.7rem;color:var(--muted2);margin-top:.12rem;">Round '+Math.max(1,Number(combat.round||1))+' \u00b7 '+(phase==='enemy'?'Enemy phase':'Wayfarer phase')+' \u00b7 '+esc(summaryText)+'</div>'
         +(openerNote?'<div style="font-size:.66rem;color:var(--gold2);margin-top:.14rem;">Scene Opener: '+esc(openerNote)+'</div>':'')
       +'</div>'
       +'<div style="font-size:.68rem;color:var(--muted2);text-align:right;white-space:nowrap;">'
         +'<div>Ready: '+pending.length+'</div>'
         +'<div>Done: '+acted.length+'/'+wayfarerTokens.length+'</div>'
+        +'<div>Enemy: '+enemyActionRemaining+'/'+enemyActionTotal+'</div>'
       +'</div>'
     +'</div>'
     +'<div style="display:grid;gap:.14rem;max-height:160px;overflow:auto;">'+rows+'</div>'
     +gmControls
     +playerHint
     +'</div>';
+  if(gateEl){
+    var gatePalettes={
+      teal:{border:'rgba(46,196,182,.34)',background:'rgba(46,196,182,.12)',accent:'var(--teal)'},
+      gold:{border:'rgba(255,215,0,.28)',background:'rgba(255,215,0,.10)',accent:'var(--gold2)'},
+      red:{border:'rgba(201,64,64,.34)',background:'rgba(201,64,64,.12)',accent:'var(--red2)'},
+      muted:{border:'rgba(255,255,255,.08)',background:'rgba(255,255,255,.04)',accent:'var(--muted2)'}
+    };
+    var gatePalette=gatePalettes[turnGateTone]||gatePalettes.muted;
+    gateEl.style.display='block';
+    gateEl.innerHTML='<div style="padding:.46rem .58rem;border:1px solid '+gatePalette.border+';border-radius:6px;background:'+gatePalette.background+';">'
+      +'<div style="font-family:Cinzel,serif;font-size:.62rem;letter-spacing:.08em;color:'+gatePalette.accent+';text-transform:uppercase;margin-bottom:.14rem;">Next Click</div>'
+      +'<div style="font-size:.82rem;color:var(--text2);font-weight:700;">'+esc(turnGateTitle)+'</div>'
+      +'<div style="font-size:.71rem;color:var(--muted2);margin-top:.12rem;">'+esc(turnGateText)+'</div>'
+      +'</div>';
+  }
 }
 function updateCombatUI(){
   if(typeof syncCombatSpacingToPrimaryEnemy==='function')syncCombatSpacingToPrimaryEnemy();
