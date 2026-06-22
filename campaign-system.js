@@ -2934,6 +2934,7 @@
       shared.provinceMap = deepCloneJson(window.getProvinceMapState() || null);
     }
     if (shouldPushAuthoritativeMaps) {
+      shared.mapFog = deepCloneJson(window.S.mapFog || {});
       shared.lastSea = deepCloneJson(window.S.lastSea || {});
       shared.starSystem = deepCloneJson(window.S.starSystem || {});
       shared.worldThatWas = deepCloneJson(window.S.worldThatWas || {});
@@ -3047,6 +3048,9 @@
       }
       if (sharedState.storyline && typeof sharedState.storyline === "object") {
         window.S.storyline = deepCloneJson(sharedState.storyline) || {};
+      }
+      if (sharedState.mapFog && typeof sharedState.mapFog === "object") {
+        window.S.mapFog = deepCloneJson(sharedState.mapFog) || {};
       }
       if (sharedState.caravan && typeof sharedState.caravan === "object") {
         window.S.caravan = deepCloneJson(sharedState.caravan) || {};

@@ -4090,8 +4090,11 @@
       : "<div class='wtw-muted'>No active district hazard in this hex.</div>";
 
     const wayfarerHtml = hex.wayfarer
-      ? ("<div class='wtw-card'><div class='wtw-card-title' style='color:#d4b8ff;'>Wayfarer: " + hex.wayfarer.name + "</div><div class='wtw-card-text'><strong>Rumor:</strong> " + hex.wayfarer.rumor + "<br><strong>History:</strong> " + hex.wayfarer.history + "</div><div class='wtw-card-actions'><button class='btn btn-xs btn-teal' onclick='wtwTalkWayfarer(\"" + hex.id + "\")'>Talk</button></div></div>")
+      ? ("<div class='wtw-card'><div class='wtw-card-title' style='color:#d4b8ff;'>Wayfarer: " + hex.wayfarer.name + "</div><div class='wtw-card-text'><strong>Rumor:</strong> " + hex.wayfarer.rumor + "<br><strong>History:</strong> " + hex.wayfarer.history + "</div><div class='wtw-card-actions'><button class='btn btn-xs btn-teal' onclick='wtwTalkWayfarer(\"" + hex.id + "\")'>Talk</button><button class='btn btn-xs' onclick='if(typeof requestMapKnowledgeReveal===\"function\")requestMapKnowledgeReveal(\"wtw\",\"wayfarer\",{originKey:\""+ String(hex.id) +"\",title:\"World That Was Route Intel\"});'>Ask Route Intel</button></div></div>")
       : "<div class='wtw-muted'>No wayfarer currently visible.</div>";
+    const districtIntelHtml = (hex.serviceNode || hex.station || hex.landingPad)
+      ? ("<div class='wtw-card'><div class='wtw-card-title'>District Intel</div><div class='wtw-card-text'>Locals in this district can point the table toward nearby jobs, structures, transit routes, and trouble zones.</div><div class='wtw-card-actions'><button class='btn btn-xs btn-teal' onclick='if(typeof requestMapKnowledgeReveal===\"function\")requestMapKnowledgeReveal(\"wtw\",\"locals\",{originKey:\""+ String(hex.id) +"\",title:\"World That Was Local Knowledge\"});'>Ask Locals</button></div></div>")
+      : "";
 
     const structureRooms = (hex.structure && Array.isArray(hex.structure.generatedRooms)) ? hex.structure.generatedRooms : [];
     const structureRoomHtml = structureRooms.length
@@ -4228,7 +4231,7 @@
       + serviceCards
       + celebrationHtml;
 
-    const worldSystems = hazardHtml + wayfarerHtml + structureHtml + travelHtml + renderSkirmishWidget(hex);
+    const worldSystems = hazardHtml + wayfarerHtml + districtIntelHtml + structureHtml + travelHtml + renderSkirmishWidget(hex);
     const powerSection = ""
       + "<div class='wtw-card-text' style='margin-bottom:.3rem;'><strong>Control Breakdown:</strong><br>" + controlRows + "</div>"
       + "<div class='wtw-card-title' style='margin-top:.3rem;'>Zone Holdings</div>"

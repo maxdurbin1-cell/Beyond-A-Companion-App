@@ -14137,6 +14137,7 @@ function buildPlanetHoldingInfoHtml(state, selected) {
     selected.data.holding = createPlanetHoldingDetail((state && state.profile) || {}, selected.province, selected.marker, selected.localWeather, selected.terrain);
   }
   const h = selected.data.holding;
+  const originKey = String((state && state.hexId) || '') + ':' + String(selected.id);
   return `<div class="rest-boon" style="background:rgba(201,162,39,.06);border-color:rgba(201,162,39,.4);">
       <div class="rb-label" style="color:var(--gold);">🛡 Rest Boon</div>
       <div style="font-size:.82rem;color:var(--text2);">${h.restBoon}</div>
@@ -14145,6 +14146,7 @@ function buildPlanetHoldingInfoHtml(state, selected) {
     <div class="mood-block"><div class="mb-label">Mood: ${h.mood}</div><div style="font-size:.82rem;color:var(--text2);">${h.crisis}<br><em style="font-size:.78rem;">${h.crisisText}</em></div></div>
     <div class="wild-panel"><div class="wp-label">Settlement Status</div><div class="wp-text">${h.structure} · ${h.terrain} terrain</div></div>
     <div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.35rem;">
+      <button class="btn btn-xs btn-teal" onclick="if(typeof requestMapKnowledgeReveal==='function')requestMapKnowledgeReveal('planet','authority',{originKey:'${originKey}',title:'Planet Authority Knowledge'});">🏰 Ask Authorities</button>
       <button class="btn btn-xs btn-primary" onclick="if(typeof openRegionalSettlementHexcrawl==='function')openRegionalSettlementHexcrawl('space','${String(h.title || 'Merchant Colony').replace(/'/g, "\\'")}');else if(typeof openHoldingSettlementHexcrawl==='function')openHoldingSettlementHexcrawl();">◫ Enter Settlement</button>
     </div>`;
 }
@@ -14216,6 +14218,7 @@ function buildPlanetDwellingInfoHtml(state, selected) {
     selected.data.dwelling = createPlanetDwellingDetail((state && state.profile) || {}, selected.province);
   }
   const d = selected.data.dwelling;
+  const originKey = String((state && state.hexId) || '') + ':' + String(selected.id);
   return `<div class="rest-boon" style="background:rgba(160,192,64,.06);border-color:rgba(110,208,144,.4);">
       <div class="rb-label" style="color:var(--green2);">✨ Rest Boon</div>
       <div style="font-size:.82rem;color:var(--text2);">Resting here grants <strong style="color:var(--green2);">Bolstered</strong> (Spirit/Lead ↑).<br>${d.blessing}</div>
@@ -14223,7 +14226,7 @@ function buildPlanetDwellingInfoHtml(state, selected) {
     </div>
     <div class="wild-panel"><div class="wp-label">Dwelling — ${d.mood}</div><div class="wp-text">${d.settlement} in ${d.terrain} terrain.<br>Current Need: ${d.currentNeed}</div></div>
     <div class="wild-panel"><div class="wp-label">📰 Nomad's News</div><div class="wp-text">${d.rumor}</div></div>
-    <div class="npc-block"><div class="nb-label">🧭 Nomad's Knowledge</div><div style="font-size:.8rem;color:var(--muted3);line-height:1.55;">Nomads know about Landmarks and Events in adjacent Hex Zones. They know only a partial Mystery — enough to hint, not enough to spoil.</div><div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="planetNomadFieldTreatment(35)">🩹 Nomad Field Treatment (35₵)</button></div></div>`;
+    <div class="npc-block"><div class="nb-label">🧭 Nomad's Knowledge</div><div style="font-size:.8rem;color:var(--muted3);line-height:1.55;">Nomads know about Landmarks and Events in adjacent Hex Zones. They know only a partial Mystery — enough to hint, not enough to spoil.</div><div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;"><button class="btn btn-xs btn-teal" onclick="if(typeof requestMapKnowledgeReveal==='function')requestMapKnowledgeReveal('planet','nomad',{originKey:'${originKey}',title:'Planet Nomad Knowledge'});">🧭 Ask Nomads</button><button class="btn btn-xs" onclick="planetNomadFieldTreatment(35)">🩹 Nomad Field Treatment (35₵)</button></div></div>`;
 }
 
 function buildPlanetTempleInfoHtml(state, selected) {
@@ -14269,6 +14272,16 @@ function consultPlanetSage(cost) {
     changeMentalStress(1);
     showNotif('Sage guidance is contested by debt-omens. Trauma reduced, but +1 Mental Stress.', 'warn');
     return;
+  }
+  const active = typeof getActivePlanetKnowledgeState === 'function' ? getActivePlanetKnowledgeState() : null;
+  const selected = active && active.state && Array.isArray(active.state.cells)
+    ? (active.state.cells.find((cell) => Number(cell.id) === Number(active.state.selectedCellId)) || active.state.cells[0] || null)
+    : null;
+  if (active && selected && typeof requestMapKnowledgeReveal === 'function') {
+    requestMapKnowledgeReveal('planet', 'sage', {
+      originKey: String(active.state.hexId) + ':' + String(selected.id),
+      title: 'Planet Sage Knowledge'
+    });
   }
   showNotif('Sage guidance received. Trauma reduced by ' + (p.favor >= 7 ? '2' : '1') + '.', 'good');
 }
@@ -17777,6 +17790,7 @@ function renderYessodHexInfo(cell) {
       <div style="font-size:.8rem;font-weight:700;color:var(--teal);">⬢ ${cell.feature || 'Holding garrison of Yessod.'}</div>
       <div style="font-size:.77rem;color:var(--text2);margin-top:.2rem;">Resting here restores 1d4 Health. Skyships dock here and can carry you to other Holdings (costs 10 Credits).</div>
       <div style="display:flex;gap:.28rem;flex-wrap:wrap;margin-top:.32rem;">
+        <button class="btn btn-sm btn-teal" onclick="if(typeof requestMapKnowledgeReveal==='function')requestMapKnowledgeReveal('yessod','authority',{originKey:'y:${cell.id}',title:'Yessod Authority Knowledge'});">🏰 Ask Authorities</button>
         <button class="btn btn-sm btn-teal" onclick="yessodRestAtHolding(${cell.id})">🛏 Rest at Holding (+1d4 Health)</button>
         <button class="btn btn-sm" onclick="yessodEnterHolding(${cell.id})">🏰 Enter Holding</button>
         <button class="btn btn-sm" onclick="yessodBookSkyship(${cell.id})">🚀 Book Skyship to Holding (10 Cr)</button>
@@ -17791,7 +17805,7 @@ function renderYessodHexInfo(cell) {
       <div style="font-size:.77rem;color:var(--text2);margin-top:.2rem;">Rest here restores 1 Stress. Locals trade rumors, relic maps, and ferrymen routes.</div>
       <div style="display:flex;gap:.28rem;flex-wrap:wrap;margin-top:.32rem;">
         <button class="btn btn-sm" style="border-color:#a0c040;color:#a0c040;" onclick="yessodRestAtDwelling(${cell.id})">🛏 Rest at Dwelling (-1 Stress)</button>
-        <button class="btn btn-sm" onclick="rollYessodEncounter()">🗺 Ask Locals (Reveal Random Hex)</button>
+        <button class="btn btn-sm" onclick="if(typeof requestMapKnowledgeReveal==='function')requestMapKnowledgeReveal('yessod','nomad',{originKey:'y:${cell.id}',title:'Yessod Dwelling Knowledge'});">🗺 Ask Locals</button>
       </div>
     </div>`;
   }
@@ -17803,6 +17817,7 @@ function renderYessodHexInfo(cell) {
       <div style="font-size:.77rem;color:var(--text2);margin-top:.2rem;">Resting here restores 1 Trauma. Titanwalkers can be ridden between Temples for 5 Mental Stress.</div>
       <div style="display:flex;gap:.28rem;flex-wrap:wrap;margin-top:.32rem;">
         <button class="btn btn-sm" style="border-color:#b060d0;color:#b060d0;" onclick="yessodRestAtTemple(${cell.id})">🛏 Rest at Temple (-1 Trauma)</button>
+        <button class="btn btn-sm" onclick="if(typeof requestMapKnowledgeReveal==='function')requestMapKnowledgeReveal('yessod','sage',{originKey:'y:${cell.id}',title:'Yessod Oracle Knowledge'});">📚 Ask Oracles</button>
         <button class="btn btn-sm" onclick="yessodRideTitanwalker(${cell.id})">🐉 Ride Titanwalker to Temple (+5 Stress)</button>
       </div>
     </div>`;
@@ -18630,6 +18645,7 @@ function renderPlanetExplorationPanel() {
               <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.2rem;">
                 <button class="btn btn-xs" ${hasOpenTask ? 'disabled style="opacity:.6;cursor:default;"' : `onclick="generatePlanetWayfarerTask('${wf.id}')"`}>Generate Task</button>
                 <button class="btn btn-xs btn-teal" ${hasOpenTask ? 'disabled style="opacity:.6;cursor:default;"' : `onclick="acceptPlanetWayfarerTask('${wf.id}')"`}>${hasOpenTask ? 'Contract Accepted' : 'Accept Task'}</button>
+                <button class="btn btn-xs" onclick="if(typeof requestMapKnowledgeReveal==='function')requestMapKnowledgeReveal('planet','wayfarer',{originKey:'${String(state.hexId)}:${String(wf.cellId)}',title:'Planet Route Intel'});">Ask Route Intel</button>
                 <button class="btn btn-xs" onclick="explorePlanetCell(${wf.cellId})">Travel</button>
               </div>
             </div>`;
@@ -20179,6 +20195,7 @@ function updateStarSystemReadouts() {
         return;
       }
       if (current.type === 'hub') {
+        actionButtons.push('<button class="btn btn-xs btn-teal" onclick="if(typeof requestMapKnowledgeReveal===\'function\')requestMapKnowledgeReveal(\'galaxy\',\'wayfarer\',{originKey:\'' + String(current.id) + '\',title:\'Galaxy Hub Knowledge\'});">🧭 Ask Dockworkers</button>');
         actionButtons.push('<button class="btn btn-xs btn-primary" onclick="if(typeof openSpaceHubHexcrawl===\'function\')openSpaceHubHexcrawl(\'' + String(current.label || current.name || 'Orbital Hub').replace(/'/g, "\\'") + '\');else if(typeof openHoldingSettlementHexcrawl===\'function\')openHoldingSettlementHexcrawl();">◫ Enter Space Hub</button>');
       }
       if (current.type === 'star') {
