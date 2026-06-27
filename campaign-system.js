@@ -108,6 +108,8 @@
     lastProvinceMapHash: "",
     lastProvinceSelectionsHash: "",
     lastProvinceFocusSyncAt: 0,
+    provinceFocusSyncTimer: null,
+    pendingProvinceFocusReason: "",
     lastCameraViewHash: "",
     lastCameraWorldSyncAt: 0,
     cameraSyncTimer: null,
@@ -685,7 +687,7 @@
     if (!travel || typeof travel !== "object") return false;
     var activeContext = getActiveContextId();
     var activeTab = getActiveTabId();
-    if (activeTab === "character") return false;
+    if (activeTab === "character" || activeTab === "shop") return false;
     var expectedContext = String(travel.context || "");
     var expectedTab = String(travel.tab || "");
     if (expectedContext && activeContext && expectedContext !== activeContext) return true;
@@ -768,10 +770,27 @@
     return !!(state.code && state.role === "player");
   }
 
-  function guardSharedWorldMutation(errorText) {
+  function guardSharedWorldMutation(errorText, requestDetails) {
     if (!isCampaignPlayerReadOnlyForSharedWorld()) return true;
+    if (requestDetails && requestSharedWorldAction(requestDetails).ok) return false;
     safeNotif(errorText || "Only the GM can change the shared world state in Campaign mode.", "warn");
     return false;
+  }
+
+  function requestSharedWorldAction(details) {
+    if (!isConnectedCampaignPlayer()) {
+      return { ok: false, handled: false, error: "Only connected players can request GM world actions." };
+    }
+    var spec = details && typeof details === "object" ? details : {};
+    var label = String(spec.label || "Shared world action").trim() || "Shared world action";
+    var message = String(spec.message || ("🧭 Requesting GM action: " + label + ".")).slice(0, 220);
+    if (typeof sendChatMessage === "function") {
+      try {
+        sendChatMessage({ message: message, targetToken: "" });
+      } catch (_err) {}
+    }
+    safeNotif(String(spec.playerNotice || ("Request sent to GM: " + label + ".")), "info");
+    return { ok: true, handled: true, requested: true };
   }
 
   function cloneClientLocalStarState() {
@@ -895,6 +914,10 @@
   function joinSharedCampaignCombatMode() {
     var sceneSnapshot = getSharedCombatSceneEditorSnapshot();
     if (!sceneSnapshot) {
+      if (state.role === "player") {
+        safeNotif("The shared VTT is still syncing from the GM. Wait for the join prompt or try Request Resync.", "warn");
+        return false;
+      }
       if (typeof window.openCombatSceneEditorFromExpedition === "function") {
         try {
           window.openCombatSceneEditorFromExpedition();
@@ -1123,6 +1146,18 @@
               activeSceneId: fallbackSceneId
             };
       }
+    }
+
+    var preservePlayerPersonalTab = state.role === "player"
+      && !options.force
+      && !playerSharedVttPrompt
+      && !isPlayerViewOutOfLock(travel);
+
+    if (preservePlayerPersonalTab) {
+      if (travelAt) {
+        state.lastCampaignTravelAppliedAt = travelAt;
+      }
+      return;
     }
 
     if (context && context !== activeContext && typeof window.setContext === "function") {
@@ -3025,6 +3060,9 @@
     var localProvinceState = cloneClientLocalProvinceState();
     var nextProvinceSelectionsHash = safeJsonHash(sharedState.provinceSelections || {});
     var provinceSelectionsChanged = nextProvinceSelectionsHash !== state.lastProvinceSelectionsHash;
+    var prevMapFogHash = safeJsonHash(window.S.mapFog || {});
+    var nextMapFogHash = safeJsonHash(sharedState.mapFog || {});
+    var mapFogChanged = !!(sharedState.mapFog && typeof sharedState.mapFog === "object" && nextMapFogHash !== prevMapFogHash);
 
     state.applyingSharedState = true;
     try {
@@ -3314,11 +3352,20 @@
     if (typeof window.renderLastSeaInfo === "function") window.renderLastSeaInfo();
     if (typeof window.renderStarSystemMap === "function") window.renderStarSystemMap();
     if (typeof window.updateStarSystemReadouts === "function") window.updateStarSystemReadouts();
+    if (typeof window.renderPlanetExplorationPanel === "function") {
+      try { window.renderPlanetExplorationPanel(); } catch (_err) {}
+    }
+    if (typeof window.renderYessodPanel === "function") {
+      try { window.renderYessodPanel(); } catch (_err) {}
+    }
     if (window.S && window.S.starSystem && window.S.starSystem.activeSpaceEncounter && typeof window.renderSpaceEncounterPanel === "function") {
       try { window.renderSpaceEncounterPanel(); } catch (_err) {}
     }
     if (typeof window.renderWorldThatWas === "function") window.renderWorldThatWas();
-    if (provinceSelectionsChanged && typeof window.renderHexMap === "function") window.renderHexMap();
+    if ((provinceSelectionsChanged || mapFogChanged) && typeof window.renderHexMap === "function") window.renderHexMap();
+    if (mapFogChanged && typeof window.renderHexInfo === "function" && typeof selectedHex !== "undefined" && selectedHex) {
+      try { window.renderHexInfo(selectedHex); } catch (_err) {}
+    }
     if (typeof window.renderCaravanUI === "function") {
       try { window.renderCaravanUI(); } catch (_err) {}
     }
@@ -6589,7 +6636,7 @@
       ? ('<div class="campaign-card" style="border-color:rgba(232,192,80,.45);background:rgba(232,192,80,.08);">'
         + '<div class="campaign-card-title">GM Camera Lock Active</div>'
         + '<div class="campaign-muted">Your map tabs auto-follow the GM for a unified table view.</div>'
-        + '<div class="campaign-muted" style="margin-top:.22rem;">You can still open <strong style="color:var(--gold2);">Character</strong> any time to review stats, weapons, and inventory.</div>'
+        + '<div class="campaign-muted" style="margin-top:.22rem;">You can still open <strong style="color:var(--gold2);">Character</strong> or <strong style="color:var(--gold2);">Merchant</strong> any time for personal sheet and shopping actions.</div>'
         + '</div>')
       : '';
 
@@ -8802,13 +8849,28 @@
     if (!state.socket || !state.connected || !state.code) return { ok: false, error: "Not connected." };
     var now = Date.now();
     if (now - Number(state.lastProvinceFocusSyncAt || 0) < 220) {
-      return { ok: true, skipped: true };
+      state.pendingProvinceFocusReason = String(reason || state.pendingProvinceFocusReason || "province-focus");
+      if (!state.provinceFocusSyncTimer) {
+        var waitMs = Math.max(40, 240 - (now - Number(state.lastProvinceFocusSyncAt || 0)));
+        state.provinceFocusSyncTimer = setTimeout(function () {
+          state.provinceFocusSyncTimer = null;
+          var queuedReason = String(state.pendingProvinceFocusReason || "province-focus");
+          state.pendingProvinceFocusReason = "";
+          syncProvinceFocus(queuedReason).catch(function () {});
+        }, waitMs);
+      }
+      return { ok: true, queued: true };
     }
     var key = (typeof window.getProvinceSelectedKey === "function")
       ? String(window.getProvinceSelectedKey() || "")
       : "";
     if (!key) return { ok: false, error: "No province selected." };
 
+    if (state.provinceFocusSyncTimer) {
+      clearTimeout(state.provinceFocusSyncTimer);
+      state.provinceFocusSyncTimer = null;
+    }
+    state.pendingProvinceFocusReason = "";
     state.lastProvinceFocusSyncAt = now;
     var patch = {};
     if (state.token) {
@@ -9628,6 +9690,7 @@
     setTableSceneMode: setTableSceneMode,
     refreshSceneFocusState: refreshSceneFocusState,
     requestSharedConsent: requestSharedConsent,
+    requestSharedWorldAction: requestSharedWorldAction,
     syncProvinceEncounterResult: syncProvinceEncounterResult,
     respondReadyCheck: respondReadyCheck,
     forceApproveReadyCheck: forceApproveReadyCheck,

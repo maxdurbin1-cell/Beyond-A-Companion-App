@@ -12947,6 +12947,11 @@ function rollPlanetTradeRouteEncounter() {
   const state = ensurePlanetSurfaceState(hex);
   if (!state) return;
   const selected = state.cells.find((cell) => cell.id === state.selectedCellId);
+  if (!guardCampaignSharedWorldMutation('Only the GM can roll shared planet trade-route encounters in Campaign mode.', {
+    label: 'Planet trade route encounter',
+    message: '🪐 Requesting GM action: roll the active planet trade route encounter.',
+    playerNotice: 'GM has been asked to roll the active planet trade route encounter.'
+  })) return;
   if (isPlanetNightModeActive() && roll(100) <= getPlanetNightModeTradeBonusChance()) {
     text += ' Night Mode Bonus: ' + buildNightModePlanetTradeBonus(state, selected);
   }
@@ -15102,7 +15107,6 @@ function setPlanetHexNote(cellId, value) {
 }
 
 function rollPlanetHexEncounter() {
-  if (!guardCampaignSharedWorldMutation('Only the GM can roll shared planet encounters in Campaign mode.')) return;
   const hex = getActivePlanetHex();
   const state = ensurePlanetSurfaceState(hex);
   if (!state) return;
@@ -15113,6 +15117,11 @@ function rollPlanetHexEncounter() {
   }
   const selected = state.cells.find((cell) => cell.id === state.selectedCellId);
   if (!selected) return;
+  if (!guardCampaignSharedWorldMutation('Only the GM can roll shared planet encounters in Campaign mode.', {
+    label: 'Planet encounter',
+    message: '🪐 Requesting GM action: roll the active planet encounter for cell ' + String(selected.id) + '.',
+    playerNotice: 'GM has been asked to roll the active planet encounter for this cell.'
+  })) return;
 
   escalatePlanetWeatherPressure(state, selected);
 
@@ -16790,6 +16799,11 @@ function rollYessodEncounter() {
   const state = ensureYessodState();
   const cell = yessodGetCell(state, state.selectedCellId);
   if (!cell) return;
+  if (!guardCampaignSharedWorldMutation('Only the GM can roll shared Yessod encounters in Campaign mode.', {
+    label: 'Yessod encounter',
+    message: '🜂 Requesting GM action: roll the active Yessod encounter for cell ' + String(cell.id) + '.',
+    playerNotice: 'GM has been asked to roll the active Yessod encounter for this cell.'
+  })) return;
   const encounterKind = pick(['wildlife', 'strangers', 'mixed']);
   const wildlife = pick(YESSOD_ENCOUNTER_WILDLIFE);
   const strangers = pick(YESSOD_ENCOUNTER_STRANGERS);
@@ -20019,9 +20033,13 @@ function travelToSelectedGalaxyHex() {
 
 function runGalaxyEncounterRoll() {
   ensureStarsState();
-  if (!guardCampaignSharedWorldMutation('Only the GM can roll shared space encounters in Campaign mode.')) return;
   const hex = getCurrentStarHex();
   if (!hex) return;
+  if (!guardCampaignSharedWorldMutation('Only the GM can roll shared space encounters in Campaign mode.', {
+    label: 'Galaxy encounter',
+    message: '🛰️ Requesting GM action: roll the active galaxy encounter at Hex ' + String(hex.id || '?') + '.',
+    playerNotice: 'GM has been asked to roll the active galaxy encounter for this hex.'
+  })) return;
   const ring = (hex.ring && hex.ring !== 'core') ? hex.ring : (S.starSystem.selectedRing || 'middle');
   let outcome = hex.hiddenOutcome || pickRingEncounterOutcome(ring);
   const tradeBonus = isHexOnTradeRoute(hex.id);
@@ -23450,9 +23468,12 @@ function patchStarsCrossSystemHooks() {
   }
 }
 
-function guardCampaignSharedWorldMutation(errorText) {
+function guardCampaignSharedWorldMutation(errorText, requestDetails) {
   if (!window.campaignSystem || typeof window.campaignSystem.guardSharedWorldMutation !== 'function') return true;
-  return window.campaignSystem.guardSharedWorldMutation(errorText || 'Only the GM can change the shared world state in Campaign mode.');
+  return window.campaignSystem.guardSharedWorldMutation(
+    errorText || 'Only the GM can change the shared world state in Campaign mode.',
+    requestDetails || null
+  );
 }
 
 function syncCampaignSharedWorldSoon(reason) {

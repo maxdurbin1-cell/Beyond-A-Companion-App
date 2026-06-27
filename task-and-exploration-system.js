@@ -25,6 +25,17 @@ function buildApproachSelectHTML(selectedStat){
   return h;
 }
 
+function ensureObservedProvinceHexWonder(target){
+  if(!target||!target.hex||target.hex.type!=='wilderness'||!target.hex.terrain||typeof pick!=='function')return;
+  const hex=target.hex;
+  hex.data=hex.data||{};
+  if(hex.data.wonder)return;
+  const terrainData=TERRAIN_DESC[hex.terrain.name];
+  if(terrainData&&terrainData.wonder&&Array.isArray(terrainData.wonder)){
+    hex.data.wonder=pick(terrainData.wonder);
+  }
+}
+
 function promiseWildernessExploration(col,row){
   const hex=mapData.find(h=>h.col===col&&h.row===row);
   if(!hex||hex.type!=='wilderness')return;
@@ -71,14 +82,7 @@ function performWildernessObservation(col,row,directionKey){
       html+=`<div style="background:rgba(200,50,50,.06);border:1px solid rgba(200,50,50,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--red2);font-weight:700;margin-bottom:.2rem;">No Adjacent Hex</div>There is no mapped hex in that direction.</div>`;
     }else{
       if(typeof window.revealMapFogHex==='function')window.revealMapFogHex('province',String(target.hex.col)+','+String(target.hex.row));
-      // Assign a wonder to the target hex if it doesn't have one yet
-      if(target.hex.type==='wilderness'&&!target.hex.data.wonder&&target.hex.terrain&&typeof pick==='function'){
-        const terrainData=TERRAIN_DESC[target.hex.terrain.name];
-        if(terrainData&&terrainData.wonder&&Array.isArray(terrainData.wonder)){
-          if(!target.hex.data)target.hex.data={};
-          target.hex.data.wonder=pick(terrainData.wonder);
-        }
-      }
+      ensureObservedProvinceHexWonder(target);
       html+=`<div style="background:rgba(46,196,182,.06);border:1px solid rgba(46,196,182,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--green2);font-weight:700;margin-bottom:.25rem;">✓ Successful Observation (${target.label})</div><div style="padding:.22rem .42rem;border-left:2px solid rgba(201,162,39,.4);">${formatObservedHexSummary(target.hex)}</div></div>`;
     }
   }else{
@@ -90,13 +94,7 @@ function performWildernessObservation(col,row,directionKey){
       onConvert:function(){
         if(typeof window.registerSecretPadClue==='function')window.registerSecretPadClue('province','intel');
         if(target&&typeof window.revealMapFogHex==='function')window.revealMapFogHex('province',String(target.hex.col)+','+String(target.hex.row));
-        if(target&&target.hex&&target.hex.type==='wilderness'&&!target.hex.data.wonder&&target.hex.terrain&&typeof pick==='function'){
-          const terrainData=TERRAIN_DESC[target.hex.terrain.name];
-          if(terrainData&&terrainData.wonder&&Array.isArray(terrainData.wonder)){
-            if(!target.hex.data)target.hex.data={};
-            target.hex.data.wonder=pick(terrainData.wonder);
-          }
-        }
+        ensureObservedProvinceHexWonder(target);
         if(typeof renderHexMap==='function')renderHexMap();
         appendHexNote(col,row,`[Observation] Teamwork converted ${directionKey||'adjacent'} to success.`);
         if(target&&typeof openModal==='function'){
@@ -157,13 +155,7 @@ function resolveWildernessObservationRollChoice(col,row,directionKey,useManual){
       html+='<div style="background:rgba(200,50,50,.06);border:1px solid rgba(200,50,50,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--red2);font-weight:700;margin-bottom:.2rem;">No Adjacent Hex</div>There is no mapped hex in that direction.</div>';
     }else{
       if(typeof window.revealMapFogHex==='function')window.revealMapFogHex('province',String(target.hex.col)+','+String(target.hex.row));
-      if(target.hex.type==='wilderness'&&!target.hex.data.wonder&&target.hex.terrain&&typeof pick==='function'){
-        const terrainData=TERRAIN_DESC[target.hex.terrain.name];
-        if(terrainData&&terrainData.wonder&&Array.isArray(terrainData.wonder)){
-          if(!target.hex.data)target.hex.data={};
-          target.hex.data.wonder=pick(terrainData.wonder);
-        }
-      }
+      ensureObservedProvinceHexWonder(target);
       html+='<div style="background:rgba(46,196,182,.06);border:1px solid rgba(46,196,182,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--green2);font-weight:700;margin-bottom:.25rem;">✓ Successful Observation ('+target.label+')</div><div style="padding:.22rem .42rem;border-left:2px solid rgba(201,162,39,.4);">'+formatObservedHexSummary(target.hex)+'</div></div>';
     }
   }else{
@@ -287,14 +279,7 @@ function finalizeWildernessManualRoll(col,row,directionKey,forcedSuccess){
       html+=`<div style="background:rgba(200,50,50,.06);border:1px solid rgba(200,50,50,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--red2);font-weight:700;margin-bottom:.2rem;">No Adjacent Hex</div>There is no mapped hex in that direction.</div>`;
     }else{
       if(typeof window.revealMapFogHex==='function')window.revealMapFogHex('province',String(target.hex.col)+','+String(target.hex.row));
-      // Assign a wonder to the target hex if it doesn't have one yet
-      if(target.hex.type==='wilderness'&&!target.hex.data.wonder&&target.hex.terrain&&typeof pick==='function'){
-        const terrainData=TERRAIN_DESC[target.hex.terrain.name];
-        if(terrainData&&terrainData.wonder&&Array.isArray(terrainData.wonder)){
-          if(!target.hex.data)target.hex.data={};
-          target.hex.data.wonder=pick(terrainData.wonder);
-        }
-      }
+      ensureObservedProvinceHexWonder(target);
       html+=`<div style="background:rgba(46,196,182,.06);border:1px solid rgba(46,196,182,.35);padding:.4rem;"><div style="font-size:.72rem;color:var(--green2);font-weight:700;margin-bottom:.25rem;">✓ Successful Observation (${target.label})</div><div style="padding:.22rem .42rem;border-left:2px solid rgba(201,162,39,.4);">${formatObservedHexSummary(target.hex)}</div></div>`;
     }
   }else{
@@ -306,13 +291,7 @@ function finalizeWildernessManualRoll(col,row,directionKey,forcedSuccess){
       onConvert:function(){
         if(typeof window.registerSecretPadClue==='function')window.registerSecretPadClue('province','intel');
         if(target&&typeof window.revealMapFogHex==='function')window.revealMapFogHex('province',String(target.hex.col)+','+String(target.hex.row));
-        if(target&&target.hex&&target.hex.type==='wilderness'&&!target.hex.data.wonder&&target.hex.terrain&&typeof pick==='function'){
-          const terrainData=TERRAIN_DESC[target.hex.terrain.name];
-          if(terrainData&&terrainData.wonder&&Array.isArray(terrainData.wonder)){
-            if(!target.hex.data)target.hex.data={};
-            target.hex.data.wonder=pick(terrainData.wonder);
-          }
-        }
+        ensureObservedProvinceHexWonder(target);
         if(typeof renderHexMap==='function')renderHexMap();
         appendHexNote(col,row,`[Observation] Teamwork converted ${directionKey||'adjacent'} to success.`);
         if(target&&typeof openModal==='function'){
