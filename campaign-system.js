@@ -1151,6 +1151,7 @@
     var preservePlayerPersonalTab = state.role === "player"
       && !options.force
       && !playerSharedVttPrompt
+      && Math.max(0, Number(travel.phaseCost || 0) || 0) <= 0
       && !isPlayerViewOutOfLock(travel);
 
     if (preservePlayerPersonalTab) {
@@ -1253,8 +1254,12 @@
         var tabBtn = tab ? document.getElementById("tabnav-" + tab) : null;
         travel.label = String((tabBtn && tabBtn.textContent) || travel.label || tab || "Province Map");
       }
-      travel.reason = String(travel.reason || "navigation");
-      travel.phaseCost = Math.max(0, Number(travel.phaseCost || 0) || 0);
+      travel.movedBy = String(state.playerName || ensureName() || "GM");
+      travel.reason = "navigation";
+      travel.phaseCost = 0;
+      if (String(travel.tab || "") !== "map") {
+        travel.provinceKey = "";
+      }
       travel.updatedAt = Date.now();
       var out = syncSharedPatch({ campaignTravel: deepCloneJson(travel) || travel }, "navigation-state");
       if (out && typeof out.catch === "function") out.catch(function () {});

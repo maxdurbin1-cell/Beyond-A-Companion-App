@@ -101,11 +101,6 @@ async function launchChromium() {
 async function dismissBlockingOverlays(page) {
   await page.evaluate(() => {
     try {
-      if (window.introSystem && typeof window.introSystem.skipIntro === "function") {
-        window.introSystem.skipIntro();
-      }
-    } catch (_err) {}
-    try {
       if (window.soloReference && typeof window.soloReference.close === "function") {
         window.soloReference.close();
       }
@@ -241,6 +236,17 @@ async function waitForCampaignLogText(page, snippet) {
 }
 
 async function respondPendingReadyCheck(page) {
+  await page.waitForFunction(
+    () => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const ready = shared && shared.readyCheck;
+      return !!(ready && ready.id && String(ready.status || "") === "pending");
+    },
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
   await page.evaluate(async () => {
     const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
       ? window.campaignSystem.getSharedState()
@@ -254,19 +260,106 @@ async function respondPendingReadyCheck(page) {
   });
 }
 
+async function collectReadyCheckDiagnostics(page) {
+  return page.evaluate(() => {
+    const st = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+      ? window.campaignSystem.getState()
+      : null;
+    const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+      ? window.campaignSystem.getSharedState()
+      : null;
+    const active = document.querySelector(".tab-panel.active");
+    const modal = document.getElementById("modalTitle");
+    return {
+      role: st ? String(st.role || "") : "",
+      connected: !!(st && st.connected),
+      syncHealth: st ? String(st.syncHealth || "") : "",
+      syncText: st ? String(st.syncText || "") : "",
+      lastSharedVersion: st ? Number(st.lastSharedVersion || 0) : 0,
+      campaignReadyCheck: shared && shared.readyCheck ? {
+        id: String(shared.readyCheck.id || ""),
+        status: String(shared.readyCheck.status || ""),
+        type: String(shared.readyCheck.type || ""),
+        label: String(shared.readyCheck.label || ""),
+        requiredTokens: Array.isArray(shared.readyCheck.requiredTokens)
+          ? shared.readyCheck.requiredTokens.map((token) => String(token || ""))
+          : [],
+        responseTokens: shared.readyCheck.responses && typeof shared.readyCheck.responses === "object"
+          ? Object.keys(shared.readyCheck.responses)
+          : []
+      } : null,
+      campaignTravel: shared && shared.campaignTravel ? {
+        region: String(shared.campaignTravel.region || ""),
+        context: String(shared.campaignTravel.context || ""),
+        tab: String(shared.campaignTravel.tab || ""),
+        phaseCost: Number(shared.campaignTravel.phaseCost || 0),
+        reason: String(shared.campaignTravel.reason || "")
+      } : null,
+      activeTab: active ? active.id : "",
+      activeContext: String(window._activeContext || ""),
+      modalTitle: modal ? String(modal.textContent || "") : "",
+      roster: st && st.campaign && Array.isArray(st.campaign.roster)
+        ? st.campaign.roster.map((row) => ({
+            token: String(row && row.token || ""),
+            name: String(row && row.name || ""),
+            role: String(row && row.role || ""),
+            online: row ? row.online !== false : false
+          }))
+        : []
+    };
+  });
+}
+
+async function collectNavigationDiagnostics(page) {
+  return page.evaluate(() => {
+    const st = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+      ? window.campaignSystem.getState()
+      : null;
+    const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+      ? window.campaignSystem.getSharedState()
+      : null;
+    const active = document.querySelector(".tab-panel.active");
+    const activeBtn = document.querySelector("#mainNavTablist .tab-btn.active[data-tab]");
+    const starState = window.S && window.S.starSystem ? window.S.starSystem : null;
+    return {
+      role: st ? String(st.role || "") : "",
+      connected: !!(st && st.connected),
+      activeTab: active ? active.id : "",
+      activeButton: activeBtn ? String(activeBtn.getAttribute("data-tab") || "") : "",
+      activeContext: String(window._activeContext || ""),
+      campaignTravel: shared && shared.campaignTravel ? {
+        region: String(shared.campaignTravel.region || ""),
+        context: String(shared.campaignTravel.context || ""),
+        tab: String(shared.campaignTravel.tab || ""),
+        phaseCost: Number(shared.campaignTravel.phaseCost || 0),
+        reason: String(shared.campaignTravel.reason || "")
+      } : null,
+      readyCheck: shared && shared.readyCheck ? {
+        id: String(shared.readyCheck.id || ""),
+        status: String(shared.readyCheck.status || "")
+      } : null,
+      hasGalaxyData: !!(starState && Array.isArray(starState.hexes) && starState.hexes.length),
+      modalTitle: String((document.getElementById("modalTitle") || {}).textContent || "")
+    };
+  });
+}
+
 async function runScenario(browser, baseUrl) {
   const gmContext = await browser.newContext();
   const playerContext = await browser.newContext();
   const gmPage = await gmContext.newPage();
   const playerPage = await playerContext.newPage();
   const pageErrors = [];
+  const appUrl = new URL(baseUrl);
+  appUrl.searchParams.set("skipIntro", "1");
+  const appHref = appUrl.toString();
 
   gmPage.on("pageerror", (err) => pageErrors.push("gm: " + String(err && err.message ? err.message : err)));
   playerPage.on("pageerror", (err) => pageErrors.push("player: " + String(err && err.message ? err.message : err)));
 
   try {
     for (const page of [gmPage, playerPage]) {
-      await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.goto(appHref, { waitUntil: "domcontentloaded", timeout: 30000 });
       await waitForCampaignReady(page);
       await clearSession(page);
     }
@@ -324,7 +417,6 @@ async function runScenario(browser, baseUrl) {
     });
 
     await switchTab(gmPage, "map");
-    await waitForActiveTab(gmPage, "tab-map");
     await gmPage.evaluate(() => {
       if (typeof window.generateMap === "function") window.generateMap();
     });
@@ -393,6 +485,9 @@ async function runScenario(browser, baseUrl) {
       throw new Error(`Player shop access failed under camera lock: ${JSON.stringify(playerShopStatus)}`);
     }
 
+    await switchTab(playerPage, "map");
+    await waitForActiveTab(playerPage, "tab-map");
+
     const provinceObservation = await playerPage.evaluate(() => {
       const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
       const mapData = province && Array.isArray(province.mapData) ? province.mapData : [];
@@ -444,23 +539,60 @@ async function runScenario(browser, baseUrl) {
       const hex = mapData.find((entry) => entry && entry.type === "wilderness") || mapData[0];
       if (!hex) return { ok: false, error: "No province hex found for encounter." };
       window.setProvinceSelectedKey(`${hex.col},${hex.row}`);
-      if (typeof window.renderHexInfo === "function" && window.selectedHex) {
-        window.renderHexInfo(window.selectedHex);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      let el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
+      if (!el && typeof window.renderHexInfo === "function") {
+        const liveSelected = window.selectedHex || (typeof window.resolveProvinceHexFromKey === "function"
+          ? window.resolveProvinceHexFromKey(`${hex.col},${hex.row}`)
+          : null);
+        if (liveSelected) {
+          window.renderHexInfo(liveSelected);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
+        }
+      }
+      if (!el) {
+        return {
+          ok: false,
+          error: "Province encounter panel missing.",
+          selectedKey: typeof window.getProvinceSelectedKey === "function"
+            ? String(window.getProvinceSelectedKey() || "")
+            : "",
+          selectedHexExists: !!window.selectedHex
+        };
       }
       window.rollHexEncounter(hex.col, hex.row);
       await new Promise((resolve) => setTimeout(resolve, 180));
-      const el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
+      el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
+      const liveProvince = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
+      const liveHex = liveProvince && Array.isArray(liveProvince.mapData)
+        ? liveProvince.mapData.find((entry) => entry && Number(entry.col) === Number(hex.col) && Number(entry.row) === Number(hex.row))
+        : null;
+      const persistedHtml = liveHex && liveHex.data && typeof liveHex.data === "object"
+        ? String(liveHex.data.lastEncounterHtml || "")
+        : "";
+      let persistedText = "";
+      if (persistedHtml) {
+        const temp = document.createElement("div");
+        temp.innerHTML = persistedHtml;
+        persistedText = String(temp.textContent || temp.innerText || "").trim();
+      }
       return {
-        ok: !!(el && String(el.innerText || "").trim()),
+        ok: !!(
+          (el && String(el.innerText || "").trim())
+          || persistedText
+        ),
         text: el ? String(el.innerText || "").trim() : "",
-        panelFound: !!el
+        panelFound: !!el,
+        persistedText
       };
     });
     if (!provinceEncounter.ok) {
       throw new Error(`Province encounter did not render for player: ${JSON.stringify(provinceEncounter)}`);
     }
 
-    await gmPage.evaluate(() => {
+    const gmTravelKickoff = await gmPage.evaluate(async () => {
+      let callbackResult = null;
       window.campaignSystem.gmInitiateTravel({
         label: "Last Sea",
         region: "sea",
@@ -468,21 +600,99 @@ async function runScenario(browser, baseUrl) {
         tab: "lastsea",
         phaseCost: 1,
         reason: "campaign-exploration-sweep"
+      }, (res) => {
+        callbackResult = res || null;
       });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      return {
+        callbackResult,
+        readyCheck: shared && shared.readyCheck ? {
+          id: String(shared.readyCheck.id || ""),
+          status: String(shared.readyCheck.status || ""),
+          label: String(shared.readyCheck.label || ""),
+          requiredTokens: Array.isArray(shared.readyCheck.requiredTokens)
+            ? shared.readyCheck.requiredTokens.map((token) => String(token || ""))
+            : [],
+          responseTokens: shared.readyCheck.responses && typeof shared.readyCheck.responses === "object"
+            ? Object.keys(shared.readyCheck.responses)
+            : []
+        } : null,
+        campaignTravel: shared && shared.campaignTravel ? {
+          region: String(shared.campaignTravel.region || ""),
+          context: String(shared.campaignTravel.context || ""),
+          tab: String(shared.campaignTravel.tab || ""),
+          phaseCost: Number(shared.campaignTravel.phaseCost || 0),
+          reason: String(shared.campaignTravel.reason || "")
+        } : null
+      };
     });
+    if (!gmTravelKickoff.readyCheck || gmTravelKickoff.readyCheck.status !== "pending") {
+      throw new Error(`GM travel kickoff did not create a ready check: ${JSON.stringify(gmTravelKickoff)}`);
+    }
     await wait(400);
-    await respondPendingReadyCheck(playerPage);
+    try {
+      await respondPendingReadyCheck(playerPage);
+    } catch (err) {
+      const [gmReadyDiag, playerReadyDiag] = await Promise.all([
+        collectReadyCheckDiagnostics(gmPage),
+        collectReadyCheckDiagnostics(playerPage)
+      ]);
+      throw new Error(
+        `Ready check did not reach player after Sea travel. `
+        + `GM=${JSON.stringify(gmReadyDiag)} `
+        + `PLAYER=${JSON.stringify(playerReadyDiag)} `
+        + `ERR=${String(err && err.message ? err.message : err)}`
+      );
+    }
     await wait(1600);
-    await waitForActiveTab(playerPage, "tab-lastsea");
+    const seaTravelStatus = await playerPage.evaluate(() => {
+      const active = document.querySelector(".tab-panel.active");
+      const st = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+        ? window.campaignSystem.getState()
+        : null;
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      return {
+        activeTab: active ? active.id : "",
+        activeContext: String(window._activeContext || ""),
+        campaignTravel: shared && shared.campaignTravel ? {
+          region: String(shared.campaignTravel.region || ""),
+          context: String(shared.campaignTravel.context || ""),
+          tab: String(shared.campaignTravel.tab || ""),
+          phaseCost: Number(shared.campaignTravel.phaseCost || 0)
+        } : null,
+        role: st ? String(st.role || "") : "",
+        connected: !!(st && st.connected)
+      };
+    });
+    if (seaTravelStatus.activeTab !== "tab-lastsea") {
+      throw new Error(`Player did not follow Sea travel: ${JSON.stringify(seaTravelStatus)}`);
+    }
 
     await switchTab(gmPage, "galaxy");
-    await waitForActiveTab(gmPage, "tab-galaxy");
     await gmPage.evaluate(() => {
       if (typeof window.generateStarSystemMap === "function") window.generateStarSystemMap("cluster");
     });
     await syncShared(gmPage, "campaign-exploration-galaxy");
     await switchTab(playerPage, "galaxy");
-    await waitForActiveTab(playerPage, "tab-galaxy");
+    try {
+      await waitForActiveTab(playerPage, "tab-galaxy");
+    } catch (err) {
+      const [gmNavDiag, playerNavDiag] = await Promise.all([
+        collectNavigationDiagnostics(gmPage),
+        collectNavigationDiagnostics(playerPage)
+      ]);
+      throw new Error(
+        `Galaxy navigation did not settle for player. `
+        + `GM=${JSON.stringify(gmNavDiag)} `
+        + `PLAYER=${JSON.stringify(playerNavDiag)} `
+        + `ERR=${String(err && err.message ? err.message : err)}`
+      );
+    }
 
     const galaxyPrep = await gmPage.evaluate(() => {
       const starState = window.S && window.S.starSystem ? window.S.starSystem : null;

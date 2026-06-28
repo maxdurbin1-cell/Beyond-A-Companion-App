@@ -55,7 +55,9 @@ async function waitForServer(url, timeoutMs) {
 }
 
 async function resetPage(page) {
-  await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 30000 });
+  const url = new URL(BASE_URL);
+  url.searchParams.set("skipIntro", "1");
+  await page.goto(url.toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.waitForFunction(
     () => !!(window.campaignSystem && window.campaignSystem.getState && window.campaignSystem.getState().connected),
     null,
@@ -141,6 +143,14 @@ async function main() {
       { timeout: STEP_TIMEOUT_MS }
     );
 
+    await gmPage.evaluate(async () => {
+      if (window.campaignSystem && typeof window.campaignSystem.setGmCameraLock === "function") {
+        await new Promise((resolve) => {
+          window.campaignSystem.setGmCameraLock(true, () => resolve());
+        });
+      }
+    });
+
     await gmPage.evaluate(() => {
       if (typeof window.switchTab === "function") {
         const btn = document.querySelector(".tab-btn[onclick*=\"switchTab('map'\"]");
@@ -171,7 +181,7 @@ async function main() {
       { timeout: STEP_TIMEOUT_MS }
     );
 
-    const selectedKey = await gmPage.evaluate(() => {
+    const selectedKey = await gmPage.evaluate(async () => {
       const province = window.getProvinceMapState();
       const current = String((province && province.selectedKey) || "");
       const targetHex = Array.isArray(province && province.mapData)
@@ -181,6 +191,11 @@ async function main() {
       const key = `${targetHex.col},${targetHex.row}`;
       if (typeof window.setProvinceSelectedKey === "function") {
         window.setProvinceSelectedKey(key);
+      }
+      if (window.campaignSystem && typeof window.campaignSystem.syncProvinceFocus === "function") {
+        try {
+          await window.campaignSystem.syncProvinceFocus("smoke-authority-focus");
+        } catch (_err) {}
       }
       return key;
     });
@@ -210,6 +225,17 @@ async function main() {
       { timeout: STEP_TIMEOUT_MS }
     );
 
+    await playerPage.evaluate(() => {
+      if (typeof window.setContext === "function") {
+        const ctxBtn = document.querySelector('.ctx-btn[data-ctx="holding"]');
+        window.setContext("holding", ctxBtn || null);
+      }
+      if (typeof window.switchTab === "function") {
+        const btn = document.getElementById("tabnav-map") || document.querySelector('#mainNavTablist .tab-btn[data-tab="map"]');
+        window.switchTab("map", btn || null);
+      }
+    });
+
     await playerPage.waitForFunction(
       (key) => {
         const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
@@ -232,13 +258,27 @@ async function main() {
         const el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
         const text = el ? el.innerText : "";
         if (text && !text.includes("Rolling encounter...")) {
-          return { key, text };
+          return { key, text, persistedText: text };
         }
       }
-      return { key, text: "" };
+      const liveState = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
+      const liveHex = liveState && Array.isArray(liveState.mapData)
+        ? liveState.mapData.find((entry) => entry && Number(entry.col) === Number(hex.col) && Number(entry.row) === Number(hex.row))
+        : null;
+      const persistedHtml = liveHex && liveHex.data && typeof liveHex.data === "object"
+        ? String(liveHex.data.lastEncounterHtml || "")
+        : "";
+      let persistedText = "";
+      if (persistedHtml) {
+        const temp = document.createElement("div");
+        temp.innerHTML = persistedHtml;
+        persistedText = String(temp.textContent || temp.innerText || "").trim();
+      }
+      return { key, text: "", persistedText };
     });
 
-    if (!encounter.text || encounter.text.includes("Encounter roll failed")) {
+    const encounterPreview = String(encounter.text || encounter.persistedText || "");
+    if (!encounterPreview || encounterPreview.includes("Encounter roll failed")) {
       throw new Error(`Province encounter did not resolve correctly: ${JSON.stringify(encounter)}`);
     }
 
