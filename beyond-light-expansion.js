@@ -2189,22 +2189,27 @@
 
   function buildSeaTravelSceneCombatSeed(hex) {
     if (!hex) return null;
-    var portrait = (S && S.identityForge && S.identityForge.media && S.identityForge.media.portrait) ? String(S.identityForge.media.portrait) : '';
-    var wayfarerName = String((S && S.name) || 'Wayfarer');
     var title = String(hex.title || hex.islandName || hex.seaLabel || ('Sea Hex ' + String(hex.key || '?')));
-    var tokens = [{
-      id: 'sea-wayfarer-' + Date.now().toString(36),
-      name: wayfarerName,
-      faction: 'player',
-      hp: 12,
-      maxHp: 12,
-      status: [],
-      q: 0,
-      r: 0,
-      image: portrait,
-      size: 1,
-      isPlayer: true
-    }];
+    var tokens = (typeof window.buildCampaignTravelCombatWayfarerTokens === 'function')
+      ? window.buildCampaignTravelCombatWayfarerTokens('sea')
+      : [];
+    if (!Array.isArray(tokens) || !tokens.length) {
+      var portrait = (S && S.identityForge && S.identityForge.media && S.identityForge.media.portrait) ? String(S.identityForge.media.portrait) : '';
+      var wayfarerName = String((S && S.name) || 'Wayfarer');
+      tokens = [{
+        id: 'sea-wayfarer-' + Date.now().toString(36),
+        name: wayfarerName,
+        faction: 'player',
+        hp: 12,
+        maxHp: 12,
+        status: [],
+        q: 0,
+        r: 0,
+        image: portrait,
+        size: 1,
+        isPlayer: true
+      }];
+    }
 
     var count = 0;
     var dread = 6;
@@ -2234,7 +2239,7 @@
       id: 'sea-scene-' + String(hex.key || Date.now()),
       name: 'Sea Scene · ' + title,
       tokens: tokens,
-      history: ['Sea scene loaded: ' + title + '.', 'Hostiles seeded: ' + String(count) + '.']
+      history: ['Sea scene loaded: ' + title + '.', 'Wayfarers seeded: ' + String(tokens.filter(function (token) { return token && String(token.faction || '') === 'player'; }).length) + '.', 'Hostiles seeded: ' + String(count) + '.']
     };
   }
 
@@ -4547,6 +4552,27 @@
     });
   }
   window.requestJoinSeaArea = requestJoinSeaArea;
+
+  function openSeaAreaFromSharedSession(areaType, col, row) {
+    var area = String(areaType || '').toLowerCase();
+    var hex = (typeof getSeaCell === 'function') ? getSeaCell(col, row) : null;
+    if (!hex) {
+      if (typeof showNotif === 'function') showNotif('Sea area is no longer available.', 'warn');
+      return false;
+    }
+    if (area === 'dungeon') {
+      openSeaDungeon(col, row);
+      return true;
+    }
+    if (area === 'derelict') {
+      S.lastSea = S.lastSea || {};
+      S.lastSea.activeEncounterKey = String(hex.key || '');
+      openSeaDerelictHexcrawl();
+      return true;
+    }
+    return false;
+  }
+  window.openSeaAreaFromSharedSession = openSeaAreaFromSharedSession;
 
   function openSeaDungeon(col, row) {
     const hex = getSeaCell(col, row);

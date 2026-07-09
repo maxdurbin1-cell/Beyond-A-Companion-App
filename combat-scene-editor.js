@@ -232,6 +232,7 @@
       store.setState(function (state) {
         var next = Object.assign({}, state);
         next.board = Object.assign({}, state.board || {}, { background: String(reader.result || '') });
+        next = withActiveSceneSnapshot(next);
         persist(next);
         return next;
       });
@@ -2057,7 +2058,7 @@
     var sceneEditorState = null;
     if (store && typeof store.getState === 'function') {
       try {
-        var storeState = store.getState();
+        var storeState = withActiveSceneSnapshot(store.getState());
         if (storeState && typeof storeState === 'object' && Array.isArray(storeState.tokens)) {
           sceneEditorState = deepCloneJson(normalizeCampaignCombatSceneState(storeState)) || null;
         }
@@ -2066,7 +2067,7 @@
       }
     }
     if (!sceneEditorState && window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object') {
-      sceneEditorState = deepCloneJson(normalizeCampaignCombatSceneState(window.S.combat.sceneEditor)) || null;
+      sceneEditorState = deepCloneJson(withActiveSceneSnapshot(normalizeCampaignCombatSceneState(window.S.combat.sceneEditor))) || null;
     }
     if (sceneEditorState && window.S && window.S.combat && (!window.S.combat.sceneEditor || typeof window.S.combat.sceneEditor !== 'object')) {
       window.S.combat.sceneEditor = deepCloneJson(sceneEditorState) || sceneEditorState;
@@ -2173,11 +2174,24 @@
         : null;
       var currentSessionAt = Number(currentSession && currentSession.enteredAt || 0);
       if (currentSessionAt > sessionAt) return;
+      var scene = buildCampaignCombatSceneSyncPayload();
+      var sceneEditor = scene && scene.sceneEditor && typeof scene.sceneEditor === 'object' ? scene.sceneEditor : null;
+      var activeSceneId = String(sceneEditor && sceneEditor.activeSceneId || nextSession.activeSceneId || 'campaign-shared-scene');
+      var scenes = sceneEditor && Array.isArray(sceneEditor.scenes) ? sceneEditor.scenes : [];
+      var activeScene = activeSceneId
+        ? (scenes.find(function (entry) { return entry && String(entry.id || '') === activeSceneId; }) || null)
+        : null;
+      var reassertCombat = deepCloneJson(nextCombat) || nextCombat;
+      reassertCombat.vttSession = Object.assign({}, nextSession, {
+        sceneName: String(activeScene && activeScene.name || nextSession.sceneName || 'Campaign Shared Scene'),
+        activeSceneId: activeSceneId
+      });
       if (shared && typeof shared === 'object') {
-        shared.campaignCombat = deepCloneJson(nextCombat) || nextCombat;
+        shared.campaignCombat = deepCloneJson(reassertCombat) || reassertCombat;
       }
       var retryOut = window.campaignSystem.syncSharedPatch({
-        campaignCombat: deepCloneJson(nextCombat) || nextCombat
+        campaignCombat: deepCloneJson(reassertCombat) || reassertCombat,
+        combatScene: scene
       }, String(reason || 'campaign-combat-vtt-reassert') + '-reassert');
       if (retryOut && typeof retryOut.catch === 'function') retryOut.catch(function () {});
     }, 320);
@@ -14970,6 +14984,7 @@
           var sharedSnapshot = hydrateActiveSceneState(
             normalizeCampaignCombatSceneState(normalizeCombatSceneState(Object.assign({}, state || {}, clone(seed.sceneEditorState) || {})))
           );
+          sharedSnapshot = withActiveSceneSnapshot(sharedSnapshot);
           persist(sharedSnapshot);
           return sharedSnapshot;
         }
@@ -15052,6 +15067,7 @@
         if (seed.board && typeof seed.board === 'object') {
           next.board = normalizeBoard(Object.assign({}, next.board, seed.board));
         }
+        next = withActiveSceneSnapshot(next);
         persist(next);
         return next;
       });
@@ -15090,6 +15106,7 @@
         next.sceneRules = Object.assign({ rollMode: 'auto', defaultActionType: 'ranged', targetCoverOverrides: {}, lootDrops: {} }, clone(state.sceneRules || {}));
         next.selectedTokenId = '';
         if (!next.activeSceneId && Array.isArray(next.scenes) && next.scenes.length) next.activeSceneId = String(next.scenes[0].id || '');
+        next = withActiveSceneSnapshot(next);
         persist(next);
         return next;
       });
@@ -15137,9 +15154,21 @@
   }
 
   function buildSharedCampaignCombatSceneSeed() {
-    var sharedState = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object'
-      ? (clone(window.S.combat.sceneEditor) || null)
+    var sharedSource = null;
+    if (window.campaignSystem && typeof window.campaignSystem.getSharedState === 'function') {
+      try {
+        var shared = window.campaignSystem.getSharedState() || null;
+        sharedSource = shared && shared.combatScene && shared.combatScene.sceneEditor && typeof shared.combatScene.sceneEditor === 'object'
+          ? hydrateActiveSceneState(withActiveSceneSnapshot(clone(shared.combatScene.sceneEditor) || {}), { force: true })
+          : null;
+      } catch (_sharedSeedErr) {
+        sharedSource = null;
+      }
+    }
+    var localSource = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object'
+      ? hydrateActiveSceneState(withActiveSceneSnapshot(clone(window.S.combat.sceneEditor) || {}), { force: true })
       : null;
+    var sharedState = sharedSource || localSource;
     if (!sharedState) return null;
     var activeSceneId = String(sharedState.activeSceneId || '');
     var scenes = Array.isArray(sharedState.scenes) ? sharedState.scenes : [];
@@ -15223,7 +15252,7 @@
       if (combat && combat.active) {
         var hasOpenSharedVtt = !!(combat.vttSession && typeof combat.vttSession === 'object' && Number(combat.vttSession.enteredAt || 0));
         if (hasOpenSharedVtt) {
-          var fallbackSeed = buildLiveCombatSeed() || buildSeedFromSharedCombatScene() || expeditionSeed() || buildSharedCampaignCombatSceneSeed();
+          var fallbackSeed = buildSeedFromSharedCombatScene() || buildSharedCampaignCombatSceneSeed() || buildLiveCombatSeed() || expeditionSeed();
           if (fallbackSeed) return fallbackSeed;
         }
         safeNotif('The GM has not opened the shared VTT yet. Stay on the Combat Tab or wait for the join prompt.', 'info');
@@ -15251,6 +15280,7 @@
     var opts = options && typeof options === 'object' ? options : {};
     var cloned = clone(prepareCampaignCombatSeed(snapshot));
     if (!cloned) return false;
+    var incomingActiveSceneId = String(cloned.activeSceneId || '');
     var overlay = document.getElementById('combatModeOverlay');
     var overlayOpen = !!(overlay && overlay.classList.contains('open'));
     var preservedCombatMap = opts.preserveCombatMap && window.S && window.S.combatMap && typeof window.S.combatMap === 'object'
@@ -15268,7 +15298,13 @@
     applyingSharedCombatSceneEditorState = true;
     try {
       store.setState(function (state) {
-        var merged = hydrateActiveSceneState(normalizeCombatSceneState(Object.assign({}, state || {}, cloned)));
+        var currentActiveSceneId = String(state && state.activeSceneId || '');
+        var shouldForceHydrate = !!opts.forceHydrate || (!!incomingActiveSceneId && incomingActiveSceneId !== currentActiveSceneId);
+        var merged = hydrateActiveSceneState(
+          normalizeCombatSceneState(Object.assign({}, state || {}, cloned)),
+          { force: shouldForceHydrate }
+        );
+        merged = withActiveSceneSnapshot(merged);
         merged.open = !!(state && state.open);
         merged.entering = false;
         persist(merged);
@@ -15568,7 +15604,10 @@
       : null;
     if (!sharedScene) return null;
     if (sharedScene.sceneEditor && typeof sharedScene.sceneEditor === 'object') {
-      var sceneEditorState = clone(sharedScene.sceneEditor) || sharedScene.sceneEditor;
+      var sceneEditorState = hydrateActiveSceneState(
+        withActiveSceneSnapshot(clone(sharedScene.sceneEditor) || sharedScene.sceneEditor),
+        { force: true }
+      );
       var activeSceneId = String(sceneEditorState.activeSceneId || 'campaign-shared-scene');
       var scenes = Array.isArray(sceneEditorState.scenes) ? sceneEditorState.scenes : [];
       var activeScene = activeSceneId

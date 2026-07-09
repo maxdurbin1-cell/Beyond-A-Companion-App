@@ -102,6 +102,9 @@
     lastCampaignEnemyPromptKey: "",
     lastCampaignVttPromptAt: 0,
     lastCampaignScenePromptKey: "",
+    lastCampaignAreaPromptKey: "",
+    activeCampaignAreaSessionId: "",
+    activeCampaignAreaRenderHash: "",
     lastAppliedCampaignSoundtrackHash: "",
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
@@ -870,6 +873,17 @@
     return String(activeScene && activeScene.name || "Campaign Shared Scene");
   }
 
+  function getActiveSharedCombatVttSession(sharedState) {
+    var shared = sharedState && typeof sharedState === "object" ? sharedState : null;
+    var combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? shared.campaignCombat
+      : null;
+    var session = combat && combat.vttSession && typeof combat.vttSession === "object"
+      ? combat.vttSession
+      : null;
+    return session && Number(session.enteredAt || 0) > 0 ? session : null;
+  }
+
   function hasRenderableCombatSceneEditorSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return false;
     if (Array.isArray(snapshot.tokens) && snapshot.tokens.length) return true;
@@ -879,11 +893,18 @@
     });
   }
 
+  function getCombatSceneEditorSnapshotActiveSceneId(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return "";
+    var activeSceneId = String(snapshot.activeSceneId || "");
+    if (activeSceneId) return activeSceneId;
+    var scenes = Array.isArray(snapshot.scenes) ? snapshot.scenes : [];
+    var fallbackScene = scenes.find(function (scene) {
+      return !!(scene && Array.isArray(scene.tokens) && scene.tokens.length);
+    }) || null;
+    return String(fallbackScene && fallbackScene.id || "");
+  }
+
   function getSharedCombatSceneEditorSnapshot() {
-    var localScene = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
-      ? window.S.combat.sceneEditor
-      : null;
-    if (hasRenderableCombatSceneEditorSnapshot(localScene)) return localScene;
     var sharedState = null;
     try {
       sharedState = typeof getCampaignSharedState === "function"
@@ -897,10 +918,23 @@
     var sharedScene = sharedState && sharedState.combatScene && typeof sharedState.combatScene === "object"
       ? sharedState.combatScene
       : null;
+    var expectedSession = getActiveSharedCombatVttSession(sharedState);
+    var expectedSceneId = String(expectedSession && expectedSession.activeSceneId || "");
+    var localScene = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
+      ? window.S.combat.sceneEditor
+      : null;
+    var localSceneId = getCombatSceneEditorSnapshotActiveSceneId(localScene);
+    if (hasRenderableCombatSceneEditorSnapshot(localScene) && (!expectedSceneId || localSceneId === expectedSceneId)) {
+      return localScene;
+    }
     var snapshot = sharedScene && sharedScene.sceneEditor && typeof sharedScene.sceneEditor === "object"
       ? (deepCloneJson(sharedScene.sceneEditor) || sharedScene.sceneEditor)
       : null;
-    if (!hasRenderableCombatSceneEditorSnapshot(snapshot)) return null;
+    var snapshotSceneId = getCombatSceneEditorSnapshotActiveSceneId(snapshot);
+    if (!hasRenderableCombatSceneEditorSnapshot(snapshot)) {
+      return expectedSceneId ? null : (hasRenderableCombatSceneEditorSnapshot(localScene) ? localScene : null);
+    }
+    if (expectedSceneId && snapshotSceneId && snapshotSceneId !== expectedSceneId) return null;
     if (window.S && typeof window.S === "object") {
       if (!window.S.combat || typeof window.S.combat !== "object") {
         window.S.combat = {};
@@ -1011,6 +1045,310 @@
     }
     promptCampaignCombatModeInvite(vttSession);
     return true;
+  }
+
+  function normalizeCampaignAreaSession(sessionLike) {
+    var session = sessionLike && typeof sessionLike === "object" ? sessionLike : {};
+    var payload = session.payload && typeof session.payload === "object"
+      ? (deepCloneJson(session.payload) || session.payload)
+      : {};
+    return {
+      id: String(session.id || ""),
+      status: String(session.status || "closed"),
+      kind: String(session.kind || ""),
+      label: String(session.label || session.title || "Shared Area"),
+      title: String(session.title || session.label || "Shared Area"),
+      by: String(session.by || ""),
+      openedAt: Math.max(0, Number(session.openedAt || 0)),
+      updatedAt: Math.max(0, Number(session.updatedAt || 0)),
+      payload: payload
+    };
+  }
+
+  function resolveCampaignAreaModalTitle(session) {
+    var normalized = normalizeCampaignAreaSession(session);
+    return String(normalized.title || normalized.label || "Shared Area");
+  }
+
+  function isCampaignAreaSessionCurrent(session, sharedState) {
+    var normalized = normalizeCampaignAreaSession(session);
+    if (!normalized.id || normalized.status !== "open") return false;
+    var shared = sharedState && typeof sharedState === "object" ? sharedState : getCampaignSharedState();
+    var travel = shared && shared.campaignTravel && typeof shared.campaignTravel === "object"
+      ? shared.campaignTravel
+      : null;
+    var travelAt = Math.max(0, Number(travel && travel.updatedAt || 0));
+    if (!travelAt) return true;
+    if (normalized.updatedAt >= travelAt) return true;
+    return String(state.activeCampaignAreaSessionId || "") === normalized.id;
+  }
+
+  function computeCampaignAreaRenderHash(session, sharedState) {
+    var normalized = normalizeCampaignAreaSession(session);
+    if (!normalized.id || normalized.status !== "open") return "";
+    var shared = sharedState && typeof sharedState === "object" ? sharedState : getCampaignSharedState();
+    if (normalized.kind === "settlement-area") {
+      return safeJsonHash({
+        id: normalized.id,
+        title: normalized.title,
+        holding: shared && shared.holding && typeof shared.holding === "object" ? shared.holding : null
+      });
+    }
+    if (normalized.kind === "province-area") {
+      var payload = normalized.payload && typeof normalized.payload === "object" ? normalized.payload : {};
+      var provinceMap = shared && shared.provinceMap && typeof shared.provinceMap === "object"
+        ? shared.provinceMap
+        : null;
+      var mapData = provinceMap && Array.isArray(provinceMap.mapData) ? provinceMap.mapData : [];
+      var hex = mapData.find(function (entry) {
+        return !!(
+          entry
+          && Number(entry.col) === Number(payload.col)
+          && Number(entry.row) === Number(payload.row)
+        );
+      }) || null;
+      return safeJsonHash({
+        id: normalized.id,
+        title: normalized.title,
+        areaType: String(payload.areaType || ""),
+        hex: hex
+      });
+    }
+    if (normalized.kind === "sea-area") {
+      var seaPayload = normalized.payload && typeof normalized.payload === "object" ? normalized.payload : {};
+      var seaState = shared && shared.lastSea && typeof shared.lastSea === "object" ? shared.lastSea : null;
+      var seaMap = seaState && Array.isArray(seaState.map) ? seaState.map : [];
+      var seaHex = seaMap.find(function (entry) {
+        return !!(
+          entry
+          && Number(entry.col) === Number(seaPayload.col)
+          && Number(entry.row) === Number(seaPayload.row)
+        );
+      }) || null;
+      return safeJsonHash({
+        id: normalized.id,
+        title: normalized.title,
+        areaType: String(seaPayload.areaType || ""),
+        hex: seaHex
+      });
+    }
+    if (normalized.kind === "planet-area") {
+      var planetPayload = normalized.payload && typeof normalized.payload === "object" ? normalized.payload : {};
+      var starState = shared && shared.starSystem && typeof shared.starSystem === "object" ? shared.starSystem : null;
+      var hexes = starState && Array.isArray(starState.hexes) ? starState.hexes : [];
+      var activePlanetHex = hexes.find(function (entry) {
+        return !!(entry && Number(entry.id) === Number(planetPayload.planetHexId));
+      }) || null;
+      var surface = activePlanetHex && activePlanetHex.surface && typeof activePlanetHex.surface === "object"
+        ? activePlanetHex.surface
+        : null;
+      var cells = surface && Array.isArray(surface.cells) ? surface.cells : [];
+      var planetCell = cells.find(function (entry) {
+        return !!(entry && Number(entry.id) === Number(planetPayload.cellId));
+      }) || null;
+      return safeJsonHash({
+        id: normalized.id,
+        title: normalized.title,
+        areaType: String(planetPayload.areaType || ""),
+        planetHexId: Number(planetPayload.planetHexId || 0),
+        cell: planetCell
+      });
+    }
+    if (normalized.kind === "galaxy-area") {
+      var galaxyPayload = normalized.payload && typeof normalized.payload === "object" ? normalized.payload : {};
+      var galaxyState = shared && shared.starSystem && typeof shared.starSystem === "object" ? shared.starSystem : null;
+      var galaxyAreaType = String(galaxyPayload.areaType || "");
+      var galaxyView = null;
+      if (galaxyAreaType === "facility") {
+        galaxyView = galaxyState && galaxyState.activeFacility ? galaxyState.activeFacility : null;
+      } else if (galaxyAreaType === "deadmoon") {
+        galaxyView = {
+          activeDeadMoon: galaxyState && galaxyState.activeDeadMoon ? galaxyState.activeDeadMoon : null,
+          activeDeadMoonMap: galaxyState && galaxyState.activeDeadMoonMap ? galaxyState.activeDeadMoonMap : null
+        };
+      } else if (galaxyAreaType === "derelict") {
+        galaxyView = galaxyState && galaxyState.activeDerelict ? galaxyState.activeDerelict : null;
+      }
+      return safeJsonHash({
+        id: normalized.id,
+        title: normalized.title,
+        areaType: galaxyAreaType,
+        hexId: Number(galaxyPayload.hexId || 0),
+        view: galaxyView
+      });
+    }
+    if (normalized.kind === "yessod-area") {
+      var yessodPayload = normalized.payload && typeof normalized.payload === "object" ? normalized.payload : {};
+      var sharedStar = shared && shared.starSystem && typeof shared.starSystem === "object" ? shared.starSystem : null;
+      var yessodState = sharedStar && sharedStar.yessod && typeof sharedStar.yessod === "object"
+        ? sharedStar.yessod
+        : null;
+      var yessodCells = yessodState && Array.isArray(yessodState.cells) ? yessodState.cells : [];
+      var yessodCell = yessodCells.find(function (entry) {
+        return !!(entry && Number(entry.id) === Number(yessodPayload.cellId || yessodState && yessodState.selectedCellId || 0));
+      }) || null;
+      return safeJsonHash({
+        id: normalized.id,
+        title: normalized.title,
+        areaType: String(yessodPayload.areaType || "map"),
+        currentStrata: Number(yessodState && yessodState.currentStrata || 1),
+        currentWeather: yessodState && yessodState.currentWeather ? yessodState.currentWeather : null,
+        selectedCellId: Number(yessodPayload.cellId || yessodState && yessodState.selectedCellId || 0),
+        cell: yessodCell,
+        lastEncounter: String(yessodState && yessodState.lastEncounter || "")
+      });
+    }
+    return safeJsonHash(normalized);
+  }
+
+  function isCampaignAreaModalShowing(session) {
+    var overlay = document.getElementById("rollModal");
+    if (!overlay || !overlay.classList.contains("open")) return false;
+    var titleEl = document.getElementById("modalTitle");
+    var currentTitle = String(titleEl && titleEl.textContent || "");
+    return currentTitle === resolveCampaignAreaModalTitle(session);
+  }
+
+  function openSharedCampaignAreaSession(session, opts) {
+    var normalized = normalizeCampaignAreaSession(session);
+    if (!normalized.id || normalized.status !== "open") return false;
+    var options = opts && typeof opts === "object" ? opts : {};
+    var payload = normalized.payload && typeof normalized.payload === "object" ? normalized.payload : {};
+    var opened = false;
+    try {
+      if (normalized.kind === "settlement-area") {
+        if (typeof window.openHoldingSettlementHexcrawlFromSharedState === "function") {
+          window.openHoldingSettlementHexcrawlFromSharedState();
+          opened = true;
+        }
+      } else if (normalized.kind === "province-area") {
+        if (typeof window.openProvinceAreaFromSharedSession === "function") {
+          opened = window.openProvinceAreaFromSharedSession(
+            String(payload.areaType || ""),
+            Number(payload.col || 0),
+            Number(payload.row || 0)
+          ) !== false;
+        }
+      } else if (normalized.kind === "sea-area") {
+        if (typeof window.openSeaAreaFromSharedSession === "function") {
+          opened = window.openSeaAreaFromSharedSession(
+            String(payload.areaType || ""),
+            Number(payload.col || 0),
+            Number(payload.row || 0)
+          ) !== false;
+        }
+      } else if (normalized.kind === "planet-area") {
+        if (typeof window.openPlanetAreaFromSharedSession === "function") {
+          opened = window.openPlanetAreaFromSharedSession(
+            String(payload.areaType || ""),
+            Number(payload.planetHexId || 0),
+            Number(payload.cellId || 0)
+          ) !== false;
+        }
+      } else if (normalized.kind === "galaxy-area") {
+        if (typeof window.openGalaxyAreaFromSharedSession === "function") {
+          opened = window.openGalaxyAreaFromSharedSession(
+            String(payload.areaType || ""),
+            Number(payload.hexId || 0)
+          ) !== false;
+        }
+      } else if (normalized.kind === "yessod-area") {
+        if (typeof window.openYessodAreaFromSharedSession === "function") {
+          opened = window.openYessodAreaFromSharedSession(
+            String(payload.areaType || "map"),
+            Number(payload.cellId || 0)
+          ) !== false;
+        }
+      }
+    } catch (_err) {
+      opened = false;
+    }
+    if (!opened) return false;
+    state.activeCampaignAreaSessionId = normalized.id;
+    state.activeCampaignAreaRenderHash = computeCampaignAreaRenderHash(normalized, getCampaignSharedState());
+    if (!options.quiet) {
+      safeNotif("Joined shared area: " + resolveCampaignAreaModalTitle(normalized) + ".", "good");
+    }
+    return true;
+  }
+
+  function joinSharedCampaignAreaSessionFromPrompt() {
+    var shared = getCampaignSharedState();
+    var session = shared && shared.areaSession && typeof shared.areaSession === "object"
+      ? shared.areaSession
+      : null;
+    if (!session || String(session.status || "") !== "open") {
+      safeNotif("The shared area is no longer active.", "warn");
+      return false;
+    }
+    return openSharedCampaignAreaSession(session, { quiet: false });
+  }
+
+  function promptCampaignAreaSessionInvite(session) {
+    var normalized = normalizeCampaignAreaSession(session);
+    if (!normalized.id || normalized.status !== "open") return false;
+    var areaTitle = resolveCampaignAreaModalTitle(normalized);
+    window.joinSharedCampaignAreaSessionFromPrompt = joinSharedCampaignAreaSessionFromPrompt;
+    if (typeof window.openCampaignAreaJoinPrompt === "function") {
+      window.openCampaignAreaJoinPrompt(areaTitle, function () {
+        return joinSharedCampaignAreaSessionFromPrompt();
+      });
+      return true;
+    }
+    if (typeof window.openModal !== "function") {
+      safeNotif((normalized.by || "GM") + " opened " + areaTitle + ". Join the shared area to keep pace.", "info");
+      return false;
+    }
+    var html = ''
+      + '<div style="font-size:.84rem;color:var(--text2);line-height:1.6;">'
+      + '<div style="margin-bottom:.45rem;"><strong>' + escapeHtml(String(normalized.by || "GM")) + '</strong> opened a shared area:</div>'
+      + '<div style="margin-bottom:.55rem;color:var(--teal);font-weight:700;">' + escapeHtml(areaTitle) + '</div>'
+      + '<div style="margin-bottom:.65rem;color:var(--muted2);">Join now to see the same shared exploration space the GM is using.</div>'
+      + '<div style="display:flex;justify-content:flex-end;gap:.4rem;">'
+      + '<button class="btn btn-sm" onclick="window.closeModal&&window.closeModal()">Stay Here</button>'
+      + '<button class="btn btn-sm btn-teal" onclick="window.closeModal&&window.closeModal();window.joinSharedCampaignAreaSessionFromPrompt&&window.joinSharedCampaignAreaSessionFromPrompt()">Join Area</button>'
+      + '</div>'
+      + '</div>';
+    window.openModal("Join Shared Area", html, null, { preventScroll: true, focusTrap: true });
+    return true;
+  }
+
+  function maybeHandleSharedAreaSession(areaSession, sharedState) {
+    var session = normalizeCampaignAreaSession(areaSession);
+    if (!session.id || session.status !== "open") {
+      if (String(state.activeCampaignAreaSessionId || "") === String(session.id || "")) {
+        state.activeCampaignAreaSessionId = "";
+        state.activeCampaignAreaRenderHash = "";
+        if (state.role === "player" && isCampaignAreaModalShowing(session) && typeof window.closeModal === "function") {
+          try { window.closeModal(); } catch (_err) {}
+        }
+      }
+      return false;
+    }
+    if (!isCampaignAreaSessionCurrent(session, sharedState)) {
+      if (String(state.activeCampaignAreaSessionId || "") === String(session.id || "")) {
+        state.activeCampaignAreaSessionId = "";
+        state.activeCampaignAreaRenderHash = "";
+        if (state.role === "player" && isCampaignAreaModalShowing(session) && typeof window.closeModal === "function") {
+          try { window.closeModal(); } catch (_err2) {}
+        }
+      }
+      return false;
+    }
+
+    if (state.role === "player" && String(state.activeCampaignAreaSessionId || "") === session.id) {
+      var supportsPassiveRefresh = session.kind === "galaxy-area" || session.kind === "yessod-area";
+      if (!supportsPassiveRefresh && !isCampaignAreaModalShowing(session)) return false;
+      var nextRenderHash = computeCampaignAreaRenderHash(session, sharedState);
+      if (!nextRenderHash || nextRenderHash === String(state.activeCampaignAreaRenderHash || "")) return false;
+      return openSharedCampaignAreaSession(session, { quiet: true });
+    }
+
+    if (state.role !== "player") return false;
+    var promptKey = [String(session.id || ""), String(Math.max(0, Number(session.openedAt || 0)))].join("|");
+    if (!promptKey || promptKey === state.lastCampaignAreaPromptKey) return false;
+    state.lastCampaignAreaPromptKey = promptKey;
+    return promptCampaignAreaSessionInvite(session);
   }
 
   function cloneClientLocalSeaState() {
@@ -1226,7 +1564,7 @@
         if (window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object") {
           window.applySharedCombatSceneEditorState(window.S.combat.sceneEditor, {
             autoOpen: true,
-            sceneName: "Campaign Shared Scene"
+            sceneName: resolveSharedCombatSceneName()
           });
         }
       } catch (_err) {}
@@ -1747,6 +2085,24 @@
     return sharedState.sessionTimeline;
   }
 
+  function ensureAreaSessionState(sharedState) {
+    if (!sharedState) sharedState = getMutableCampaignSharedState();
+    if (!sharedState.areaSession || typeof sharedState.areaSession !== "object") {
+      sharedState.areaSession = {
+        id: "",
+        status: "closed",
+        kind: "",
+        label: "",
+        title: "",
+        by: "",
+        openedAt: 0,
+        updatedAt: 0,
+        payload: null
+      };
+    }
+    return sharedState.areaSession;
+  }
+
   function ensureReadyCheckState(sharedState) {
     if (!sharedState) sharedState = getMutableCampaignSharedState();
     if (!sharedState.readyCheck || typeof sharedState.readyCheck !== "object") {
@@ -1786,6 +2142,50 @@
   function getPendingChecks() {
     var checks = ensurePendingChecksState(getCampaignSharedState());
     return deepCloneJson(checks) || { active: {}, history: [] };
+  }
+
+  function mergePendingChecksState(currentLike, incomingLike) {
+    var current = ensurePendingChecksState({ pendingChecks: deepCloneJson(currentLike) || currentLike });
+    var incoming = ensurePendingChecksState({ pendingChecks: deepCloneJson(incomingLike) || incomingLike });
+    var historyById = {};
+
+    function upsertHistory(entry) {
+      if (!entry || typeof entry !== "object") return;
+      var id = String(entry.id || "").trim();
+      if (!id) return;
+      var prior = historyById[id] || null;
+      var nextResolvedAt = Math.max(0, Number(entry.resolvedAt || entry.createdAt || 0));
+      var priorResolvedAt = Math.max(0, Number(prior && (prior.resolvedAt || prior.createdAt) || 0));
+      if (!prior || nextResolvedAt >= priorResolvedAt) {
+        historyById[id] = deepCloneJson(entry) || entry;
+      }
+    }
+
+    (Array.isArray(current.history) ? current.history : []).forEach(upsertHistory);
+    (Array.isArray(incoming.history) ? incoming.history : []).forEach(upsertHistory);
+
+    var resolvedIds = {};
+    Object.keys(historyById).forEach(function (id) {
+      resolvedIds[id] = true;
+    });
+
+    var active = {};
+    var incomingActive = incoming.active && typeof incoming.active === "object" ? incoming.active : {};
+    Object.keys(incomingActive).forEach(function (id) {
+      if (!id || resolvedIds[id]) return;
+      active[id] = deepCloneJson(incomingActive[id]) || incomingActive[id];
+    });
+
+    var history = Object.keys(historyById).map(function (id) {
+      return historyById[id];
+    }).sort(function (a, b) {
+      var aAt = Math.max(0, Number((a && (a.resolvedAt || a.createdAt)) || 0));
+      var bAt = Math.max(0, Number((b && (b.resolvedAt || b.createdAt)) || 0));
+      return aAt - bAt;
+    });
+
+    if (history.length > 80) history = history.slice(-80);
+    return { active: active, history: history };
   }
 
   function upsertPendingCheckSubmission(record, submission) {
@@ -3059,6 +3459,7 @@
       shared.combatScene = collectCombatSceneState();
       shared.gmSettings = deepCloneJson(current.gmSettings || ensureGmSettings());
       shared.campaignCombat = deepCloneJson(current.campaignCombat || ensureCampaignCombatState());
+      shared.areaSession = deepCloneJson(current.areaSession || ensureAreaSessionState(current));
       shared.campaignTravel = deepCloneJson(current.campaignTravel || ensureCampaignTravelState());
       shared.actionQueue = deepCloneJson(current.actionQueue || ensureActionQueue());
       shared.characterInventories = deepCloneJson(current.characterInventories || ensureCharacterInventories());
@@ -3324,6 +3725,10 @@
         ensureGmSettings(current);
         applyCampaignSoundtrackFromSharedState(current);
       }
+      if (sharedState.areaSession && typeof sharedState.areaSession === "object") {
+        var current = getCampaignSharedState() || {};
+        current.areaSession = deepCloneJson(sharedState.areaSession) || ensureAreaSessionState(current);
+      }
       if (sharedState.campaignCombat && typeof sharedState.campaignCombat === "object") {
         var current = getCampaignSharedState() || {};
         var previousCombat = current && current.campaignCombat && typeof current.campaignCombat === "object"
@@ -3446,7 +3851,7 @@
       }
       if (sharedState.pendingChecks && typeof sharedState.pendingChecks === "object") {
         var current = getCampaignSharedState() || {};
-        current.pendingChecks = deepCloneJson(sharedState.pendingChecks) || ensurePendingChecksState(current);
+        current.pendingChecks = mergePendingChecksState(current.pendingChecks, sharedState.pendingChecks);
       }
       if (Array.isArray(sharedState.sessionTimeline)) {
         var current = getCampaignSharedState() || {};
@@ -3557,6 +3962,9 @@
     try {
       var shared = getCampaignSharedState();
       state.lastProvinceSelectionsHash = safeJsonHash(shared && shared.provinceSelections ? shared.provinceSelections : {});
+      if (shared && shared.areaSession) {
+        maybeHandleSharedAreaSession(shared.areaSession, shared);
+      }
       if (shared && shared.readyCheck) {
         promptReadyCheckIfNeeded(shared.readyCheck);
         maybeResolveReadyCheck();
@@ -3566,6 +3974,50 @@
     state.lastSharedVersion = nextVersion || state.lastSharedVersion;
     state.lastSharedHash = JSON.stringify(sharedState);
     refreshProgressHash();
+  }
+
+  function announceSharedAreaSession(spec, reason) {
+    if (!state.code || !state.connected || state.role !== "gm") return null;
+    var details = spec && typeof spec === "object" ? spec : {};
+    var kind = String(details.kind || "").trim();
+    if (!kind) return null;
+    var payload = details.payload && typeof details.payload === "object"
+      ? (deepCloneJson(details.payload) || details.payload)
+      : {};
+    var shared = getMutableCampaignSharedState();
+    var current = normalizeCampaignAreaSession(shared.areaSession || ensureAreaSessionState(shared));
+    var payloadHash = safeJsonHash(payload);
+    var currentPayloadHash = safeJsonHash(current.payload || {});
+    var sameArea = !!(
+      current.id
+      && current.status === "open"
+      && current.kind === kind
+      && currentPayloadHash === payloadHash
+    );
+    var now = Date.now();
+    var title = String(details.title || "").trim() || String((document.getElementById("modalTitle") || {}).textContent || "").trim() || String(details.label || "Shared Area");
+    var session = {
+      id: sameArea ? String(current.id || ("area-" + now)) : ("area-" + now + "-" + Math.floor(Math.random() * 100000)),
+      status: "open",
+      kind: kind,
+      label: String(details.label || title || "Shared Area"),
+      title: title,
+      by: String(state.playerName || ensureName() || "GM"),
+      openedAt: sameArea ? Math.max(0, Number(current.openedAt || now)) : now,
+      updatedAt: now,
+      payload: payload
+    };
+    shared.areaSession = deepCloneJson(session) || session;
+    if (!sameArea) {
+      appendSessionTimeline("area", "Shared area opened: " + session.title + ".", {
+        areaId: session.id,
+        kind: session.kind,
+        label: session.label
+      });
+    }
+    var out = syncSharedPatch({ areaSession: deepCloneJson(shared.areaSession) || shared.areaSession }, reason || "area-session-open");
+    if (out && typeof out.catch === "function") out.catch(function () {});
+    return session;
   }
 
   async function syncSharedState(reason) {
@@ -3735,6 +4187,196 @@
     });
 
     window._campaignPatchedEncounterVisibilityHooks = true;
+  }
+
+  function patchAreaSessionHooks() {
+    if (window._campaignPatchedAreaSessionHooks) return;
+
+    function wrap(fnName, reason, buildSpec) {
+      if (typeof window[fnName] !== "function") return;
+      var key = "_campaignWrappedAreaSession_" + fnName;
+      if (window[key]) return;
+      var base = window[fnName];
+      window[fnName] = function () {
+        var out = base.apply(this, arguments);
+        if (state.code && state.connected && state.role === "gm") {
+          var spec = null;
+          try {
+            spec = typeof buildSpec === "function" ? buildSpec.apply(this, arguments) : null;
+          } catch (_err) {
+            spec = null;
+          }
+          if (spec && spec.kind) {
+            announceSharedAreaSession(spec, reason || fnName);
+          }
+        }
+        return out;
+      };
+      window[key] = true;
+    }
+
+    function buildSettlementAreaSpec() {
+      var crawl = window.S && window.S.holding && window.S.holding.settlementHexcrawl && typeof window.S.holding.settlementHexcrawl === "object"
+        ? window.S.holding.settlementHexcrawl
+        : null;
+      return {
+        kind: "settlement-area",
+        label: String((document.getElementById("modalTitle") || {}).textContent || "Settlement Hexcrawl"),
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Settlement Hexcrawl"),
+        payload: {
+          mode: String(crawl && crawl.regionMode || "holding"),
+          activeNodeId: crawl && crawl.activeNodeId != null ? String(crawl.activeNodeId) : "",
+          holdingType: String(crawl && crawl.holdingType || (window.S && window.S.holding && window.S.holding.type) || "")
+        }
+      };
+    }
+
+    wrap("openHoldingSettlementHexcrawl", "area-settlement-open", buildSettlementAreaSpec);
+    wrap("openRegionalSettlementHexcrawl", "area-regional-settlement-open", buildSettlementAreaSpec);
+    wrap("openProvinceRuinPopup", "area-province-ruins-open", function (col, row) {
+      return {
+        kind: "province-area",
+        label: "Province Ruins",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Province Ruins"),
+        payload: { areaType: "ruins", col: Number(col || 0), row: Number(row || 0) }
+      };
+    });
+    wrap("openProvinceDepthsPopup", "area-province-depths-open", function (col, row) {
+      return {
+        kind: "province-area",
+        label: "Infinite Dungeon",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Infinite Dungeon"),
+        payload: { areaType: "depths", col: Number(col || 0), row: Number(row || 0) }
+      };
+    });
+    wrap("openLostCityBuildingHexcrawl", "area-lostcity-open", function (col, row) {
+      return {
+        kind: "province-area",
+        label: "Lost City Building",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Lost City Building"),
+        payload: { areaType: "lostcity", col: Number(col || 0), row: Number(row || 0) }
+      };
+    });
+    wrap("openSeaDungeon", "area-sea-dungeon-open", function (col, row) {
+      return {
+        kind: "sea-area",
+        label: "Sea Ruins",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Sea Ruins"),
+        payload: { areaType: "dungeon", col: Number(col || 0), row: Number(row || 0) }
+      };
+    });
+    wrap("openSeaDerelictHexcrawl", "area-sea-derelict-open", function () {
+      var sea = window.S && window.S.lastSea && typeof window.S.lastSea === "object" ? window.S.lastSea : null;
+      var map = sea && Array.isArray(sea.map) ? sea.map : [];
+      var key = String(sea && sea.activeEncounterKey || "");
+      var hex = key ? (map.find(function (entry) { return entry && String(entry.key || "") === key; }) || null) : null;
+      if (!hex) return null;
+      return {
+        kind: "sea-area",
+        label: "Derelict Ship Hexcrawl",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Derelict Ship Hexcrawl"),
+        payload: { areaType: "derelict", col: Number(hex.col || 0), row: Number(hex.row || 0) }
+      };
+    });
+    wrap("openPlanetRuinPopup", "area-planet-ruin-open", function (cellId) {
+      var star = window.S && window.S.starSystem && typeof window.S.starSystem === "object" ? window.S.starSystem : null;
+      return {
+        kind: "planet-area",
+        label: "Planet Ruins",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Planet Ruins"),
+        payload: {
+          areaType: "ruin",
+          planetHexId: Number(star && star.activePlanetHexId || 0),
+          cellId: Number(cellId || 0)
+        }
+      };
+    });
+    wrap("openPlanetLostCityBuildingExploration", "area-planet-lostcity-building-open", function () {
+      var star = window.S && window.S.starSystem && typeof window.S.starSystem === "object" ? window.S.starSystem : null;
+      var hexes = star && Array.isArray(star.hexes) ? star.hexes : [];
+      var planetHex = hexes.find(function (entry) {
+        return !!(entry && Number(entry.id) === Number(star && star.activePlanetHexId));
+      }) || null;
+      var surface = planetHex && planetHex.surface && typeof planetHex.surface === "object" ? planetHex.surface : null;
+      return {
+        kind: "planet-area",
+        label: "Planet Lost City Building",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Planet Lost City Building"),
+        payload: {
+          areaType: "lostcity-building",
+          planetHexId: Number(star && star.activePlanetHexId || 0),
+          cellId: Number(surface && surface.selectedCellId || 0)
+        }
+      };
+    });
+    wrap("openPlanetLostCityHexcrawl", "area-planet-lostcity-district-open", function () {
+      var star = window.S && window.S.starSystem && typeof window.S.starSystem === "object" ? window.S.starSystem : null;
+      var hexes = star && Array.isArray(star.hexes) ? star.hexes : [];
+      var planetHex = hexes.find(function (entry) {
+        return !!(entry && Number(entry.id) === Number(star && star.activePlanetHexId));
+      }) || null;
+      var surface = planetHex && planetHex.surface && typeof planetHex.surface === "object" ? planetHex.surface : null;
+      return {
+        kind: "planet-area",
+        label: "Planet Lost City District",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Planet Lost City District"),
+        payload: {
+          areaType: "lostcity-district",
+          planetHexId: Number(star && star.activePlanetHexId || 0),
+          cellId: Number(surface && surface.selectedCellId || 0)
+        }
+      };
+    });
+    wrap("openGalaxyFacilityArea", "area-galaxy-facility-open", function (hexId) {
+      return {
+        kind: "galaxy-area",
+        label: "Galactic Facility",
+        title: "Galactic Facility",
+        payload: { areaType: "facility", hexId: Number(hexId || 0) }
+      };
+    });
+    wrap("openGalaxyDeadMoonArea", "area-galaxy-deadmoon-open", function (hexId) {
+      return {
+        kind: "galaxy-area",
+        label: "Dead Moon Landing Map",
+        title: "Dead Moon Landing Map",
+        payload: { areaType: "deadmoon", hexId: Number(hexId || 0) }
+      };
+    });
+    wrap("openGalaxyDerelictArea", "area-galaxy-derelict-open", function (hexId) {
+      return {
+        kind: "galaxy-area",
+        label: "Explore Derelict",
+        title: "Explore Derelict",
+        payload: { areaType: "derelict", hexId: Number(hexId || 0) }
+      };
+    });
+    wrap("openYessodFromSun", "area-yessod-open", function () {
+      var star = window.S && window.S.starSystem && typeof window.S.starSystem === "object" ? window.S.starSystem : null;
+      var yessod = star && star.yessod && typeof star.yessod === "object" ? star.yessod : null;
+      return {
+        kind: "yessod-area",
+        label: "Yessod",
+        title: "Yessod",
+        payload: {
+          areaType: "map",
+          cellId: Number(yessod && yessod.selectedCellId || 0)
+        }
+      };
+    });
+    wrap("yessodEnterHolding", "area-yessod-holding-open", function (cellId) {
+      return {
+        kind: "yessod-area",
+        label: "Yessod Holding",
+        title: String((document.getElementById("modalTitle") || {}).textContent || "Yessod Holding"),
+        payload: {
+          areaType: "holding",
+          cellId: Number(cellId || 0)
+        }
+      };
+    });
+
+    window._campaignPatchedAreaSessionHooks = true;
   }
 
   async function syncSharedNow() {
@@ -9724,6 +10366,7 @@
     patchMapGenerationHooks();
     patchSharedProgressHooks();
     patchEncounterVisibilityHooks();
+    patchAreaSessionHooks();
     patchCameraLockHooks();
     patchCombatSyncHooks();
     refreshProgressHash();
@@ -9814,6 +10457,7 @@
     patchMapGenerationHooks();
     patchSharedProgressHooks();
     patchEncounterVisibilityHooks();
+    patchAreaSessionHooks();
     patchCameraLockHooks();
     hydrateCampaignUIIfNeeded();
     var syncStateChanged = refreshSyncHealth();
@@ -9946,6 +10590,7 @@
     nextCombatActor: nextCombatActor,
     endCampaignCombat: endCampaignCombat,
     joinSharedCombatMode: joinSharedCampaignCombatMode,
+    joinSharedAreaSession: joinSharedCampaignAreaSessionFromPrompt,
     getCurrentCombatActor: getCurrentCombatActor,
     getEnemyActionRequest: function () {
       return getCampaignEnemyActionRequest(ensureCampaignCombatState());

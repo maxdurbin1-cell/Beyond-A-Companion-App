@@ -20089,23 +20089,70 @@ function seedTravelSceneNpcTemplate(col,row,templateType){
   if(typeof showNotif==='function')showNotif('NPC template "'+templateType+'" seeded.','good');
 }
 
+function buildCampaignTravelCombatWayfarerTokens(prefix){
+  if(!window||!window.campaignSystem||typeof window.campaignSystem.buildPartyRoster!=='function')return [];
+  let roster=[];
+  try{
+    roster=window.campaignSystem.buildPartyRoster()||[];
+  }catch(_err){
+    roster=[];
+  }
+  if(!Array.isArray(roster)||!roster.length)return [];
+  return roster
+    .filter(function(entry){
+      return !!entry&&String(entry.role||'player')!=='gm';
+    })
+    .map(function(entry,idx){
+      const character=entry&&entry.character&&typeof entry.character==='object'?entry.character:{};
+      const tokenKey=String(entry&&entry.token||idx).replace(/[^a-z0-9_-]/gi,'-')||String(idx);
+      const hpRaw=Number(character.health);
+      const maxHp=Math.max(1,Number(character.maxHealth||character.health||10)||10);
+      const hp=Number.isFinite(hpRaw)?Math.max(0,hpRaw):maxHp;
+      const look=String(character.look||'');
+      const portrait=/^(data:image\/|https?:\/\/)/i.test(look)?look:'';
+      return {
+        id:String(prefix||'campaign')+'-wayfarer-'+tokenKey,
+        name:String(character.name||entry.name||('Wayfarer '+String(idx+1))),
+        faction:'player',
+        hp:hp,
+        maxHp:maxHp,
+        status:[],
+        q:0,
+        r:idx,
+        image:portrait,
+        size:1,
+        ownerToken:String(entry&&entry.token||''),
+        campaignRole:String(entry&&entry.role||'player'),
+        isPlayer:false
+      };
+    });
+}
+window.buildCampaignTravelCombatWayfarerTokens=buildCampaignTravelCombatWayfarerTokens;
+
 function buildTravelSceneCombatSeed(scene){
   const seed={tokens:[],history:[],board:{}};
-  const portrait=(S&&S.identityForge&&S.identityForge.media&&S.identityForge.media.portrait)?String(S.identityForge.media.portrait):'';
-  const wayfarerName=String((S&&S.name)||'Wayfarer');
-  seed.tokens.push({
-    id:'scene-wayfarer-'+Date.now().toString(36),
-    name:wayfarerName,
-    faction:'player',
-    hp:12,
-    maxHp:12,
-    status:[],
-    q:0,
-    r:0,
-    image:portrait,
-    size:1,
-    isPlayer:true
-  });
+  const campaignTokens=(typeof window.buildCampaignTravelCombatWayfarerTokens==='function')
+    ? window.buildCampaignTravelCombatWayfarerTokens('scene')
+    : [];
+  if(Array.isArray(campaignTokens)&&campaignTokens.length){
+    seed.tokens=campaignTokens.slice();
+  }else{
+    const portrait=(S&&S.identityForge&&S.identityForge.media&&S.identityForge.media.portrait)?String(S.identityForge.media.portrait):'';
+    const wayfarerName=String((S&&S.name)||'Wayfarer');
+    seed.tokens.push({
+      id:'scene-wayfarer-'+Date.now().toString(36),
+      name:wayfarerName,
+      faction:'player',
+      hp:12,
+      maxHp:12,
+      status:[],
+      q:0,
+      r:0,
+      image:portrait,
+      size:1,
+      isPlayer:true
+    });
+  }
   const npcs=Array.isArray(scene&&scene.npcs)?scene.npcs:[];
   npcs.forEach(function(npc,idx){
     const dread=Math.max(4,Number(npc&&npc.dread||6));
@@ -20127,7 +20174,11 @@ function buildTravelSceneCombatSeed(scene){
   if(scene&&scene.image){
     seed.board.background=String(scene.image);
   }
-  seed.history=['Travel scene loaded: '+String(scene&&scene.name||'Untitled Scene')+'.', 'NPC tokens seeded: '+String(npcs.length)+'.'];
+  seed.history=[
+    'Travel scene loaded: '+String(scene&&scene.name||'Untitled Scene')+'.',
+    'Wayfarers seeded: '+String(seed.tokens.filter(function(token){ return token&&String(token.faction||'')==='player'; }).length)+'.',
+    'NPC tokens seeded: '+String(npcs.length)+'.'
+  ];
   return seed;
 }
 
@@ -23329,18 +23380,24 @@ function requestJoinProvinceArea(areaType,col,row){
   const area=String(areaType||'').toLowerCase();
   const labels={ruins:'Province Ruins',depths:'Province Depths',library:'Infinite Library',dwelling:'Dwelling Rooms',temple:'Temple Chambers',lostcity:'Lost City Building'};
   openCampaignAreaJoinPrompt(labels[area]||'Province Area',function(){
-    if(area==='ruins'){openProvinceRuinPopup(col,row);return;}
-    if(area==='depths'){openProvinceDepthsPopup(col,row);return;}
-    if(area==='library'){
-      if(typeof openInfiniteLibraryAtHex==='function'){openInfiniteLibraryAtHex(col,row);return;}
-      if(typeof openInfiniteLibrary==='function'){openInfiniteLibrary();return;}
-      showNotif('Infinite Library module not loaded.', 'warn');
-      return;
-    }
-    if(area==='dwelling'){generateDwellingRooms(col,row);return;}
-    if(area==='temple'){generateTempleRooms(col,row);return;}
-    if(area==='lostcity'){revealLostCityBuilding(col,row);return;}
+    openProvinceAreaFromSharedSession(area,col,row);
   });
+}
+
+function openProvinceAreaFromSharedSession(areaType,col,row){
+  const area=String(areaType||'').toLowerCase();
+  if(area==='ruins'){openProvinceRuinPopup(col,row);return true;}
+  if(area==='depths'){openProvinceDepthsPopup(col,row);return true;}
+  if(area==='library'){
+    if(typeof openInfiniteLibraryAtHex==='function'){openInfiniteLibraryAtHex(col,row);return true;}
+    if(typeof openInfiniteLibrary==='function'){openInfiniteLibrary();return true;}
+    showNotif('Infinite Library module not loaded.', 'warn');
+    return false;
+  }
+  if(area==='dwelling'){generateDwellingRooms(col,row);return true;}
+  if(area==='temple'){generateTempleRooms(col,row);return true;}
+  if(area==='lostcity'){openLostCityBuildingHexcrawl(col,row);return true;}
+  return false;
 }
 
 function rollLostCityTravel(col,row){
@@ -23413,6 +23470,7 @@ function openLostCityBuildingHexcrawl(col,row){
     const hex=mapData.find(function(h){ return h&&h.col===col&&h.row===row&&h.type==='lostcity'; });
     if(!hex)return;
     hex.data=hex.data||{};
+    let generatedHexcrawl=false;
     if(!hex.data.hexcrawl){
       const LC_TRAPS=['Pressure plate triggers a sealed gas vent (Body vs DD8 or Irradiated).','Tripwire releases a wall panel — roll Control vs DD6 or take 3 damage.','Magnetic mine array — metallic armor wearers check Defend vs DD10.','Rigged door detonates a charge: VD vs DD8 or Weakened.','Automated seeker turret activates — first action costs 1 extra AP.','Weight-sensitive floor panel collapses: Body vs DD8 or fall 1 floor (4 damage + Irradiated).'];
       const LC_LOOT_ITEMS=['Lost City Fuel Rod (poisonous rods, sell for 200₵)','Radiothermal Canister (powers caravan drive cells)','Pre-fall Currency Cache (roll 3d6 × 10 credits)','Builder\'s Blueprint (rare schematic)','Irradiated Power Cell (functions as a grenade equivalent)','Sealed Medkit (heals 6 HP, removes Irradiated)','Pre-fall Comms Unit (repair to active use)','Salvage Circuit Board (sell 150₵)'];
@@ -23439,6 +23497,7 @@ function openLostCityBuildingHexcrawl(col,row){
       };
       hex.data._lcTraps=LC_TRAPS;
       hex.data._lcLoot=LC_LOOT_ITEMS;
+      generatedHexcrawl=true;
     }
     const crawl=hex.data.hexcrawl;
     if(typeof crawl.activeNodeId!=='number')crawl.activeNodeId=0;
@@ -23518,6 +23577,7 @@ function openLostCityBuildingHexcrawl(col,row){
         +'</div>'):'')
       +'</div>'
     );
+    if(generatedHexcrawl&&typeof syncProvinceRuinStateSoon==='function')syncProvinceRuinStateSoon('province-lostcity-hexcrawl');
 }
 
 function lcSelectHexNode(col,row,nodeId){
@@ -23526,6 +23586,7 @@ function lcSelectHexNode(col,row,nodeId){
     const node=hex.data.hexcrawl.nodes.find(function(n){return Number(n.id)===Number(nodeId);});
     if(!node)return;
     hex.data.hexcrawl.activeNodeId=Number(node.id||0);
+  if(typeof syncProvinceRuinStateSoon==='function')syncProvinceRuinStateSoon('province-lostcity-node');
   lcRollEncounter(col,row,Number(node.roomIndex||0),true);
 }
 
@@ -23535,6 +23596,7 @@ function lcMoveToHexNode(col,row,nodeId){
   const node=hex.data.hexcrawl.nodes.find(function(n){return Number(n.id)===Number(nodeId);});
   if(!node)return;
   hex.data.hexcrawl.activeNodeId=Number(node.id||0);
+  if(typeof syncProvinceRuinStateSoon==='function')syncProvinceRuinStateSoon('province-lostcity-node');
   lcRollEncounter(col,row,Number(node.roomIndex||0),true);
   openLostCityBuildingHexcrawl(col,row);
 }
@@ -23571,6 +23633,7 @@ function lcResolveRoom(col,row,idx){
       if(typeof changeStress==='function')changeStress(2);
       else if(typeof changeMentalStress==='function')changeMentalStress(2);
     }
+    if(typeof syncProvinceRuinStateSoon==='function')syncProvinceRuinStateSoon('province-lostcity-room');
     openLostCityBuildingHexcrawl(col,row);
 }
 
@@ -23584,6 +23647,7 @@ function lcPressOn(col,row,idx){
       room.result=(room.result?room.result+' ':'')+'Press On: route expanded to another hex.';
     }
     if(typeof showNotif==='function')showNotif('Press On opened another hex route.','good');
+    if(typeof syncProvinceRuinStateSoon==='function')syncProvinceRuinStateSoon('province-lostcity-press-on');
     openLostCityBuildingHexcrawl(col,row);
 }
 
@@ -23598,6 +23662,7 @@ function lcPressOn(col,row,idx){
     room.encounterResolved=true;
     room.result=(room.result?room.result+' ':'')+'Encounter triggered: '+formatNamedEncounterLine(profile,count)+' Combat roster seeded.';
     if(!quiet&&typeof showNotif==='function')showNotif('Lost City encounter: '+profile.name+' ambush.','warn');
+    if(typeof syncProvinceRuinStateSoon==='function')syncProvinceRuinStateSoon('province-lostcity-encounter');
     openLostCityBuildingHexcrawl(col,row);
   }
 

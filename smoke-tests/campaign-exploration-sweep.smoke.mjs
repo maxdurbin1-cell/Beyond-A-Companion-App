@@ -536,7 +536,14 @@ async function runScenario(browser, baseUrl) {
     const provinceEncounter = await playerPage.evaluate(async () => {
       const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
       const mapData = province && Array.isArray(province.mapData) ? province.mapData : [];
-      const hex = mapData.find((entry) => entry && entry.type === "wilderness") || mapData[0];
+      const activeSelectedKey = typeof window.getProvinceSelectedKey === "function"
+        ? String(window.getProvinceSelectedKey() || "")
+        : "";
+      const hex = mapData.find((entry) => {
+        if (!entry || entry.type !== "wilderness") return false;
+        if (typeof window.isMapFogHexVisible !== "function") return true;
+        return !!window.isMapFogHexVisible("province", `${entry.col},${entry.row}`, activeSelectedKey);
+      }) || mapData.find((entry) => entry && entry.type === "wilderness") || mapData[0];
       if (!hex) return { ok: false, error: "No province hex found for encounter." };
       window.setProvinceSelectedKey(`${hex.col},${hex.row}`);
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -590,6 +597,75 @@ async function runScenario(browser, baseUrl) {
     if (!provinceEncounter.ok) {
       throw new Error(`Province encounter did not render for player: ${JSON.stringify(provinceEncounter)}`);
     }
+
+    const sharedSettlement = await gmPage.evaluate(() => {
+      const s = window.S = window.S || {};
+      s.holding = Object.assign({ type: "Fortress" }, s.holding || {});
+      if (typeof window.openHoldingSettlementHexcrawl !== "function") {
+        return { ok: false, error: "openHoldingSettlementHexcrawl missing" };
+      }
+      window.openHoldingSettlementHexcrawl("Fortress");
+      const modalTitle = String((document.getElementById("modalTitle") || {}).textContent || "");
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const session = shared && shared.areaSession && typeof shared.areaSession === "object"
+        ? {
+            id: String(shared.areaSession.id || ""),
+            kind: String(shared.areaSession.kind || ""),
+            title: String(shared.areaSession.title || ""),
+            status: String(shared.areaSession.status || "")
+          }
+        : null;
+      return { ok: true, modalTitle, session };
+    });
+    if (!sharedSettlement.ok || !sharedSettlement.session || sharedSettlement.session.kind !== "settlement-area") {
+      throw new Error(`GM shared settlement session failed to open: ${JSON.stringify(sharedSettlement)}`);
+    }
+
+    await playerPage.waitForFunction(
+      (expectedTitle) => {
+        const title = String((document.getElementById("modalTitle") || {}).textContent || "");
+        const body = String((document.getElementById("modalContent") || {}).textContent || "");
+        return title === "Join Area" && body.indexOf(expectedTitle) >= 0;
+      },
+      sharedSettlement.session.title,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+
+    const sharedSettlementJoin = await playerPage.evaluate(() => {
+      const beforeTitle = String((document.getElementById("modalTitle") || {}).textContent || "");
+      const buttons = Array.from(document.querySelectorAll("#rollModal button"));
+      const joinBtn = buttons.find((btn) => /join/i.test(String(btn.textContent || ""))) || null;
+      if (!joinBtn) {
+        return { ok: false, error: "Join button missing", beforeTitle };
+      }
+      joinBtn.click();
+      return { ok: true, beforeTitle };
+    });
+    if (!sharedSettlementJoin.ok) {
+      throw new Error(`Player could not click settlement join prompt: ${JSON.stringify(sharedSettlementJoin)}`);
+    }
+
+    await playerPage.waitForFunction(
+      (expectedTitle) => String((document.getElementById("modalTitle") || {}).textContent || "") === expectedTitle,
+      sharedSettlement.session.title,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+
+    const playerSharedSettlementState = await playerPage.evaluate(() => {
+      const title = String((document.getElementById("modalTitle") || {}).textContent || "");
+      const body = String((document.getElementById("modalContent") || {}).textContent || "");
+      return {
+        title,
+        hasDistrictText: /District|Settlement Metadata|Refresh Scene/i.test(body)
+      };
+    });
+    if (playerSharedSettlementState.title !== sharedSettlement.session.title || !playerSharedSettlementState.hasDistrictText) {
+      throw new Error(`Player did not land in shared settlement area: ${JSON.stringify(playerSharedSettlementState)}`);
+    }
+    await dismissBlockingOverlays(gmPage);
+    await dismissBlockingOverlays(playerPage);
 
     const gmTravelKickoff = await gmPage.evaluate(async () => {
       let callbackResult = null;
@@ -817,6 +893,9 @@ async function runScenario(browser, baseUrl) {
       provinceObservation,
       provinceEncounter: {
         preview: provinceEncounter.text.slice(0, 120)
+      },
+      sharedSettlement: {
+        title: playerSharedSettlementState.title
       },
       playerShopStatus,
       galaxyRequestLogged: true,

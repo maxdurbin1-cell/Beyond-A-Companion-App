@@ -9748,6 +9748,16 @@
       + '</div>';
   }
 
+  function getHoldingSettlementHexcrawlTitle() {
+    var crawl = S && S.holding && S.holding.settlementHexcrawl ? S.holding.settlementHexcrawl : null;
+    var regionMode = String(crawl && crawl.regionMode || 'holding').toLowerCase();
+    if (regionMode === 'sea') return 'Sea Settlement Hexcrawl';
+    if (regionMode === 'space') return 'Space Hub Hexcrawl';
+    if (regionMode === 'planet') return 'Planet Settlement Hexcrawl';
+    if (regionMode === 'ruins') return 'Ruin Encampment Hexcrawl';
+    return 'Holding Settlement Hexcrawl';
+  }
+
   function rerenderHoldingSettlementHexcrawl(opts) {
     var prevScrollTop = 0;
     var prevPageScrollTop = 0;
@@ -9757,7 +9767,7 @@
       var rootEl = document.scrollingElement || document.documentElement || document.body;
       if (rootEl) prevPageScrollTop = Number(rootEl.scrollTop || 0);
     }
-    openModal('Holding Settlement Hexcrawl', buildHoldingSettlementHexcrawlModal(opts || { advanceVisit: false }), null, { preventScroll: true, focusTrap: true });
+    openModal(getHoldingSettlementHexcrawlTitle(), buildHoldingSettlementHexcrawlModal(opts || { advanceVisit: false }), null, { preventScroll: true, focusTrap: true });
     if (typeof setTimeout === 'function') {
       setTimeout(function () {
         if (typeof document === 'undefined') return;
@@ -11009,10 +11019,7 @@
     crawl.regionMode = regionMode;
     if (!crawl.timeOfDay) crawl.timeOfDay = 'morning';
     rollHoldingAmbientState(crawl);
-    var title = regionMode === 'sea'
-      ? 'Sea Settlement Hexcrawl'
-      : (regionMode === 'space' ? 'Space Hub Hexcrawl' : (regionMode === 'ruins' ? 'Ruin Encampment Hexcrawl' : 'Holding Settlement Hexcrawl'));
-    openModal(title, buildHoldingSettlementHexcrawlModal({ advanceVisit: true }), null, { preventScroll: true, focusTrap: true });
+    rerenderHoldingSettlementHexcrawl({ advanceVisit: true });
   }
 
   function openRuinEncampmentHexcrawl(label) {
@@ -13455,6 +13462,9 @@
   window.openSeaSettlementHexcrawl = openSeaSettlementHexcrawl;
   window.openSpaceHubHexcrawl = openSpaceHubHexcrawl;
   window.openRuinEncampmentHexcrawl = openRuinEncampmentHexcrawl;
+  window.openHoldingSettlementHexcrawlFromSharedState = function () {
+    rerenderHoldingSettlementHexcrawl({ advanceVisit: false });
+  };
   window.openRuinEncampmentFromProvince = openRuinEncampmentFromProvince;
   window.runHoldingDistrictAction = runHoldingDistrictAction;
   window.runHoldingDistrictActionByKind = runHoldingDistrictActionByKind;

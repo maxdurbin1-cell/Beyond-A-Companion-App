@@ -11044,6 +11044,37 @@ function createFacilityState() {
   };
 }
 
+function focusSpaceContextForSharedArea() {
+  if (typeof setContext === 'function') {
+    const spaceBtn = document.querySelector('.ctx-btn[data-ctx="space"]');
+    setContext('space', spaceBtn || null);
+  }
+}
+
+function focusGalaxyTabForSharedArea() {
+  focusSpaceContextForSharedArea();
+  const btn = document.getElementById('tabnav-galaxy') || document.querySelector('#mainNav .tab-btn[data-tab="galaxy"]');
+  if (typeof switchTab === 'function' && btn) switchTab('galaxy', btn);
+}
+
+function focusPlanetTabForSharedArea() {
+  focusSpaceContextForSharedArea();
+  const btn = document.getElementById('tabnav-planet') || document.querySelector('#mainNav .tab-btn[data-tab="planet"]');
+  if (typeof switchTab === 'function' && btn) switchTab('planet', btn);
+}
+
+function openGalaxyFacilityArea(hexId) {
+  ensureStarsState();
+  const nextHexId = Number(hexId || 0);
+  if (nextHexId > 0) S.starSystem.currentHexId = nextHexId;
+  focusGalaxyTabForSharedArea();
+  const hex = typeof getCurrentStarHex === 'function' ? getCurrentStarHex() : null;
+  if (!hex) return false;
+  S.starSystem.activeFacility = getHexPersistentState(hex, 'facility', createFacilityState);
+  renderFacilityPanel();
+  return true;
+}
+
 function renderFacilityPanel() {
   const f = S.starSystem.activeFacility;
   const out = document.getElementById('starExplorationDetail');
@@ -16200,6 +16231,42 @@ function openActivePlanetMap() {
   if (typeof switchTab === 'function' && b) switchTab('planet', b);
 }
 
+function openPlanetAreaFromSharedSession(areaType, planetHexId, cellId) {
+  ensureStarsState();
+  const nextPlanetHexId = Number(planetHexId || 0);
+  if (nextPlanetHexId > 0) {
+    S.starSystem.currentHexId = nextPlanetHexId;
+    S.starSystem.activePlanetHexId = nextPlanetHexId;
+  }
+  focusPlanetTabForSharedArea();
+  const hex = getActivePlanetHex();
+  if (!hex || hex.type !== 'planet') return false;
+  const state = ensurePlanetSurfaceState(hex);
+  if (!state || !Array.isArray(state.cells) || !state.cells.length) return false;
+  const selected = state.cells.find((entry) => Number(entry.id) === Number(cellId))
+    || state.cells.find((entry) => Number(entry.id) === Number(state.selectedCellId))
+    || state.cells.find((entry) => Number(entry.id) === Number(state.landedCellId))
+    || state.cells[0]
+    || null;
+  if (!selected) return false;
+  state.selectedCellId = selected.id;
+  if (typeof renderPlanetExplorationPanel === 'function') renderPlanetExplorationPanel();
+  const kind = String(areaType || '').toLowerCase();
+  if (kind === 'ruin') {
+    openPlanetRuinPopup(selected.id);
+    return true;
+  }
+  if (kind === 'lostcity-building') {
+    openPlanetLostCityBuildingExploration();
+    return true;
+  }
+  if (kind === 'lostcity-district') {
+    openPlanetLostCityHexcrawl();
+    return true;
+  }
+  return false;
+}
+
 const YESSOD_ROWS = 12;
 const YESSOD_COLS = 12;
 const YESSOD_VOICE_LENS = 'Bone Oracles';
@@ -16674,6 +16741,24 @@ function openYessodFromSun() {
   const yessodBtn = document.getElementById('tabnav-yessod') || document.querySelector('.tab-btn[data-tab="yessod"]');
   if (typeof switchTab === 'function' && yessodBtn) switchTab('yessod', yessodBtn);
   else renderYessodPanel();
+}
+
+function openYessodAreaFromSharedSession(areaType, cellId) {
+  openYessodFromSun();
+  const state = ensureYessodState();
+  if (!state) return false;
+  const target = yessodGetCell(state, Number(cellId || state.selectedCellId))
+    || yessodGetCell(state, state.selectedCellId)
+    || (Array.isArray(state.cells) ? state.cells[0] : null);
+  if (target) state.selectedCellId = target.id;
+  renderYessodPanel();
+  const kind = String(areaType || '').toLowerCase();
+  if (!kind || kind === 'map') return true;
+  if (kind === 'holding' && target) {
+    yessodEnterHolding(target.id);
+    return true;
+  }
+  return false;
 }
 
 function yessodTravelIsNight() {
@@ -18337,25 +18422,30 @@ function explorePlanetCell(cellId) {
 
 function buildPlanetTravelSceneCombatSeed(hexRef, cellRef) {
   if (!hexRef || !cellRef) return null;
-  const portrait = (S && S.identityForge && S.identityForge.media && S.identityForge.media.portrait)
-    ? String(S.identityForge.media.portrait)
-    : '';
-  const wayfarerName = String((S && S.name) || 'Wayfarer');
   const dread = cellRef.marker === 'peril' || cellRef.marker === 'barrier' ? 8 : 6;
   const count = cellRef.marker === 'peril' ? 2 : 1;
-  const tokens = [{
-    id: 'planet-wayfarer-' + Date.now().toString(36),
-    name: wayfarerName,
-    faction: 'player',
-    hp: 12,
-    maxHp: 12,
-    status: [],
-    q: 0,
-    r: 0,
-    image: portrait,
-    size: 1,
-    isPlayer: true
-  }];
+  const tokens = (typeof window.buildCampaignTravelCombatWayfarerTokens === 'function')
+    ? window.buildCampaignTravelCombatWayfarerTokens('planet')
+    : [];
+  if (!tokens.length) {
+    const portrait = (S && S.identityForge && S.identityForge.media && S.identityForge.media.portrait)
+      ? String(S.identityForge.media.portrait)
+      : '';
+    const wayfarerName = String((S && S.name) || 'Wayfarer');
+    tokens.push({
+      id: 'planet-wayfarer-' + Date.now().toString(36),
+      name: wayfarerName,
+      faction: 'player',
+      hp: 12,
+      maxHp: 12,
+      status: [],
+      q: 0,
+      r: 0,
+      image: portrait,
+      size: 1,
+      isPlayer: true
+    });
+  }
   for (let i = 0; i < count; i += 1) {
     tokens.push({
       id: 'planet-enemy-' + i + '-' + Date.now().toString(36),
@@ -18376,7 +18466,7 @@ function buildPlanetTravelSceneCombatSeed(hexRef, cellRef) {
     id: 'planet-scene-' + String(hexRef.id) + '-' + String(cellRef.id),
     name: 'Planet Scene · Cell ' + String(cellRef.id),
     tokens,
-    history: ['Planet scene loaded: Cell ' + String(cellRef.id) + '.', 'Hostiles seeded: ' + String(count) + '.']
+    history: ['Planet scene loaded: Cell ' + String(cellRef.id) + '.', 'Wayfarers seeded: ' + String(tokens.filter((token) => token && String(token.faction || '') === 'player').length) + '.', 'Hostiles seeded: ' + String(count) + '.']
   };
 }
 
@@ -18745,6 +18835,18 @@ function completeDerelictRoom(roomId) {
   renderDerelictPanel();
 }
 
+function openGalaxyDerelictArea(hexId) {
+  ensureStarsState();
+  const nextHexId = Number(hexId || 0);
+  if (nextHexId > 0) S.starSystem.currentHexId = nextHexId;
+  focusGalaxyTabForSharedArea();
+  const hex = typeof getCurrentStarHex === 'function' ? getCurrentStarHex() : null;
+  if (!hex) return false;
+  S.starSystem.activeDerelict = getHexPersistentState(hex, 'derelict', createDerelictShipState);
+  renderDerelictPanel();
+  return true;
+}
+
 function createDeadMoonMapState(deadMoonState) {
   const dm = deadMoonState || S.starSystem.activeDeadMoon || createDeadMoonState();
   const profile = getDeadMoonDirectionProfile(dm.direction);
@@ -19039,6 +19141,27 @@ function exploreDeadMoonMapCell() {
   renderDeadMoonMapPanel();
 }
 
+function openGalaxyDeadMoonArea(hexId) {
+  ensureStarsState();
+  const nextHexId = Number(hexId || 0);
+  if (nextHexId > 0) S.starSystem.currentHexId = nextHexId;
+  focusGalaxyTabForSharedArea();
+  const hex = typeof getCurrentStarHex === 'function' ? getCurrentStarHex() : null;
+  if (!hex) return false;
+  S.starSystem.activeDeadMoon = getHexPersistentState(hex, 'deadMoon', createDeadMoonState);
+  S.starSystem.activeDeadMoonMap = getHexPersistentState(hex, 'deadMoonMap', createDeadMoonMapState);
+  renderDeadMoonMapPanel();
+  return true;
+}
+
+function openGalaxyAreaFromSharedSession(areaType, hexId) {
+  const kind = String(areaType || '').toLowerCase();
+  if (kind === 'facility') return openGalaxyFacilityArea(hexId);
+  if (kind === 'deadmoon' || kind === 'dead-moon') return openGalaxyDeadMoonArea(hexId);
+  if (kind === 'derelict') return openGalaxyDerelictArea(hexId);
+  return false;
+}
+
 function renderDeadMoonMapPanel() {
   const map = S.starSystem.activeDeadMoonMap;
   const out = document.getElementById('starExplorationDetail');
@@ -19254,7 +19377,7 @@ function buildStarExplorationDetail(ring, outcome) {
     const hex = getCurrentStarHex();
     const f = getHexPersistentState(hex, 'facility', createFacilityState);
     S.starSystem.activeFacility = f;
-    setTimeout(renderFacilityPanel, 0);
+    setTimeout(function () { openGalaxyFacilityArea(hex && hex.id); }, 0);
     return `Galactic Facility ${f.code} identified. Docking and module exploration available.`;
   }
   if (outcome === 'Space Encounter') {
@@ -19283,7 +19406,7 @@ function buildStarExplorationDetail(ring, outcome) {
       <div style="font-size:.75rem;color:var(--gold2);">Dead Moon</div>
       <div style="font-size:.74rem;color:var(--muted2);line-height:1.5;">Dead Moons are unique to the Inner Rings and often desecrated by collapse-era hubris. VaccSuit recommended. ${dm.irradiated ? '<span style="color:var(--red2);">Irradiated: +d100 Rads/day.</span>' : 'No immediate radiation spike detected.'}<br>Initial Direction: <strong>${dm.direction.toUpperCase()}</strong> · Site: <strong>${dm.site}</strong></div>
       <div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;">
-        <button class="btn btn-xs btn-teal" onclick="renderDeadMoonMapPanel()">Land & Explore 6x6 Map</button>
+        <button class="btn btn-xs btn-teal" onclick="openGalaxyDeadMoonArea(${Number(hex && hex.id || 0)})">Land & Explore 6x6 Map</button>
         <button class="btn btn-xs" onclick="rollDeadMoonDirection()">Roll Direction Travel</button>
       </div>`;
   }
@@ -19295,7 +19418,7 @@ function buildStarExplorationDetail(ring, outcome) {
     const ds = getHexPersistentState(hex, 'derelict', createDerelictShipState);
     S.starSystem.activeDerelict = ds;
     if (window.TrophySystem) window.TrophySystem.check('first_derelict');
-    setTimeout(renderDerelictPanel, 0);
+    setTimeout(function () { openGalaxyDerelictArea(hex && hex.id); }, 0);
     return `Derelict contact acquired. Survivors: ${ds.survivorCount}. Rooms can now be explored.`;
   }
   return buildUneventfulVoyageDetail();
@@ -20094,23 +20217,28 @@ function runFurtherSystemAnalysis() {
 
 function buildGalaxyTravelSceneCombatSeed(hex) {
   if (!hex) return null;
-  const portrait = (S && S.identityForge && S.identityForge.media && S.identityForge.media.portrait)
-    ? String(S.identityForge.media.portrait)
-    : '';
-  const wayfarerName = String((S && S.name) || 'Wayfarer');
-  const tokens = [{
-    id: 'galaxy-wayfarer-' + Date.now().toString(36),
-    name: wayfarerName,
-    faction: 'player',
-    hp: 12,
-    maxHp: 12,
-    status: [],
-    q: 0,
-    r: 0,
-    image: portrait,
-    size: 1,
-    isPlayer: true
-  }];
+  const tokens = (typeof window.buildCampaignTravelCombatWayfarerTokens === 'function')
+    ? window.buildCampaignTravelCombatWayfarerTokens('galaxy')
+    : [];
+  if (!tokens.length) {
+    const portrait = (S && S.identityForge && S.identityForge.media && S.identityForge.media.portrait)
+      ? String(S.identityForge.media.portrait)
+      : '';
+    const wayfarerName = String((S && S.name) || 'Wayfarer');
+    tokens.push({
+      id: 'galaxy-wayfarer-' + Date.now().toString(36),
+      name: wayfarerName,
+      faction: 'player',
+      hp: 12,
+      maxHp: 12,
+      status: [],
+      q: 0,
+      r: 0,
+      image: portrait,
+      size: 1,
+      isPlayer: true
+    });
+  }
 
   let count = 1;
   let dread = 8;
@@ -20137,7 +20265,7 @@ function buildGalaxyTravelSceneCombatSeed(hex) {
     id: 'galaxy-scene-' + String(hex.id || Date.now()),
     name: 'Galaxy Scene · Hex ' + String(hex.id || '?'),
     tokens,
-    history: ['Galaxy scene loaded: Hex ' + String(hex.id || '?') + '.', 'Hostiles seeded: ' + String(count) + '.']
+    history: ['Galaxy scene loaded: Hex ' + String(hex.id || '?') + '.', 'Wayfarers seeded: ' + String(tokens.filter((token) => token && String(token.faction || '') === 'player').length) + '.', 'Hostiles seeded: ' + String(count) + '.']
   };
 }
 
@@ -20223,10 +20351,10 @@ function updateStarSystemReadouts() {
         actionButtons.push('<button class="btn btn-xs btn-teal" onclick="rollPlanetExploration()">Planet Exploration</button>');
         actionButtons.push('<button class="btn btn-xs" onclick="openActivePlanetMap()">Open Planet Map</button>');
       }
-      if (current.type === 'derelict_ship') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="var h=getCurrentStarHex();S.starSystem.activeDerelict=getHexPersistentState(h,\'derelict\',createDerelictShipState);renderDerelictPanel();">Explore Derelict</button>');
-      if (current.type === 'dead_moon') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="var h=getCurrentStarHex();S.starSystem.activeDeadMoonMap=getHexPersistentState(h,\'deadMoonMap\',createDeadMoonMapState);renderDeadMoonMapPanel();">Land On Dead Moon</button>');
+      if (current.type === 'derelict_ship') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="openGalaxyDerelictArea(' + Number(current.id || 0) + ')">Explore Derelict</button>');
+      if (current.type === 'dead_moon') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="openGalaxyDeadMoonArea(' + Number(current.id || 0) + ')">Land On Dead Moon</button>');
       if (current.type === 'mystery') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="var h=getCurrentStarHex();S.starSystem.activeMystery=getHexPersistentState(h,\'mystery\',function(){return createMysteryState(h.ring);});renderMysteryPanel();">Hail Mystery Contact</button>');
-      if (current.type === 'facility') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="var h=getCurrentStarHex();S.starSystem.activeFacility=getHexPersistentState(h,\'facility\',createFacilityState);renderFacilityPanel();">Dock At Facility</button>');
+      if (current.type === 'facility') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="openGalaxyFacilityArea(' + Number(current.id || 0) + ')">Dock At Facility</button>');
       if (current.type === 'radio_task') actionButtons.push('<button class="btn btn-xs btn-teal" onclick="resolveGalaxyRadioTask()">Resolve Radio Task</button>');
       if (current.taskMarker && !current.taskMarker.resolved) actionButtons.push('<button class="btn btn-xs btn-teal" onclick="renderGalaxyTaskPanel(\'' + current.taskMarker.id + '\')">Open Galaxy Task</button>');
       const factionBase = window.factionSystem && typeof window.factionSystem.getGalaxyMarker === 'function'
@@ -24197,9 +24325,11 @@ window.rollOracleOpenEnded = rollOracleOpenEnded;
 window.rollPlanetExploration = rollPlanetExploration;
 window.renderPlanetExplorationPanel = renderPlanetExplorationPanel;
 window.openActivePlanetMap = openActivePlanetMap;
+window.openPlanetAreaFromSharedSession = openPlanetAreaFromSharedSession;
 window.togglePlanetClickMode = togglePlanetClickMode;
 window.renderYessodPanel = renderYessodPanel;
 window.openYessodFromSun = openYessodFromSun;
+window.openYessodAreaFromSharedSession = openYessodAreaFromSharedSession;
 window.selectYessodCell = selectYessodCell;
 window.toggleYessodClickMode = toggleYessodClickMode;
 window.setYessodTravelMethod = setYessodTravelMethod;
@@ -24289,6 +24419,7 @@ window.resolveSpaceEncounterOption = resolveSpaceEncounterOption;
 window.resolveGalaxyPerilTraversal = resolveGalaxyPerilTraversal;
 window.resolveGalaxyWeatherCheck = resolveGalaxyWeatherCheck;
 window.resolveGalaxyRadioTask = resolveGalaxyRadioTask;
+window.openGalaxyAreaFromSharedSession = openGalaxyAreaFromSharedSession;
 window.openGalaxyTaskFromMap = openGalaxyTaskFromMap;
 window.mapMysteryMissionHook = mapMysteryMissionHook;
 window.renderRoyalShipLog = renderRoyalShipLog;
