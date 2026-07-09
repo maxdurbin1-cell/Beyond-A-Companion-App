@@ -596,23 +596,27 @@ window.playCustomMusicFromSettings = function() {
   function createSettingsPanel() {
     const container = document.getElementById(SETTINGS_ID);
     if (!container) return;
+    const activeTab = Settings.activeTab || 'general';
     
     container.innerHTML = `
       <div class="settings-popup">
         <div class="settings-header">
-          <h3>Settings</h3>
+          <div class="settings-header-main">
+            <h3>Settings</h3>
+            <div class="settings-subtitle">Table controls, audio, accessibility, and campaign tools in one place.</div>
+          </div>
           <button class="btn btn-icon btn-sm" onclick="window.settingsSystem.closeSettings()">✕</button>
         </div>
 
         <div class="settings-tabs" role="group" aria-label="Settings sections">
-          <button id="settingsTab-general" class="settings-tab-btn active" onclick="window.settingsSystem.setActiveTab('general')" aria-controls="settingsTabPanel-general" aria-current="page">General</button>
-          <button id="settingsTab-audio" class="settings-tab-btn" onclick="window.settingsSystem.setActiveTab('audio')" aria-controls="settingsTabPanel-audio">Audio</button>
-          <button id="settingsTab-accessibility" class="settings-tab-btn" onclick="window.settingsSystem.setActiveTab('accessibility')" aria-controls="settingsTabPanel-accessibility">${tr('settings.accessibility.title', 'Accessibility')}</button>
-          <button id="settingsTab-recovery" class="settings-tab-btn" onclick="window.settingsSystem.setActiveTab('recovery')" aria-controls="settingsTabPanel-recovery">Recovery</button>
-          <button id="settingsTab-campaign" class="settings-tab-btn" onclick="window.settingsSystem.setActiveTab('campaign')" aria-controls="settingsTabPanel-campaign">Campaign</button>
+          <button id="settingsTab-general" class="settings-tab-btn ${activeTab === 'general' ? 'active' : ''}" onclick="window.settingsSystem.setActiveTab('general')" aria-controls="settingsTabPanel-general" aria-current="${activeTab === 'general' ? 'page' : 'false'}">General</button>
+          <button id="settingsTab-audio" class="settings-tab-btn ${activeTab === 'audio' ? 'active' : ''}" onclick="window.settingsSystem.setActiveTab('audio')" aria-controls="settingsTabPanel-audio" aria-current="${activeTab === 'audio' ? 'page' : 'false'}">Audio</button>
+          <button id="settingsTab-accessibility" class="settings-tab-btn ${activeTab === 'accessibility' ? 'active' : ''}" onclick="window.settingsSystem.setActiveTab('accessibility')" aria-controls="settingsTabPanel-accessibility" aria-current="${activeTab === 'accessibility' ? 'page' : 'false'}">${tr('settings.accessibility.title', 'Accessibility')}</button>
+          <button id="settingsTab-recovery" class="settings-tab-btn ${activeTab === 'recovery' ? 'active' : ''}" onclick="window.settingsSystem.setActiveTab('recovery')" aria-controls="settingsTabPanel-recovery" aria-current="${activeTab === 'recovery' ? 'page' : 'false'}">Recovery</button>
+          <button id="settingsTab-campaign" class="settings-tab-btn ${activeTab === 'campaign' ? 'active' : ''}" onclick="window.settingsSystem.setActiveTab('campaign')" aria-controls="settingsTabPanel-campaign" aria-current="${activeTab === 'campaign' ? 'page' : 'false'}">Campaign</button>
         </div>
 
-        <div id="settingsTabPanel-general" class="settings-tab-panel active" data-settings-tab="general" tabindex="0" aria-hidden="false">
+        <div id="settingsTabPanel-general" class="settings-tab-panel ${activeTab === 'general' ? 'active' : ''}" data-settings-tab="general" tabindex="${activeTab === 'general' ? '0' : '-1'}" aria-hidden="${activeTab === 'general' ? 'false' : 'true'}">
           <div class="settings-section">
             <h4>Game Mode</h4>
             <div class="mode-current">
@@ -705,7 +709,7 @@ window.playCustomMusicFromSettings = function() {
           </div>
         </div>
         
-        <div id="settingsTabPanel-audio" class="settings-tab-panel" data-settings-tab="audio" tabindex="-1" aria-hidden="true">
+        <div id="settingsTabPanel-audio" class="settings-tab-panel ${activeTab === 'audio' ? 'active' : ''}" data-settings-tab="audio" tabindex="${activeTab === 'audio' ? '0' : '-1'}" aria-hidden="${activeTab === 'audio' ? 'false' : 'true'}">
           <div class="settings-section">
             <h4>Audio</h4>
             <div class="setting-row">
@@ -768,7 +772,7 @@ window.playCustomMusicFromSettings = function() {
           </div>
         </div>
 
-        <div id="settingsTabPanel-accessibility" class="settings-tab-panel" data-settings-tab="accessibility" tabindex="-1" aria-hidden="true">
+        <div id="settingsTabPanel-accessibility" class="settings-tab-panel ${activeTab === 'accessibility' ? 'active' : ''}" data-settings-tab="accessibility" tabindex="${activeTab === 'accessibility' ? '0' : '-1'}" aria-hidden="${activeTab === 'accessibility' ? 'false' : 'true'}">
           <div class="settings-section">
             <h4>${tr('settings.accessibility.title', 'Accessibility')}</h4>
             <div class="setting-row">
@@ -838,7 +842,7 @@ window.playCustomMusicFromSettings = function() {
           </div>
         </div>
 
-        <div id="settingsTabPanel-recovery" class="settings-tab-panel" data-settings-tab="recovery" tabindex="-1" aria-hidden="true">
+        <div id="settingsTabPanel-recovery" class="settings-tab-panel ${activeTab === 'recovery' ? 'active' : ''}" data-settings-tab="recovery" tabindex="${activeTab === 'recovery' ? '0' : '-1'}" aria-hidden="${activeTab === 'recovery' ? 'false' : 'true'}">
           <div class="settings-section">
             <h4>Solo Recovery</h4>
             <div class="campaign-muted" style="margin-bottom:.45rem;">Discoverability shortcut for save/load safety tools.</div>
@@ -856,7 +860,7 @@ window.playCustomMusicFromSettings = function() {
           </div>
         </div>
 
-        <div id="settingsTabPanel-campaign" class="settings-tab-panel" data-settings-tab="campaign" tabindex="-1" aria-hidden="true">
+        <div id="settingsTabPanel-campaign" class="settings-tab-panel ${activeTab === 'campaign' ? 'active' : ''}" data-settings-tab="campaign" tabindex="${activeTab === 'campaign' ? '0' : '-1'}" aria-hidden="${activeTab === 'campaign' ? 'false' : 'true'}">
           <div class="settings-section">
             <h4>Campaign</h4>
             <div class="setting-row" style="margin-bottom:.4rem;align-items:flex-start;">
@@ -1408,13 +1412,16 @@ window.playCustomMusicFromSettings = function() {
   function openSettings() {
     const container = document.getElementById(SETTINGS_ID);
     if (container) {
+      if (window.introSystem && typeof window.introSystem.dismissForWorkspace === 'function') {
+        try { window.introSystem.dismissForWorkspace(); } catch (_err) {}
+      }
       if (!container._escCloseHandler) {
         container._escCloseHandler = function (evt) {
           if (evt.key === 'Escape') closeSettings();
         };
         document.addEventListener('keydown', container._escCloseHandler);
       }
-      Settings.activeTab = 'general';
+      if (!Settings.activeTab) Settings.activeTab = 'general';
       syncGameModeUI();
       applySettingsTabVisibility();
       refreshRecoveryPanel();

@@ -409,6 +409,37 @@ Enter the game.
     }
   }
 
+  function isModalOpen() {
+    var modal = document.getElementById('rollModal');
+    return !!(modal && modal.classList.contains('open'));
+  }
+
+  function getOpenModalTitle() {
+    if (!isModalOpen()) return '';
+    var titleEl = document.getElementById('modalTitle');
+    return String(titleEl && titleEl.textContent ? titleEl.textContent : '').trim();
+  }
+
+  function isSoloEntryPromptOpen() {
+    return getOpenModalTitle() === 'Choose Solo Entry';
+  }
+
+  function closeSoloEntryPrompt() {
+    if (!isSoloEntryPromptOpen() || typeof window.closeModal !== 'function') return false;
+    try {
+      if (typeof window.clearModalStack === 'function') window.clearModalStack();
+      window.closeModal();
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function dismissForWorkspace() {
+    hideIntroOverlay();
+    closeSoloEntryPrompt();
+  }
+
   function suppressForMultiplayer() {
     if (typeof window !== 'undefined') {
       window.__BTL_SKIP_INTRO__ = true;
@@ -514,6 +545,9 @@ Enter the game.
     startGame,
     skipIntro,
     suppressForMultiplayer,
+    dismissForWorkspace,
+    closeSoloEntryPrompt,
+    isSoloEntryPromptOpen,
     enterLegacyMode,
     enterKnownRealmMode,
     shouldForceShowIntro,

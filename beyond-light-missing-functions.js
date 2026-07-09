@@ -3797,11 +3797,25 @@ function refreshHeaderHeartbeat() {
   const text = document.getElementById('headerHeartbeatText');
   if (!root || !dot || !text) return;
   const hb = getHeaderHeartbeatStatus();
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function chip(label, value, tone) {
+    var cls = tone ? (' hb-chip ' + tone) : ' hb-chip';
+    return '<span class="' + cls.trim() + '"><strong>' + esc(label) + '</strong><span>' + esc(value) + '</span></span>';
+  }
   dot.classList.remove('online', 'syncing', 'stale');
   dot.classList.add(hb.syncMode);
-  text.textContent = 'Save: ' + String(hb.saveText || '-')
-    + ' · Sync: ' + String(hb.syncLabel || 'Offline')
-    + ' · State: ' + (hb.dirty ? 'Dirty' : 'Clean');
+  text.innerHTML = [
+    chip('Save', hb.saveText || '-', ''),
+    chip('Sync', hb.syncLabel || 'Offline', 'is-sync-' + hb.syncMode),
+    chip('State', hb.dirty ? 'Unsaved' : 'Clean', hb.dirty ? 'is-dirty' : 'is-clean')
+  ].join('');
 }
 
 window.refreshHeaderHeartbeat = refreshHeaderHeartbeat;

@@ -64,12 +64,19 @@ header{background:linear-gradient(180deg,rgba(4,5,8,.98) 0%,rgba(10,12,24,.95) 5
 .header-credits:hover{border-color:var(--gold);transform:translateY(-1px);}
 .header-credits .cl{font-family:'Cinzel',serif;font-size:.68rem;letter-spacing:.16em;color:var(--text2);text-transform:uppercase;font-weight:600;}
 .header-credits .amt{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:1.02rem;color:var(--gold);}
-.header-heartbeat{display:flex;align-items:center;gap:.38rem;padding:.38rem .64rem;border:1px solid rgba(70,196,182,.22);background:linear-gradient(180deg,rgba(70,196,182,.08) 0%,rgba(255,255,255,.02) 100%);border-radius:12px;min-height:2rem;max-width:22rem;}
+.header-heartbeat{display:flex;align-items:flex-start;gap:.46rem;padding:.42rem .68rem;border:1px solid rgba(70,196,182,.22);background:linear-gradient(180deg,rgba(70,196,182,.08) 0%,rgba(255,255,255,.02) 100%);border-radius:14px;min-height:2.25rem;max-width:24rem;box-shadow:0 10px 24px rgba(0,0,0,.14);}
 .header-heartbeat .hb-dot{width:.45rem;height:.45rem;border-radius:50%;background:var(--muted2);box-shadow:0 0 8px rgba(0,0,0,.25);}
 .header-heartbeat .hb-dot.online{background:var(--green2);box-shadow:0 0 10px rgba(88,210,130,.55);}
 .header-heartbeat .hb-dot.syncing{background:var(--gold2);box-shadow:0 0 10px rgba(232,192,80,.5);}
 .header-heartbeat .hb-dot.stale{background:var(--red2);box-shadow:0 0 10px rgba(224,80,80,.5);}
-.header-heartbeat .hb-text{font-family:'Rajdhani',sans-serif;font-size:.73rem;line-height:1.25;color:var(--text2);}
+.header-heartbeat .hb-text{display:flex;flex-wrap:wrap;gap:.32rem;font-family:'Rajdhani',sans-serif;font-size:.72rem;line-height:1.2;color:var(--text2);}
+.header-heartbeat .hb-chip{display:inline-flex;align-items:center;gap:.26rem;padding:.18rem .42rem;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);white-space:nowrap;}
+.header-heartbeat .hb-chip strong{font-size:.64rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted2);font-weight:700;}
+.header-heartbeat .hb-chip.is-sync-online{border-color:rgba(110,208,144,.42);background:rgba(110,208,144,.08);color:var(--green2);}
+.header-heartbeat .hb-chip.is-sync-syncing{border-color:rgba(232,192,80,.45);background:rgba(232,192,80,.09);color:var(--gold3);}
+.header-heartbeat .hb-chip.is-sync-stale{border-color:rgba(224,80,80,.45);background:rgba(224,80,80,.10);color:var(--red2);}
+.header-heartbeat .hb-chip.is-dirty{border-color:rgba(224,80,80,.45);background:rgba(224,80,80,.10);color:var(--red2);}
+.header-heartbeat .hb-chip.is-clean{border-color:rgba(80,221,208,.32);background:rgba(80,221,208,.08);color:var(--teal2);}
 #main-content{width:min(100%,1680px);margin:0 auto;padding:1.15rem 1.2rem 2.4rem;}
 .tab-panel{display:none;padding:0;max-width:none;margin:0;min-height:calc(100vh - 56px);}
 .tab-panel.active{display:block;}
@@ -755,7 +762,11 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
   </div>
   <div id="headerHeartbeat" class="header-heartbeat" aria-live="polite">
     <span id="headerHeartbeatDot" class="hb-dot"></span>
-    <span id="headerHeartbeatText" class="hb-text">Save: - · Sync: Offline · State: Clean</span>
+    <span id="headerHeartbeatText" class="hb-text">
+      <span class="hb-chip"><strong>Save</strong><span>-</span></span>
+      <span class="hb-chip is-sync-stale"><strong>Sync</strong><span>Offline</span></span>
+      <span class="hb-chip is-clean"><strong>State</strong><span>Clean</span></span>
+    </span>
   </div>
 </header>
 
