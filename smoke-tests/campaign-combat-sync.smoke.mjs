@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -6,7 +7,6 @@ import process from "node:process";
 
 import { chromium } from "playwright";
 
-const BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
 const START_TIMEOUT_MS = 20000;
 const STEP_TIMEOUT_MS = 16000;
 const COMBAT_SYNC_TIMEOUT_MS = 10000;
@@ -15,11 +15,29 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function startServer() {
-  const child = spawn("node", ["server.js"], {
+function canBindPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => server.close(() => resolve(true)));
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function pickAvailablePort(preferredPort = 3202) {
+  if (await canBindPort(preferredPort)) return preferredPort;
+  for (let i = 0; i < 32; i += 1) {
+    const candidate = 5400 + Math.floor(Math.random() * 1200);
+    if (await canBindPort(candidate)) return candidate;
+  }
+  throw new Error("Unable to find a free port for campaign combat sync smoke.");
+}
+
+function startServer(port) {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT: process.env.PORT || "3000" }
+    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port) }
   });
 
   child.stdout.on("data", (buf) => {
@@ -393,12 +411,12 @@ async function syncSharedSilentRetry(page, reason, attempts = 6) {
   return { ok: false, error: "Sync retry exhausted." };
 }
 
-async function runScenario(browser) {
+async function runScenario(browser, baseUrl) {
   const gmPage = await browser.newPage();
   const playerPage = await browser.newPage();
 
   for (const page of [gmPage, playerPage]) {
-    await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     await waitForCampaignReady(page);
     await clearSession(page);
     await ensureBaseState(page);
@@ -744,13 +762,18 @@ async function runScenario(browser) {
 }
 
 async function run() {
-  const server = startServer();
+  const requestedUrl = String(process.env.SMOKE_URL || "").trim();
+  const port = requestedUrl
+    ? Number(new URL(requestedUrl).port || 80)
+    : await pickAvailablePort(Number(process.env.PORT || 3202) || 3202);
+  const baseUrl = requestedUrl || `http://127.0.0.1:${port}`;
+  const server = startServer(port);
   let browser;
 
   try {
-    await waitForServer(BASE_URL, START_TIMEOUT_MS);
+    await waitForServer(baseUrl, START_TIMEOUT_MS);
     browser = await launchChromium();
-    await runScenario(browser);
+    await runScenario(browser, baseUrl);
   } finally {
     if (browser) {
       try { await browser.close(); } catch (_err) {}

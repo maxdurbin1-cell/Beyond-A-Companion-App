@@ -767,9 +767,6 @@ function updateAllStatDisplays() {
   if (typeof renderEquippedSlotIcons === 'function') {
     renderEquippedSlotIcons();
   }
-  if (typeof window !== 'undefined' && window.SharedIconSystem && typeof window.SharedIconSystem.renderWayfarerSheetPanel === 'function') {
-    window.SharedIconSystem.renderWayfarerSheetPanel('wayfarerVisualPanel', S || {});
-  }
 }
 
 function buildStatRows() {

@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
+import net from "node:net";
 import process from "node:process";
 
 import { chromium } from "playwright";
 
-const BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3101";
-const PORT = String(new URL(BASE_URL).port || "3101");
 const START_TIMEOUT_MS = 20000;
 const STEP_TIMEOUT_MS = 30000;
 const CHROME_EXECUTABLE = process.env.CHROME_EXECUTABLE || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -13,11 +12,29 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function startServer() {
-  const child = spawn("node", ["server.js"], {
+function canBindPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => server.close(() => resolve(true)));
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function pickAvailablePort(preferredPort = 3101) {
+  if (await canBindPort(preferredPort)) return preferredPort;
+  for (let i = 0; i < 32; i += 1) {
+    const candidate = 5600 + Math.floor(Math.random() * 1200);
+    if (await canBindPort(candidate)) return candidate;
+  }
+  throw new Error("Unable to find a free port for World That Was permutations smoke.");
+}
+
+function startServer(port) {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT }
+    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port) }
   });
 
   child.stdout.on("data", (buf) => {
@@ -257,7 +274,7 @@ async function clickButtonContaining(page, text, root = "#wtwInfo") {
   await btn.click();
 }
 
-async function runScenario(browser) {
+async function runScenario(browser, baseUrl) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   page.setDefaultTimeout(8000);
   const pageErrors = [];
@@ -265,7 +282,9 @@ async function runScenario(browser) {
     pageErrors.push(String(err && err.message ? err.message : err));
   });
 
-  await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+  const url = new URL(baseUrl);
+  url.searchParams.set("skipIntro", "1");
+  await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
   await dismissBlockingOverlays(page);
   await bootWorldThatWas(page);
 
@@ -432,12 +451,17 @@ async function runScenario(browser) {
 }
 
 async function main() {
-  const server = startServer();
+  const requestedUrl = String(process.env.SMOKE_URL || "").trim();
+  const port = requestedUrl
+    ? Number(new URL(requestedUrl).port || 80)
+    : await pickAvailablePort(Number(process.env.PORT || 3101) || 3101);
+  const baseUrl = requestedUrl || `http://127.0.0.1:${port}`;
+  const server = startServer(port);
   let browser;
   try {
-    await waitForServer(BASE_URL, START_TIMEOUT_MS);
+    await waitForServer(baseUrl, START_TIMEOUT_MS);
     browser = await chromium.launch({ headless: true, executablePath: CHROME_EXECUTABLE });
-    const summary = await runScenario(browser);
+    const summary = await runScenario(browser, baseUrl);
     process.stdout.write(`[smoke] world-that-was permutations summary: ${JSON.stringify(summary)}\n`);
   } finally {
     if (browser) await browser.close();

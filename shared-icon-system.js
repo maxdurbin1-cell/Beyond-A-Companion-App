@@ -257,10 +257,6 @@
   }
 
   function rerenderWayfarerPortrait() {
-    if (typeof window !== 'undefined' && window.SharedIconSystem && typeof window.SharedIconSystem.renderWayfarerSheetPanel === 'function') {
-      window.SharedIconSystem.renderWayfarerSheetPanel('wayfarerVisualPanel', window.S || {});
-      return true;
-    }
     return false;
   }
 
@@ -469,8 +465,9 @@
     if (typeof document === 'undefined') return false;
     var el = typeof targetId === 'string' ? document.getElementById(targetId) : targetId;
     if (!el) return false;
-    el.innerHTML = getWayfarerPortraitHtml(state || {}, { size: 84 });
-    return true;
+    el.innerHTML = '';
+    el.style.display = 'none';
+    return false;
   }
 
   window.SharedIconSystem = {

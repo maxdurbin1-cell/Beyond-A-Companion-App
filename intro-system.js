@@ -288,6 +288,40 @@ Enter the game.
     }
   }
 
+  function hasStoredCampaignSession() {
+    if (typeof window === 'undefined') return false;
+    const key = 'beyond-light-campaign-session';
+    try {
+      const sessionStore = window.sessionStorage;
+      if (sessionStore && typeof sessionStore.getItem === 'function' && sessionStore.getItem(key)) {
+        return true;
+      }
+    } catch (_err) {}
+    try {
+      return !!(window.localStorage && typeof window.localStorage.getItem === 'function' && window.localStorage.getItem(key));
+    } catch (_err2) {
+      return false;
+    }
+  }
+
+  function shouldSuppressIntroForMultiplayer() {
+    if (typeof window === 'undefined') return false;
+    if (window.__BTL_SKIP_INTRO_MULTIPLAYER__ === true) return true;
+    try {
+      if (window.campaignSystem && typeof window.campaignSystem.getState === 'function') {
+        const campaignState = window.campaignSystem.getState();
+        if (campaignState && campaignState.code) return true;
+      }
+    } catch (_err) {}
+    try {
+      if (window.settingsSystem && window.settingsSystem.Settings) {
+        const mode = String(window.settingsSystem.Settings.gameMode || 'solo');
+        if (mode === 'gm' || mode === 'campaign') return true;
+      }
+    } catch (_err2) {}
+    return hasStoredCampaignSession();
+  }
+
   function hasExistingProgress() {
     const state = (typeof window !== 'undefined') ? (window.S || {}) : {};
     const hasCharacter = !!String((state && state.name) || '').trim();
@@ -313,7 +347,7 @@ Enter the game.
 
   function shouldAutoSkipIntro() {
     if (shouldForceShowIntro()) return false;
-    return shouldForceSkipIntro();
+    return shouldForceSkipIntro() || shouldSuppressIntroForMultiplayer();
   }
 
   function forceShowIntroOverlay() {
@@ -373,6 +407,14 @@ Enter the game.
       introContainer.style.removeProperty('z-index');
       introContainer.style.display = "none";
     }
+  }
+
+  function suppressForMultiplayer() {
+    if (typeof window !== 'undefined') {
+      window.__BTL_SKIP_INTRO__ = true;
+      window.__BTL_SKIP_INTRO_MULTIPLAYER__ = true;
+    }
+    hideIntroOverlay();
   }
 
   function isSoloModeEnabled() {
@@ -471,6 +513,7 @@ Enter the game.
     prevScreen,
     startGame,
     skipIntro,
+    suppressForMultiplayer,
     enterLegacyMode,
     enterKnownRealmMode,
     shouldForceShowIntro,

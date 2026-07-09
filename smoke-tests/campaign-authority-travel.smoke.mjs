@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
 import { chromium } from "playwright";
 
-const BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
 const START_TIMEOUT_MS = Math.max(20000, Number(process.env.SMOKE_START_TIMEOUT_MS) || 120000);
 const STEP_TIMEOUT_MS = Math.max(15000, Number(process.env.SMOKE_STEP_TIMEOUT_MS) || 45000);
 
@@ -13,7 +13,25 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function startServer() {
+function canBindPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => server.close(() => resolve(true)));
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function pickAvailablePort(preferredPort = 3201) {
+  if (await canBindPort(preferredPort)) return preferredPort;
+  for (let i = 0; i < 32; i += 1) {
+    const candidate = 5200 + Math.floor(Math.random() * 1200);
+    if (await canBindPort(candidate)) return candidate;
+  }
+  throw new Error("Unable to find a free port for campaign authority travel smoke.");
+}
+
+function startServer(port) {
   const stamp = `${process.pid}-${Date.now()}`;
   const tempRoot = path.join(os.tmpdir(), `btl-smoke-authority-travel-${stamp}`);
   const child = spawn(process.execPath, ["server.js"], {
@@ -22,7 +40,7 @@ function startServer() {
     env: {
       ...process.env,
       HOST: process.env.HOST || "127.0.0.1",
-      PORT: process.env.PORT || "3000",
+      PORT: String(port),
       PAYWALL_DISABLED: process.env.PAYWALL_DISABLED || "1",
       CAMPAIGN_STORE_PATH: process.env.CAMPAIGN_STORE_PATH || path.join(tempRoot, "campaign-data.json"),
       CAMPAIGN_SNAPSHOT_DIR: process.env.CAMPAIGN_SNAPSHOT_DIR || path.join(tempRoot, "snapshots"),
@@ -54,8 +72,8 @@ async function waitForServer(url, timeoutMs) {
   throw new Error(`Server did not become ready at ${url} within ${timeoutMs}ms`);
 }
 
-async function resetPage(page) {
-  const url = new URL(BASE_URL);
+async function resetPage(page, baseUrl) {
+  const url = new URL(baseUrl);
   url.searchParams.set("skipIntro", "1");
   await page.goto(url.toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.waitForFunction(
@@ -80,16 +98,21 @@ async function resetPage(page) {
 }
 
 async function main() {
-  const server = startServer();
+  const requestedUrl = String(process.env.SMOKE_URL || "").trim();
+  const port = requestedUrl
+    ? Number(new URL(requestedUrl).port || 80)
+    : await pickAvailablePort(Number(process.env.PORT || 3201) || 3201);
+  const baseUrl = requestedUrl || `http://127.0.0.1:${port}`;
+  const server = startServer(port);
   let browser;
   try {
-    await waitForServer(BASE_URL, START_TIMEOUT_MS);
+    await waitForServer(baseUrl, START_TIMEOUT_MS);
     browser = await chromium.launch({ headless: true });
     const gmPage = await browser.newPage();
     const playerPage = await browser.newPage();
 
-    await resetPage(gmPage);
-    await resetPage(playerPage);
+    await resetPage(gmPage, baseUrl);
+    await resetPage(playerPage, baseUrl);
 
     await gmPage.evaluate(() => {
       const el = document.getElementById("campaignNameInput");
@@ -204,26 +227,46 @@ async function main() {
       throw new Error("Could not choose a province hex for authority sync validation.");
     }
 
-    await gmPage.waitForFunction(
-      (key) => {
+    try {
+      await gmPage.waitForFunction(
+        (key) => {
+          const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
+          const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+            ? window.campaignSystem.getSharedState()
+            : null;
+          const travel = shared && shared.campaignTravel;
+          return !!(
+            province
+            && String(province.selectedKey || "") === key
+            && shared
+            && shared.provinceMap
+            && String(shared.provinceMap.selectedKey || "") === key
+            && travel
+            && String(travel.provinceKey || "") === key
+          );
+        },
+        selectedKey,
+        { timeout: STEP_TIMEOUT_MS }
+      );
+    } catch (err) {
+      const diag = await gmPage.evaluate((key) => {
         const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
         const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
           ? window.campaignSystem.getSharedState()
           : null;
-        const travel = shared && shared.campaignTravel;
-        return !!(
-          province
-          && String(province.selectedKey || "") === key
-          && shared
-          && shared.provinceMap
-          && String(shared.provinceMap.selectedKey || "") === key
-          && travel
-          && String(travel.provinceKey || "") === key
-        );
-      },
-      selectedKey,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+        const travel = shared && shared.campaignTravel ? shared.campaignTravel : null;
+        return {
+          key,
+          provinceSelectedKey: province ? String(province.selectedKey || "") : "",
+          sharedProvinceSelectedKey: shared && shared.provinceMap ? String(shared.provinceMap.selectedKey || "") : "",
+          travelProvinceKey: travel ? String(travel.provinceKey || "") : "",
+          travelReason: travel ? String(travel.reason || "") : "",
+          travelTab: travel ? String(travel.tab || "") : "",
+          sharedKeys: shared ? Object.keys(shared) : []
+        };
+      }, selectedKey);
+      throw new Error(`GM province focus did not sync: ${JSON.stringify(diag)} error=${String(err && err.message ? err.message : err)}`);
+    }
 
     await playerPage.evaluate(() => {
       if (typeof window.setContext === "function") {
@@ -359,7 +402,7 @@ async function main() {
       { timeout: STEP_TIMEOUT_MS }
     );
 
-    const successApplied = await gmPage.evaluate(async (checkId, targetToken) => {
+    const successApplied = await gmPage.evaluate(async ({ checkId, targetToken }) => {
       const applied = await window.campaignSystem.applyGmCheckOutcome({
         checkId,
         label: "Smoke Success Check",
@@ -379,7 +422,7 @@ async function main() {
         effectsApplied: applied.applied || null
       });
       return { ok: !!resolved, applied: applied.applied || null };
-    }, successCheckId, playerToken);
+    }, { checkId: successCheckId, targetToken: playerToken });
 
     if (!successApplied || !successApplied.ok) {
       throw new Error(`GM could not resolve success check: ${JSON.stringify(successApplied)}`);
@@ -479,8 +522,14 @@ async function main() {
       const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
         ? window.campaignSystem.getSharedState()
         : {};
+      const campaignState = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+        ? window.campaignSystem.getState()
+        : null;
+      const campaignShared = campaignState && campaignState.campaign && campaignState.campaign.shared
+        ? campaignState.campaign.shared
+        : null;
       return {
-        tmw: Number(shared.tmw || 0),
+        tmw: Number(campaignShared && campaignShared.tmw || (window.S && window.S.tmw) || 0),
         pendingHistory: Array.isArray(shared.pendingChecks && shared.pendingChecks.history)
           ? shared.pendingChecks.history.length
           : 0

@@ -2054,10 +2054,8 @@
           return row;
         })
       : [];
-    var sceneEditorState = (window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object')
-      ? (deepCloneJson(normalizeCampaignCombatSceneState(window.S.combat.sceneEditor)) || null)
-      : null;
-    if (!sceneEditorState && store && typeof store.getState === 'function') {
+    var sceneEditorState = null;
+    if (store && typeof store.getState === 'function') {
       try {
         var storeState = store.getState();
         if (storeState && typeof storeState === 'object' && Array.isArray(storeState.tokens)) {
@@ -2066,6 +2064,9 @@
       } catch (_err) {
         sceneEditorState = null;
       }
+    }
+    if (!sceneEditorState && window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === 'object') {
+      sceneEditorState = deepCloneJson(normalizeCampaignCombatSceneState(window.S.combat.sceneEditor)) || null;
     }
     if (sceneEditorState && window.S && window.S.combat && (!window.S.combat.sceneEditor || typeof window.S.combat.sceneEditor !== 'object')) {
       window.S.combat.sceneEditor = deepCloneJson(sceneEditorState) || sceneEditorState;
@@ -15252,6 +15253,9 @@
     if (!cloned) return false;
     var overlay = document.getElementById('combatModeOverlay');
     var overlayOpen = !!(overlay && overlay.classList.contains('open'));
+    var preservedCombatMap = opts.preserveCombatMap && window.S && window.S.combatMap && typeof window.S.combatMap === 'object'
+      ? (clone(window.S.combatMap) || window.S.combatMap)
+      : null;
     if (opts.autoOpen && !overlayOpen) {
       syncCombatScenesTabNavigation();
       openOverlay({
@@ -15272,6 +15276,10 @@
       });
     } finally {
       applyingSharedCombatSceneEditorState = false;
+      if (preservedCombatMap) {
+        window.S = window.S || {};
+        window.S.combatMap = clone(preservedCombatMap) || preservedCombatMap;
+      }
     }
     if (overlayOpen || opts.refreshUi) {
       try { applyCombatUiState(store.getState()); } catch (_err) {}

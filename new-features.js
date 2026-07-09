@@ -12497,6 +12497,21 @@
     var relativeEnemyZone = spacingToZone(spacingEl ? spacingEl.value : 'Nearby (Shoot)');
     var spacingChanged = S.combatMap.lastRelativeZone !== relativeEnemyZone;
     S.combatMap.lastRelativeZone = relativeEnemyZone;
+    var authoritativeZones = {};
+    try {
+      if (typeof window.campaignSystem !== 'undefined' && typeof window.campaignSystem.getSharedState === 'function') {
+        var sharedState = window.campaignSystem.getSharedState();
+        var sharedScene = sharedState && sharedState.combatScene && typeof sharedState.combatScene === 'object'
+          ? sharedState.combatScene
+          : null;
+        if (sharedScene && sharedScene.combatMap && Array.isArray(sharedScene.combatMap.units)) {
+          sharedScene.combatMap.units.forEach(function(unit) {
+            if (!unit || !unit.trackerKey) { return; }
+            authoritativeZones[String(unit.trackerKey)] = String(unit.zone || '');
+          });
+        }
+      }
+    } catch (_err) {}
     if (!hasPlayer) {
       S.combatMap.units.push({ id: combatMapUnitId++, name: playerName, side: 'ally', zone: 'Engaged', isPlayer: true });
     } else if (hasPlayer) {
@@ -12543,7 +12558,11 @@
       if (!data) { return; }
       unit.name = data.name;
       unit.side = data.side;
-      if (unit.side === 'enemy' && spacingChanged) { unit.zone = relativeEnemyZone; }
+      if (authoritativeZones[unit.trackerKey]) {
+        unit.zone = authoritativeZones[unit.trackerKey];
+      } else if (unit.side === 'enemy' && spacingChanged) {
+        unit.zone = relativeEnemyZone;
+      }
     });
 
     Object.keys(desired).forEach(function(key) {
@@ -12559,14 +12578,18 @@
         existingMatch.trackerKey = key;
         existingMatch.side = desired[key].side;
         existingMatch.name = desired[key].name;
-        if (existingMatch.side === 'enemy' && spacingChanged) { existingMatch.zone = relativeEnemyZone; }
+        if (authoritativeZones[key]) {
+          existingMatch.zone = authoritativeZones[key];
+        } else if (existingMatch.side === 'enemy' && spacingChanged) {
+          existingMatch.zone = relativeEnemyZone;
+        }
         return;
       }
       S.combatMap.units.push({
         id: combatMapUnitId++,
         name: desired[key].name,
         side: desired[key].side,
-        zone: desired[key].side === 'enemy' ? relativeEnemyZone : 'Engaged',
+        zone: authoritativeZones[key] || (desired[key].side === 'enemy' ? relativeEnemyZone : 'Engaged'),
         fromTracker: true,
         trackerKey: key
       });
