@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 import { chromium } from "playwright";
 
-const BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
+let BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
 const START_TIMEOUT_MS = 20000;
 const STEP_TIMEOUT_MS = 30000;
 
@@ -11,11 +14,38 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function startServer() {
+function canBindPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function pickAvailablePort(preferredPort = 3203) {
+  if (await canBindPort(preferredPort)) return preferredPort;
+  for (let i = 0; i < 32; i += 1) {
+    const candidate = 5600 + Math.floor(Math.random() * 800);
+    if (await canBindPort(candidate)) return candidate;
+  }
+  throw new Error("Unable to find a free port for guild multiplayer sync smoke.");
+}
+
+function startServer(port, tempRoot) {
   const child = spawn("node", ["server.js"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT: process.env.PORT || "3000" }
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      CAMPAIGN_STORE_PATH: process.env.CAMPAIGN_STORE_PATH || path.join(tempRoot, "campaign-data.json"),
+      CAMPAIGN_SNAPSHOT_DIR: process.env.CAMPAIGN_SNAPSHOT_DIR || path.join(tempRoot, "snapshots"),
+      LICENSE_STORE_PATH: process.env.LICENSE_STORE_PATH || path.join(tempRoot, "license-data.json")
+    }
   });
 
   child.stdout.on("data", (buf) => {
@@ -225,7 +255,14 @@ async function runScenario(browser) {
 }
 
 async function main() {
-  const server = startServer();
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const tempRoot = path.join(os.tmpdir(), `btl-smoke-guild-sync-${stamp}`);
+  const requestedUrl = String(process.env.SMOKE_URL || "").trim();
+  const port = requestedUrl
+    ? Number(new URL(requestedUrl).port || 80)
+    : await pickAvailablePort(Number(process.env.PORT || 3203) || 3203);
+  BASE_URL = requestedUrl || `http://127.0.0.1:${port}`;
+  const server = startServer(port, tempRoot);
   let browser;
   try {
     await waitForServer(BASE_URL, START_TIMEOUT_MS);

@@ -222,7 +222,7 @@ async function clickMissionsAndAssert(page, ctx, label) {
       missionBtnActive: !!(btn && btn.classList.contains("active")),
       missionPanelActive: !!(panel && panel.classList.contains("active")),
       missionParentId: String(btn && btn.parentElement ? btn.parentElement.id || "" : ""),
-      missionInTablist: !!(btn && tablist && btn.parentElement === tablist),
+      missionInTablist: !!(btn && tablist && tablist.contains(btn)),
       activePanels,
       activeTabs,
       missionDisplay: btn ? String(window.getComputedStyle(btn).display || "") : "missing",
@@ -242,7 +242,7 @@ async function clickMissionsAndAssert(page, ctx, label) {
     return {
       context: activeCtx,
       missionParentId: parentId,
-      inMainTablist: !!(tablist && btn && btn.parentElement === tablist),
+      inMainTablist: !!(tablist && btn && tablist.contains(btn)),
       missionDisplay: computedDisplay,
       missionBtnActive: !!(btn && btn.classList.contains("active")),
       missionPanelActive: !!(panel && panel.classList.contains("active")),

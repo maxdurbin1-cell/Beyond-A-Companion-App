@@ -36,9 +36,10 @@
     "smoke:minigames-expedition": "node smoke-tests/minigames-expedition.smoke.mjs",
     "smoke:minigames-expedition-campaign": "node smoke-tests/minigames-expedition-campaign.smoke.mjs",
   "smoke:bone-oracle": "node smoke-tests/bone-oracle.smoke.mjs",
-  "smoke:shared-puzzles": "node smoke-tests/shared-puzzles.smoke.mjs",
-  "smoke:merchant-drugs": "node smoke-tests/merchant-drugs.smoke.mjs",
-  "smoke:newsun-scheduler": "node smoke-tests/new-sun-scheduler.smoke.mjs",
+    "smoke:shared-puzzles": "node smoke-tests/shared-puzzles.smoke.mjs",
+    "smoke:merchant-drugs": "node smoke-tests/merchant-drugs.smoke.mjs",
+    "smoke:newsun-scheduler": "node smoke-tests/new-sun-scheduler.smoke.mjs",
+    "smoke:gm-forge-chronicle": "node smoke-tests/gm-forge-chronicle.smoke.mjs",
     "smoke:open-world": "node smoke-tests/open-world.smoke.mjs",
     "smoke:manual-exploded-rolls": "node smoke-tests/manual-exploded-rolls.smoke.mjs",
     "smoke:affix-normalization": "node smoke-tests/affix-normalization.smoke.mjs",
@@ -60,7 +61,9 @@
     "smoke:campaign-roll-request-flow": "node smoke-tests/campaign-roll-request-flow.smoke.mjs",
     "smoke:campaign-music-vtt-join": "node smoke-tests/campaign-music-vtt-join.smoke.mjs",
     "smoke:campaign-exploration-sweep": "node smoke-tests/campaign-exploration-sweep.smoke.mjs",
-    "smoke:test": "npm run smoke:clicks && npm run smoke:portrait-preview && npm run smoke:solo-library && npm run smoke:minigames-expedition && npm run smoke:minigames-expedition-campaign && npm run smoke:bone-oracle && npm run smoke:combat-sync && npm run smoke:combat-turns && npm run smoke:campaign-enemy-prompt && npm run smoke:campaign-tab-isolation && npm run smoke:token-target-damage && npm run smoke:enemy-loot-drop && npm run smoke:enemy-loot-drop-items && npm run smoke:scenario && npm run smoke:campaign-missions-context && npm run smoke:guild-multiplayer-sync && npm run smoke:campaign-shared-origin-and-sheets && npm run smoke:authority-travel && npm run smoke:campaign-exploration-sweep && npm run smoke:campaign-music-vtt-join && npm run smoke:wtw-permutations && npm run smoke:deep-world-branches && npm run smoke:newsun-scheduler && npm run smoke:legacy-raid && npm run smoke:raid-combat-return && npm run smoke:quick-panel-raid-ui && npm run smoke:raid-teleport-choice && npm run smoke:guild-system && npm run smoke:open-world && npm run smoke:maybe-reconnect"
+    "smoke:multiplayer-soak": "node smoke-tests/multiplayer-release-soak.smoke.mjs multiplayer",
+    "smoke:test": "node smoke-tests/multiplayer-release-soak.smoke.mjs core",
+    "smoke:release": "npm run smoke:test && npm run smoke:multiplayer-soak"
   },
   "dependencies": {
     "express": "^4.21.2",

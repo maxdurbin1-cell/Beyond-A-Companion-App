@@ -845,6 +845,48 @@ body.lowcolor-mode .campaign-dock-badge.idle::before {
   background: rgba(224, 96, 96, 0.12);
 }
 
+body.campaign-player-lite-mode .campaign-card {
+  padding: 0.55rem 0.58rem;
+}
+
+body.campaign-player-lite-mode .campaign-card-title {
+  font-size: 0.56rem;
+  letter-spacing: 0.13em;
+}
+
+body.campaign-player-lite-mode .campaign-muted {
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+body.campaign-player-lite-mode .campaign-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+body.campaign-player-lite-mode .campaign-actions .btn {
+  width: 100%;
+  min-height: 2.5rem;
+  font-size: 0.78rem;
+}
+
+body.campaign-player-lite-mode .campaign-status-row {
+  align-items: stretch;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+body.campaign-player-lite-mode .campaign-log-row {
+  padding: 0.42rem 0;
+}
+
+@media (max-width: 720px) {
+  body.campaign-player-lite-mode .campaign-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .campaign-dock-filters {
   display: flex;
   gap: 0.28rem;
@@ -1757,8 +1799,32 @@ body.phone-layout-mode .campaign-dock-roll-actions .btn {
     --settings-header-height: 5.4rem;
   }
 
+  .settings-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.28rem;
+    padding: 0.5rem 0.55rem 0.58rem;
+  }
+
+  #settingsPanel .settings-tab-btn {
+    min-height: 2.16rem;
+    font-size: 0.6rem;
+    padding: 0.4rem 0.24rem;
+    letter-spacing: 0.06em;
+  }
+
+  .settings-section {
+    padding: 0.58rem 0.6rem 0.7rem;
+  }
+
   .settings-subtitle {
     font-size: 0.72rem;
+  }
+
+  body.settings-panel-open #quickPanel,
+  body.settings-panel-open #quickPanelToggle {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(12px);
   }
 }
 

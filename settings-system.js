@@ -873,7 +873,7 @@ window.playCustomMusicFromSettings = function() {
                 <div class="campaign-muted" style="font-size:.72rem;">Use the dock scene buttons to change the pinned mode while lock is on.</div>
               </div>
             </div>
-            <div class="campaign-muted">Campaign controls and multiplayer diagnostics live here.</div>
+            <div class="campaign-muted">Campaign controls, resume/rejoin recovery, and multiplayer diagnostics live here.</div>
           </div>
         </div>
         
@@ -1415,6 +1415,17 @@ window.playCustomMusicFromSettings = function() {
       if (window.introSystem && typeof window.introSystem.dismissForWorkspace === 'function') {
         try { window.introSystem.dismissForWorkspace(); } catch (_err) {}
       }
+      if (window.innerWidth <= 700) {
+        const quickPanel = document.getElementById('quickPanel');
+        const quickPanelToggle = document.getElementById('quickPanelToggle');
+        if (quickPanel && quickPanel.classList.contains('open')) {
+          quickPanel.classList.remove('open');
+        }
+        if (quickPanelToggle) {
+          quickPanelToggle.classList.remove('open');
+          quickPanelToggle.setAttribute('aria-expanded', 'false');
+        }
+      }
       if (!container._escCloseHandler) {
         container._escCloseHandler = function (evt) {
           if (evt.key === 'Escape') closeSettings();
@@ -1426,6 +1437,7 @@ window.playCustomMusicFromSettings = function() {
       applySettingsTabVisibility();
       refreshRecoveryPanel();
       container.classList.add('open');
+      if (document.body) document.body.classList.add('settings-panel-open');
     }
   }
   
@@ -1439,6 +1451,7 @@ window.playCustomMusicFromSettings = function() {
         delete container._escCloseHandler;
       }
     }
+    if (document.body) document.body.classList.remove('settings-panel-open');
   }
   
   function toggleSettings() {

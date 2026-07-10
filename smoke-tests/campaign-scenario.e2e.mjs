@@ -1,14 +1,62 @@
+import fs from "node:fs";
 import { spawn } from "node:child_process";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 import { chromium } from "playwright";
 
-const BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
+let BASE_URL = process.env.SMOKE_URL || "http://127.0.0.1:3000";
 const START_TIMEOUT_MS = 20000;
 const STEP_TIMEOUT_MS = 25000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function canBindPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function pickAvailablePort(preferredPort = 3205) {
+  if (await canBindPort(preferredPort)) return preferredPort;
+  for (let i = 0; i < 32; i += 1) {
+    const candidate = 7000 + Math.floor(Math.random() * 800);
+    if (await canBindPort(candidate)) return candidate;
+  }
+  throw new Error("Unable to find a free port for campaign scenario smoke.");
+}
+
+function findChromiumExecutable() {
+  const homeDir = process.env.HOME || os.homedir();
+  const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+    path.join(homeDir, "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+  ];
+  return candidates.find((entry) => entry && fs.existsSync(entry)) || "";
+}
+
+async function launchChromium() {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (message.indexOf("Executable doesn't exist") < 0 && message.indexOf("Timeout") < 0) throw err;
+    const executablePath = findChromiumExecutable();
+    if (!executablePath) throw err;
+    return chromium.launch({ headless: true, executablePath });
+  }
 }
 
 async function syncSharedWithRetry(page, reason, options) {
@@ -26,7 +74,7 @@ async function syncSharedWithRetry(page, reason, options) {
     if (result && result.ok) return result;
 
     const errText = String(result && result.sync && result.sync.error || "").toLowerCase();
-    const retriable = errText.indexOf("sync already in flight") >= 0;
+    const retriable = errText.indexOf("sync already in flight") >= 0 || errText.indexOf("stale combat scene sync") >= 0;
     if (!retriable || attempt >= retries) {
       return result;
     }
@@ -36,11 +84,19 @@ async function syncSharedWithRetry(page, reason, options) {
   return { ok: false, sync: { ok: false, error: "sync retry exhausted" } };
 }
 
-function startServer() {
+function startServer(port, tempRoot) {
   const child = spawn("node", ["server.js"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT: process.env.PORT || "3000" }
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      PAYWALL_DISABLED: process.env.PAYWALL_DISABLED || "1",
+      CAMPAIGN_STORE_PATH: process.env.CAMPAIGN_STORE_PATH || path.join(tempRoot, "campaign-data.json"),
+      CAMPAIGN_SNAPSHOT_DIR: process.env.CAMPAIGN_SNAPSHOT_DIR || path.join(tempRoot, "snapshots"),
+      LICENSE_STORE_PATH: process.env.LICENSE_STORE_PATH || path.join(tempRoot, "license-data.json")
+    }
   });
 
   child.stdout.on("data", (buf) => {
@@ -98,6 +154,62 @@ async function waitForCampaignReady(page) {
   await dismissBlockingOverlays(page);
 }
 
+async function waitForCampaignSnapshot(page, campaignCode, minSharedVersion = 0) {
+  let lastError = null;
+  const expectedCode = String(campaignCode || "").trim();
+  const expectedVersion = Math.max(0, Number(minSharedVersion || 0));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.waitForFunction(
+        ({ code, minVersion }) => {
+          const st = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+            ? window.campaignSystem.getState()
+            : null;
+          const campaign = st && st.campaign && typeof st.campaign === "object" ? st.campaign : null;
+          const shared = campaign && campaign.shared && typeof campaign.shared === "object" ? campaign.shared : null;
+          const snapshotCode = String(campaign && campaign.code || st && st.code || "").trim();
+          const sharedVersion = Number(shared && shared.stateVersion || 0);
+          if (!campaign || !shared) return false;
+          if (code && snapshotCode !== code) return false;
+          return sharedVersion >= minVersion;
+        },
+        { code: expectedCode, minVersion: expectedVersion },
+        { timeout: STEP_TIMEOUT_MS }
+      );
+      await dismissBlockingOverlays(page);
+      return;
+    } catch (err) {
+      lastError = err;
+      try {
+        await page.evaluate(async () => {
+          if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+            await window.campaignSystem.requestResync();
+          }
+        });
+      } catch (_err) {}
+      await wait(250);
+    }
+  }
+  const readiness = await page.evaluate(() => {
+    const st = window.campaignSystem && typeof window.campaignSystem.getState === "function"
+      ? window.campaignSystem.getState()
+      : null;
+    const campaign = st && st.campaign && typeof st.campaign === "object" ? st.campaign : null;
+    const shared = campaign && campaign.shared && typeof campaign.shared === "object" ? campaign.shared : null;
+    return {
+      connected: !!(st && st.connected),
+      code: String(st && st.code || ""),
+      role: String(st && st.role || ""),
+      hasCampaign: !!campaign,
+      campaignCode: String(campaign && campaign.code || ""),
+      sharedVersion: Number(shared && shared.stateVersion || 0),
+      hasSharedState: !!(shared && shared.state && typeof shared.state === "object"),
+      documentReadyState: String(document.readyState || "")
+    };
+  });
+  throw new Error(`Campaign snapshot wait timed out: expectedCode=${expectedCode} minSharedVersion=${expectedVersion} state=${JSON.stringify(readiness)} error=${String(lastError && lastError.message ? lastError.message : lastError)}`);
+}
+
 async function clearSession(page) {
   await page.evaluate(async () => {
     try {
@@ -132,8 +244,14 @@ async function collectStashSnapshot(page, label) {
       const state = (window.campaignSystem && typeof window.campaignSystem.getState === "function")
         ? window.campaignSystem.getState()
         : null;
-      const shared = state && state.campaign && state.campaign.shared && state.campaign.shared.state
-        ? state.campaign.shared.state
+      const campaign = state && state.campaign && typeof state.campaign === "object"
+        ? state.campaign
+        : null;
+      const sharedWrapper = campaign && campaign.shared && typeof campaign.shared === "object"
+        ? campaign.shared
+        : null;
+      const shared = sharedWrapper && sharedWrapper.state && typeof sharedWrapper.state === "object"
+        ? sharedWrapper.state
         : {};
       const stash = Array.isArray(shared.partyStash) ? shared.partyStash.slice() : [];
       return {
@@ -141,12 +259,9 @@ async function collectStashSnapshot(page, label) {
         role: String(state && state.role || ""),
         token: String(state && state.token || ""),
         connected: !!(state && state.connected),
-        syncHealth: String(state && state.syncHealth || ""),
-        syncText: String(state && state.syncText || ""),
-        lastCampaignStateAt: Number(state && state.lastCampaignStateAt || 0),
-        sharedVersion: Number(state && state.lastSharedVersion || 0),
-        pendingSyncCount: Number(state && state.pendingSyncCount || 0),
-        syncConflictCount: Number(state && state.syncConflictCount || 0),
+        hasCampaign: !!campaign,
+        campaignCode: String(campaign && campaign.code || ""),
+        sharedVersion: Number(sharedWrapper && sharedWrapper.stateVersion || 0),
         partyStash: stash,
         partyStashCount: stash.length
       };
@@ -235,6 +350,8 @@ async function runScenario(browser) {
     );
   }
 
+  await Promise.all([gmPage, p1Page, p2Page].map((page) => waitForCampaignSnapshot(page, code, 0)));
+
   await gmPage.evaluate(async () => {
     if (typeof window.generateMap === "function") window.generateMap();
     if (typeof window.generateLastSea === "function") window.generateLastSea();
@@ -250,6 +367,9 @@ async function runScenario(browser) {
   if (!genRes.ok) {
     throw new Error(`GM shared sync failed: ${JSON.stringify(genRes)}`);
   }
+
+  const sharedVersionAfterScenarioSync = Math.max(1, Number(genRes && genRes.sync && genRes.sync.stateVersion || 0));
+  await Promise.all([gmPage, p1Page, p2Page].map((page) => waitForCampaignSnapshot(page, code, sharedVersionAfterScenarioSync)));
 
   const factionMissionFlow = await gmPage.evaluate(async () => {
     const out = {
@@ -493,35 +613,25 @@ async function runScenario(browser) {
   await waitForHydratedMaps(p2Page, gmSummary);
 
   const shareAck = await p1Page.evaluate(async () => {
-    const st = window.campaignSystem && window.campaignSystem.getState ? window.campaignSystem.getState() : null;
-    if (!st || !st.code || !st.token || typeof window.io !== "function") {
-      return { ok: false, error: "Missing player state/socket." };
+    if (!window.campaignSystem || typeof window.campaignSystem.shareBackpackItem !== "function") {
+      return { ok: false, error: "Missing shareBackpackItem." };
     }
-    return await new Promise((resolve) => {
-      const s = window.io({ transports: ["websocket", "polling"] });
-      const done = (payload) => {
-        try { s.disconnect(); } catch (_err) {}
-        resolve(payload || { ok: false, error: "No response" });
-      };
-      s.on("connect_error", (err) => done({ ok: false, error: String(err && err.message ? err.message : err) }));
-      s.on("connect", () => {
-        s.emit("campaign:join", {
-          code: st.code,
-          token: st.token,
-          role: "player",
-          name: "Scenario P1"
-        }, (joinAck) => {
-          if (!joinAck || !joinAck.ok) {
-            done({ ok: false, error: (joinAck && joinAck.error) || "join failed" });
-            return;
-          }
-          s.emit("campaign:stashShare", { item: "Scenario Relic" }, (shareRes) => {
-            done(shareRes);
-          });
-        });
-      });
-      setTimeout(() => done({ ok: false, error: "stash share timed out" }), 12000);
-    });
+    if (!window.S || typeof window.S !== "object") window.S = {};
+    if (!Array.isArray(window.S.backpack)) window.S.backpack = Array(10).fill("");
+    window.S.backpack[0] = "Scenario Relic";
+    const operation = await window.campaignSystem.shareBackpackItem(0);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const shared = typeof window.campaignSystem.getSharedState === "function"
+      ? (window.campaignSystem.getSharedState() || {})
+      : {};
+    const stash = Array.isArray(shared.partyStash) ? shared.partyStash.slice() : [];
+    const slotCleared = String(window.S.backpack[0] || "").trim() === "";
+    return {
+      operation: operation || null,
+      ok: slotCleared || stash.indexOf("Scenario Relic") >= 0,
+      stash,
+      slotCleared
+    };
   });
   if (!shareAck || !shareAck.ok) {
     throw new Error(`Stash share failed: ${JSON.stringify(shareAck)}`);
@@ -555,46 +665,31 @@ async function runScenario(browser) {
   }
 
   const claimAck = await p2Page.evaluate(async () => {
-    const st = window.campaignSystem && window.campaignSystem.getState ? window.campaignSystem.getState() : null;
-    if (!st || !st.code || !st.token || typeof window.io !== "function") {
-      return { ok: false, error: "Missing player state/socket." };
+    if (!window.campaignSystem || typeof window.campaignSystem.claimSharedItem !== "function") {
+      return { ok: false, error: "Missing claimSharedItem." };
     }
-    const claimRes = await new Promise((resolve) => {
-      const s = window.io({ transports: ["websocket", "polling"] });
-      const done = (payload) => {
-        try { s.disconnect(); } catch (_err) {}
-        resolve(payload || { ok: false, error: "No response" });
-      };
-      s.on("connect_error", (err) => done({ ok: false, error: String(err && err.message ? err.message : err) }));
-      s.on("connect", () => {
-        s.emit("campaign:join", {
-          code: st.code,
-          token: st.token,
-          role: "player",
-          name: "Scenario P2"
-        }, (joinAck) => {
-          if (!joinAck || !joinAck.ok) {
-            done({ ok: false, error: (joinAck && joinAck.error) || "join failed" });
-            return;
-          }
-          s.emit("campaign:stashClaim", { index: 0 }, (claimResult) => {
-            done(claimResult);
-          });
-        });
-      });
-      setTimeout(() => done({ ok: false, error: "stash claim timed out" }), 12000);
-    });
-
+    const shared = typeof window.campaignSystem.getSharedState === "function"
+      ? (window.campaignSystem.getSharedState() || {})
+      : {};
+    const stashList = Array.isArray(shared.partyStash) ? shared.partyStash.slice() : [];
+    const claimIndex = stashList.findIndex((entry) => String(entry || "") === "Scenario Relic");
+    if (claimIndex < 0) {
+      return { ok: false, error: "Scenario Relic not found in shared stash.", stash: stashList };
+    }
     if (!window.S || !Array.isArray(window.S.backpack)) {
       if (!window.S) window.S = {};
       window.S.backpack = Array(10).fill("");
     }
-    var item = String((claimRes && claimRes.item) || "").trim();
-    if (item) {
-      var slot = window.S.backpack.indexOf("");
-      if (slot >= 0) window.S.backpack[slot] = item;
-    }
-    return claimRes;
+    const operation = await window.campaignSystem.claimSharedItem(claimIndex);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const backpack = Array.isArray(window.S.backpack) ? window.S.backpack.slice() : [];
+    const item = backpack.find((entry) => String(entry || "").trim() === "Scenario Relic") || "";
+    return {
+      operation: operation || null,
+      ok: !!item,
+      item: item || "",
+      backpack
+    };
   });
   if (!claimAck || !claimAck.ok || String(claimAck.item || "") !== "Scenario Relic") {
     throw new Error(`Stash claim failed: ${JSON.stringify(claimAck)}`);
@@ -738,12 +833,19 @@ async function runScenario(browser) {
 }
 
 async function run() {
-  const server = startServer();
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const tempRoot = path.join(os.tmpdir(), `btl-smoke-scenario-${stamp}`);
+  const requestedUrl = String(process.env.SMOKE_URL || "").trim();
+  const port = requestedUrl
+    ? Number(new URL(requestedUrl).port || 80)
+    : await pickAvailablePort(Number(process.env.PORT || 3205) || 3205);
+  BASE_URL = requestedUrl || `http://127.0.0.1:${port}`;
+  const server = startServer(port, tempRoot);
   let browser;
 
   try {
     await waitForServer(BASE_URL, START_TIMEOUT_MS);
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromium();
     await runScenario(browser);
   } finally {
     if (browser) await browser.close();

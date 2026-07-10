@@ -88,10 +88,23 @@ header{background:linear-gradient(180deg,rgba(4,5,8,.98) 0%,rgba(10,12,24,.95) 5
 .quick-nav-label{font-size:.78rem;letter-spacing:.13em;text-transform:uppercase;color:var(--text2);align-self:center;margin-right:.3rem;font-family:'Cinzel',serif;font-weight:600;}
 .quick-nav .btn{font-size:.78rem;padding:.32rem .7rem;}
 .panel-quick-access{margin-bottom:.55rem;}
-.global-quick-access{position:sticky;top:var(--quick-access-top, 8.2rem);z-index:190;padding:.52rem 1.2rem;background:linear-gradient(180deg,rgba(8,10,18,.96) 0%,rgba(8,10,18,.9) 100%);border-bottom:1px solid rgba(201,162,39,.12);display:flex;gap:.35rem;flex-wrap:wrap;align-items:center;box-shadow:0 10px 24px rgba(0,0,0,.14);}
+.global-quick-access{position:sticky;top:var(--quick-access-top, 8.2rem);z-index:190;padding:.52rem 1.2rem;background:linear-gradient(180deg,rgba(8,10,18,.96) 0%,rgba(8,10,18,.9) 100%);border-bottom:1px solid rgba(201,162,39,.12);display:none;gap:.35rem;flex-wrap:wrap;align-items:center;box-shadow:0 10px 24px rgba(0,0,0,.14);}
+.global-quick-access.is-active{display:flex;}
 .global-quick-access .qa-label{font-size:.68rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted2);font-family:'Cinzel',serif;margin-right:.2rem;}
 .global-quick-access .qa-empty{font-size:.83rem;color:var(--muted2);}
 .global-quick-access .btn{font-size:.77rem;padding:.3rem .62rem;}
+.table-rail-copy{display:flex;flex-direction:column;gap:.12rem;min-width:min(24rem,100%);flex:1 1 18rem;}
+.table-rail-title{font-family:'Rajdhani',sans-serif;font-size:.92rem;font-weight:700;letter-spacing:.06em;color:var(--text2);}
+.table-rail-sub{font-size:.76rem;line-height:1.45;color:var(--text2);}
+.table-rail-sub.is-muted{color:var(--muted2);}
+.table-rail-chip-row{display:flex;gap:.24rem;flex-wrap:wrap;align-items:center;flex:1 1 16rem;}
+.table-rail-chip{display:inline-flex;align-items:center;gap:.2rem;padding:.18rem .44rem;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);font-family:'Rajdhani',sans-serif;font-size:.7rem;letter-spacing:.05em;color:var(--muted2);white-space:nowrap;}
+.table-rail-chip.is-teal{border-color:rgba(46,196,182,.34);background:rgba(46,196,182,.08);color:var(--teal2);}
+.table-rail-chip.is-gold{border-color:rgba(232,192,80,.34);background:rgba(232,192,80,.08);color:var(--gold2);}
+.table-rail-chip.is-online{border-color:rgba(88,210,130,.34);background:rgba(88,210,130,.08);color:var(--green2);}
+.table-rail-chip.is-syncing{border-color:rgba(232,192,80,.34);background:rgba(232,192,80,.08);color:var(--gold2);}
+.table-rail-chip.is-stale{border-color:rgba(224,80,80,.34);background:rgba(224,80,80,.1);color:var(--red2);}
+.table-rail-actions{display:flex;gap:.24rem;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin-left:auto;}
 .admin-mode-badge{position:fixed;right:1rem;bottom:1rem;z-index:1250;display:none;align-items:center;gap:.4rem;padding:.42rem .52rem;border:1px solid rgba(201,162,39,.46);border-radius:999px;background:linear-gradient(180deg,rgba(11,12,26,.94) 0%,rgba(8,10,18,.92) 100%);box-shadow:0 14px 30px rgba(0,0,0,.32);backdrop-filter:blur(5px);}
 .admin-mode-badge.show{display:inline-flex;}
 .admin-mode-dot{width:.48rem;height:.48rem;border-radius:50%;background:var(--gold2);box-shadow:0 0 10px rgba(232,192,80,.65);}
@@ -225,6 +238,8 @@ body.text-size-large .equipment-card .backpack-grid{grid-template-columns:1fr 1f
 @media (max-width:900px){.global-quick-access{padding:.3rem .5rem;gap:.25rem;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;}}
 @media (max-width:900px){.global-quick-access .qa-label{flex:0 0 auto;}}
 @media (max-width:900px){.global-quick-access .btn{flex:0 0 auto;white-space:nowrap;font-size:.7rem;padding:.24rem .5rem;min-height:1.9rem;}}
+@media (max-width:900px){.table-rail-copy{min-width:16rem;}}
+@media (max-width:900px){.table-rail-chip-row,.table-rail-actions{flex:0 0 auto;}}
 .mystery-card{background:var(--surface);border-left:2px solid var(--gold);padding:.55rem .70rem;font-size:.88rem;line-height:1.7;font-style:italic;color:var(--text);}
 .notif-stack{left:.5rem;right:.5rem;max-width:none;}
 .notif{max-width:none;}
@@ -9757,15 +9772,26 @@ function applyEnemyHackToPlayer(hackName, enemy){
   showNotif((enemy?enemy.name:'Enemy')+' hack: '+note, 'warn');
 }
 
-function resolveEnemyHackEvent(enemy){
+function resolveEnemyHackEvent(enemy,options){
   if(!enemy)return;
+  var opts=options&&typeof options==='object'?options:{};
   var pendingHack=pick(['Javelin','Ember','Short Circuit','Reboot Optics','Weapon Glitch']);
   var adventureDie=(typeof getEffectiveDie==='function')?getEffectiveDie('valor'):((S.stats&&(S.stats.valor||S.stats.valor))||4);
   var r1=roll(adventureDie),r2=roll(adventureDie);
   var low=Math.min(r1,r2),high=Math.max(r1,r2);
   var dreadRoll=rollEnemyDreadWithEffects(enemy,'Enemy Hack DD');
   var success=dreadRoll.total>=low&&dreadRoll.total<=high;
-  S.combat.pendingEnemyHack={enemyId:enemy.id,hackName:pendingHack,low:low,high:high,total:dreadRoll.total,die:dreadRoll.effectiveDie,success:success};
+  S.combat.pendingEnemyHack={
+    enemyId:enemy.id,
+    hackName:pendingHack,
+    low:low,
+    high:high,
+    total:dreadRoll.total,
+    die:dreadRoll.effectiveDie,
+    success:success,
+    campaignRequest:opts.campaignRequest||null,
+    skipEnemyMutation:!!opts.skipEnemyMutation
+  };
   var hasCounterspell=Array.isArray(S.ownedHacks)&&S.ownedHacks.indexOf('Counterspell')>=0;
   var canCounter=hasCounterspell&&(S.tmw||0)>=2;
   if(canCounter&&typeof openModal==='function'){
@@ -9784,22 +9810,32 @@ function finishEnemyHackEvent(countered){
   if(!S.combat||!S.combat.pendingEnemyHack)return;
   var pending=S.combat.pendingEnemyHack;
   var enemy=Array.isArray(S.enemies)?S.enemies.find(function(entry){return entry.id===pending.enemyId;}) : null;
+  var summary='';
   if(countered){
     if((S.tmw||0)>=2){
       S.tmw=Math.max(0,(S.tmw||0)-2);
       if(typeof updateTMWPool==='function')updateTMWPool();
       showNotif('Counterspell negates '+pending.hackName+'.','good');
+      summary='Counterspell negated '+pending.hackName+'.';
     }else{
       showNotif('Not enough TMW to Counterspell.','warn');
+      summary='Counterspell failed: not enough TMW.';
     }
   }else if(pending.success){
     applyEnemyHackToPlayer(pending.hackName,enemy);
+    summary=(enemy?enemy.name:'Enemy')+' landed '+pending.hackName+'.';
   }else{
     showNotif((enemy?enemy.name:'Enemy')+' fails to land '+pending.hackName+'.','good');
+    summary=(enemy?enemy.name:'Enemy')+' failed to land '+pending.hackName+'.';
   }
   S.combat.pendingEnemyHack=null;
   if(typeof closeModal==='function')closeModal();
-  finalizeEnemyTurn(enemy||getPrimaryCombatEnemy());
+  var resultEl=document.getElementById('enemyActionResult');
+  if(resultEl&&summary){
+    resultEl.innerHTML='<strong style="color:var(--red2);">Hostile Hack</strong> — '+summary;
+  }
+  if(!pending.skipEnemyMutation)finalizeEnemyTurn(enemy||getPrimaryCombatEnemy());
+  finalizeCampaignEnemyActionRequestResolution(pending.campaignRequest,summary);
 }
 
 // Return maximum actions per round from armor + bonuses.
@@ -11201,7 +11237,10 @@ function triggerEnemyActionEvent(options){
       summary='Forced Trauma check triggered.'+sceneEnemyModHtml;
     }
   }else if(ev.kind==='hack'){
-    resolveEnemyHackEvent(actingEnemy);
+    resolveEnemyHackEvent(actingEnemy,{
+      campaignRequest:opts.campaignRequest||null,
+      skipEnemyMutation:!!opts.skipEnemyMutation
+    });
     return;
   }
 
@@ -17472,6 +17511,29 @@ function getHomepageModeVariantKey(mode){
   if(mode==='campaign')return'C';
   return'A';
 }
+function getHeroSavedCampaignSummary(){
+  return window.campaignSystem&&typeof window.campaignSystem.getSavedSessionSummary==='function'
+    ?(window.campaignSystem.getSavedSessionSummary()||null)
+    :null;
+}
+function openHeroCampaignRecovery(){
+  if(window.settingsSystem&&typeof window.settingsSystem.setGameMode==='function'){
+    window.settingsSystem.setGameMode('campaign',{silent:true});
+  }
+  if(window.settingsSystem&&typeof window.settingsSystem.openSettings==='function'){
+    window.settingsSystem.openSettings();
+  }
+  if(window.settingsSystem&&typeof window.settingsSystem.setActiveTab==='function'){
+    window.settingsSystem.setActiveTab('campaign');
+  }
+  if(window.campaignSystem&&typeof window.campaignSystem.openCampaignRecoveryCenter==='function'){
+    window.campaignSystem.openCampaignRecoveryCenter();
+    return;
+  }
+  if(typeof showNotif==='function'){
+    showNotif('Campaign resume tools live in Settings > Campaign.','info');
+  }
+}
 function openHeroCampaignQuickstart(preferredMode){
   var nextMode=preferredMode==='campaign'?'campaign':'gm';
   if(window.settingsSystem){
@@ -17483,6 +17545,16 @@ function openHeroCampaignQuickstart(preferredMode){
     }
     if(typeof window.settingsSystem.setActiveTab==='function'){
       window.settingsSystem.setActiveTab('campaign');
+    }
+  }
+  if(nextMode==='campaign'){
+    var savedSummary=getHeroSavedCampaignSummary();
+    var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+      ?(window.campaignSystem.getState()||{})
+      :null;
+    if(savedSummary&&savedSummary.hasSaved&&(!cs||!cs.code)){
+      openHeroCampaignRecovery();
+      return;
     }
   }
   if(typeof showNotif==='function'){
@@ -17522,6 +17594,11 @@ function openHeroLiveDock(){
     window.campaignSystem.openDock();
     return;
   }
+  var savedSummary=getHeroSavedCampaignSummary();
+  if(savedSummary&&savedSummary.hasSaved){
+    openHeroCampaignRecovery();
+    return;
+  }
   openHeroCampaignQuickstart('campaign');
 }
 function openHeroCampaignOnboarding(){
@@ -17533,6 +17610,11 @@ function openHeroCampaignOnboarding(){
     :null;
   if(cs&&cs.code&&cs.connected&&window.campaignSystem&&typeof window.campaignSystem.showOnboarding==='function'){
     window.campaignSystem.showOnboarding(true);
+    return;
+  }
+  var savedSummary=getHeroSavedCampaignSummary();
+  if(savedSummary&&savedSummary.hasSaved){
+    openHeroCampaignRecovery();
     return;
   }
   openHeroCampaignQuickstart('campaign');
@@ -17552,8 +17634,22 @@ function getHeroContinueActions(mode){
   var cs=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
     ?(window.campaignSystem.getState()||{})
     :null;
-  var vttReady=!!(cs&&cs.campaign&&cs.campaign.sharedState&&cs.campaign.sharedState.campaignCombat&&cs.campaign.sharedState.campaignCombat.vttSession);
+  var savedSummary=getHeroSavedCampaignSummary();
+  var shared=(window.campaignSystem&&typeof window.campaignSystem.getSharedState==='function')
+    ?(window.campaignSystem.getSharedState()||{})
+    :{};
+  var liveAction=(window.campaignSystem&&typeof window.campaignSystem.getLiveActionContract==='function')
+    ?(window.campaignSystem.getLiveActionContract()||null)
+    :null;
+  var vttReady=!!(shared&&shared.campaignCombat&&shared.campaignCombat.vttSession);
   if(currentMode==='gm'){
+    if((!cs||!cs.code)&&savedSummary&&savedSummary.hasSaved&&savedSummary.session&&savedSummary.session.role==='gm'){
+      return [
+        {label:'Continue: Resume GM Seat',run:openHeroCampaignRecovery},
+        {label:'Continue: Campaign Panel',run:function(){openHeroCampaignQuickstart('gm');}},
+        {label:'Continue: GM Dashboard',run:openHeroGmDashboard}
+      ];
+    }
     return [
       {label:'Continue: Campaign Panel',run:function(){openHeroCampaignQuickstart('gm');}},
       {label:'Continue: GM Dashboard',run:openHeroGmDashboard},
@@ -17561,11 +17657,30 @@ function getHeroContinueActions(mode){
     ];
   }
   if(currentMode==='campaign'){
-    return [
+    if((!cs||!cs.code)&&savedSummary&&savedSummary.hasSaved){
+      return [
+        {label:'Continue: Resume Campaign',run:openHeroCampaignRecovery},
+        {label:'Continue: Campaign Panel',run:function(){openHeroCampaignQuickstart('campaign');}},
+        {label:'Continue: Campaign Onboarding',run:openHeroCampaignOnboarding}
+      ];
+    }
+    var campaignActions=[
       {label:'Continue: Live Dock',run:openHeroLiveDock},
       {label:'Continue: Campaign Panel',run:function(){openHeroCampaignQuickstart('campaign');}},
       {label:vttReady?'Continue: Shared VTT':'Continue: Combat Tab',run:vttReady?openHeroSharedVttOrCombat:openHeroCombatTab}
     ];
+    if(liveAction&&liveAction.canActNow){
+      if(liveAction.kind==='roll-request'){
+        campaignActions[0]={label:'Continue: Resolve Roll',run:function(){window.campaignSystem.openActiveRollPrompt();}};
+      }else if(liveAction.kind==='enemy-action'){
+        campaignActions[0]={label:'Continue: Enemy Action',run:vttReady?openHeroSharedVttOrCombat:openHeroCombatTab};
+      }else if(liveAction.kind==='turn-prompt'){
+        campaignActions[0]={label:'Continue: Take Turn',run:vttReady?openHeroSharedVttOrCombat:openHeroCombatTab};
+      }else if(liveAction.kind==='ready-check'){
+        campaignActions[0]={label:'Continue: Ready Check',run:openHeroLiveDock};
+      }
+    }
+    return campaignActions;
   }
   return [
     {label:'Continue: Mission Board',run:openHeroMissionBoard},
@@ -17595,6 +17710,15 @@ function runHeroContinueAction(index){
 }
 function runHeroPrimaryAction(){
   var mode=getHomepageExperienceMode();
+  var savedSummary=getHeroSavedCampaignSummary();
+  if(mode==='campaign'&&savedSummary&&savedSummary.hasSaved){
+    openHeroCampaignRecovery();
+    return;
+  }
+  if(mode==='gm'&&savedSummary&&savedSummary.hasSaved&&savedSummary.session&&savedSummary.session.role==='gm'){
+    openHeroCampaignRecovery();
+    return;
+  }
   if(mode==='gm'||mode==='campaign'){
     openHeroCampaignQuickstart(mode);
     return;

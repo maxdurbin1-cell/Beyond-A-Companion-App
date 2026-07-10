@@ -118,8 +118,8 @@ async function runScenario(browser) {
       mount.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:9999;background:rgba(0,0,0,.35);padding:8px;";
       document.body.appendChild(mount);
     }
-    if (window.SharedIconSystem && typeof window.SharedIconSystem.renderWayfarerSheetPanel === "function") {
-      window.SharedIconSystem.renderWayfarerSheetPanel(mountId, window.S || {});
+    if (window.SharedIconSystem && typeof window.SharedIconSystem.getWayfarerPortraitHtml === "function") {
+      mount.innerHTML = window.SharedIconSystem.getWayfarerPortraitHtml(window.S || {}, { size: 84 });
     }
   });
   await dismissBlockingOverlays(page);

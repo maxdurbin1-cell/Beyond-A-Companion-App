@@ -193,6 +193,26 @@ async function run() {
     });
     await wait(1000);
 
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const dead = await page.evaluate(() => {
+        const st = window.CombatSceneStore.getState();
+        const tokens = Array.isArray(st.tokens) ? st.tokens : [];
+        const deadEnemy = tokens.find((row) => row && String(row.id || "") === "mob-vine");
+        return !!(deadEnemy && Number(deadEnemy.hp || 0) === 0 && deadEnemy.dead);
+      });
+      if (dead) break;
+      await page.evaluate(() => {
+        const targetSel = document.getElementById("combatTokenTargetSel");
+        const actionSel = document.getElementById("combatTokenActionSel");
+        if (targetSel) targetSel.value = "mob-vine";
+        if (actionSel && !String(actionSel.value || "").trim()) actionSel.value = "standard_strike";
+        const btn = document.getElementById("combatTokenExecuteActionBtn");
+        if (btn && typeof btn.onclick === "function") btn.onclick();
+        else if (btn) btn.click();
+      });
+      await wait(800);
+    }
+
     const summary = await page.evaluate(() => {
       const st = window.CombatSceneStore.getState();
       const tokens = Array.isArray(st.tokens) ? st.tokens : [];

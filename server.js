@@ -2736,7 +2736,7 @@ io.on("connection", (socket) => {
       action: "stash-share"
     });
 
-    emitCampaignState(campaign.code);
+    emitCampaignState(campaign.code, { immediate: true });
     if (typeof ack === "function") ack({ ok: true, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
   });
 
@@ -2772,7 +2772,7 @@ io.on("connection", (socket) => {
       action: "stash-claim"
     });
 
-    emitCampaignState(campaign.code);
+    emitCampaignState(campaign.code, { immediate: true });
     if (typeof ack === "function") ack({ ok: true, item, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
   });
 

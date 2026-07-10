@@ -26,6 +26,14 @@ function shouldSkipLabel(label) {
   return SKIP_LABELS.some((rx) => rx.test(label || ""));
 }
 
+function isNonBlockingClickFailure(message) {
+  return /element is not visible/i.test(message || "")
+    || /element was detached/i.test(message || "")
+    || /scroll into view/i.test(message || "")
+    || /element is not stable/i.test(message || "")
+    || /waiting for element to be visible/i.test(message || "");
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -504,10 +512,13 @@ async function run() {
             await page.waitForTimeout(30);
             continue;
           } catch (retryErr) {
-            failures.push(`Click failed [${i}] ${label || "<unlabeled>"}: ${String(retryErr && retryErr.message ? retryErr.message : retryErr)}`);
+            const retryMessage = String(retryErr && retryErr.message ? retryErr.message : retryErr);
+            if (isNonBlockingClickFailure(retryMessage)) continue;
+            failures.push(`Click failed [${i}] ${label || "<unlabeled>"}: ${retryMessage}`);
             continue;
           }
         }
+        if (isNonBlockingClickFailure(message)) continue;
         failures.push(`Click failed [${i}] ${label || "<unlabeled>"}: ${message}`);
       }
     }

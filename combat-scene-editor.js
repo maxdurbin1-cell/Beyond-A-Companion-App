@@ -45,6 +45,7 @@
   var tokenContextMenuHideTimer = null;
   var applyingSharedCombatSceneEditorState = false;
   var campaignCombatVttSessionSyncTimer = null;
+  var campaignCombatVttSessionFollowupTimer = null;
   var combatDragDebugState = {
     phase: 'idle',
     kind: '',
@@ -1908,7 +1909,11 @@
     try {
       if (typeof window.campaignSystem.buildPartyRoster === 'function') {
         var roster = window.campaignSystem.buildPartyRoster();
-        if (Array.isArray(roster) && roster.length) return roster.slice();
+        if (Array.isArray(roster) && roster.length) {
+          return roster.filter(function (entry) {
+            return entry && String(entry.role || 'player') !== 'gm';
+          }).slice();
+        }
       }
     } catch (_err) {}
     if (typeof window.campaignSystem.getSharedState !== 'function' || typeof window.campaignSystem.getState !== 'function') return [];
@@ -2154,8 +2159,8 @@
     var sessionAt = Number(nextSession && nextSession.enteredAt || 0);
     if (!nextCombat || !nextCombat.active || !sessionAt) return;
     if (campaignCombatVttSessionSyncTimer) clearTimeout(campaignCombatVttSessionSyncTimer);
-    campaignCombatVttSessionSyncTimer = setTimeout(function () {
-      campaignCombatVttSessionSyncTimer = null;
+    if (campaignCombatVttSessionFollowupTimer) clearTimeout(campaignCombatVttSessionFollowupTimer);
+    function runReassertSync(reasonSuffix) {
       var cs = getCampaignCombatSceneSession();
       if (!cs || String(cs.role || '') !== 'gm' || !cs.connected || !cs.code) return;
       if (!(window.S && window.S.combat && window.S.combat.active)) return;
@@ -2192,8 +2197,16 @@
       var retryOut = window.campaignSystem.syncSharedPatch({
         campaignCombat: deepCloneJson(reassertCombat) || reassertCombat,
         combatScene: scene
-      }, String(reason || 'campaign-combat-vtt-reassert') + '-reassert');
+      }, String(reason || 'campaign-combat-vtt-reassert') + String(reasonSuffix || '') + '-reassert');
       if (retryOut && typeof retryOut.catch === 'function') retryOut.catch(function () {});
+    }
+    campaignCombatVttSessionSyncTimer = setTimeout(function () {
+      campaignCombatVttSessionSyncTimer = null;
+      runReassertSync('');
+      campaignCombatVttSessionFollowupTimer = setTimeout(function () {
+        campaignCombatVttSessionFollowupTimer = null;
+        runReassertSync('-late');
+      }, 720);
     }, 320);
   }
 

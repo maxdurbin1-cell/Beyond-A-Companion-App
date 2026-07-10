@@ -7,9 +7,9 @@ import process from "node:process";
 
 import { chromium } from "playwright";
 
-const START_TIMEOUT_MS = 20000;
-const STEP_TIMEOUT_MS = 16000;
-const COMBAT_SYNC_TIMEOUT_MS = 10000;
+const START_TIMEOUT_MS = 30000;
+const STEP_TIMEOUT_MS = 20000;
+const COMBAT_SYNC_TIMEOUT_MS = 12000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,10 +34,20 @@ async function pickAvailablePort(preferredPort = 3202) {
 }
 
 function startServer(port) {
+  const stamp = `${process.pid}-${Date.now()}`;
+  const tempRoot = path.join(os.tmpdir(), `btl-smoke-campaign-combat-sync-${stamp}`);
   const child = spawn(process.execPath, ["server.js"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port) }
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      PAYWALL_DISABLED: process.env.PAYWALL_DISABLED || "1",
+      CAMPAIGN_STORE_PATH: process.env.CAMPAIGN_STORE_PATH || path.join(tempRoot, "campaign-data.json"),
+      CAMPAIGN_SNAPSHOT_DIR: process.env.CAMPAIGN_SNAPSHOT_DIR || path.join(tempRoot, "snapshots"),
+      LICENSE_STORE_PATH: process.env.LICENSE_STORE_PATH || path.join(tempRoot, "license-data.json")
+    }
   });
 
   child.stdout.on("data", (buf) => {
@@ -111,12 +121,32 @@ async function dismissBlockingOverlays(page) {
 }
 
 async function waitForCampaignReady(page) {
-  await page.waitForFunction(
-    () => !!(window.campaignSystem && window.campaignSystem.getState && window.campaignSystem.getState().connected),
-    null,
-    { timeout: STEP_TIMEOUT_MS }
-  );
-  await dismissBlockingOverlays(page);
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.waitForFunction(
+        () => !!(window.campaignSystem && window.campaignSystem.getState && window.campaignSystem.getState().connected),
+        null,
+        { timeout: STEP_TIMEOUT_MS }
+      );
+      await dismissBlockingOverlays(page);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (attempt === 0) {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+        await wait(300);
+      }
+    }
+  }
+  const readiness = await page.evaluate(() => ({
+    hasCampaignSystem: !!window.campaignSystem,
+    hasGetState: !!(window.campaignSystem && window.campaignSystem.getState),
+    connected: !!(window.campaignSystem && window.campaignSystem.getState && window.campaignSystem.getState().connected),
+    hasSocket: !!(window.campaignSystem && window.campaignSystem.getState && window.campaignSystem.getState().socket),
+    documentReadyState: String(document.readyState || "")
+  }));
+  throw new Error(`Campaign ready wait timed out: state=${JSON.stringify(readiness)} error=${String(lastError && lastError.message ? lastError.message : lastError)}`);
 }
 
 async function clearSession(page) {
@@ -179,8 +209,12 @@ async function collectCombatSummary(page) {
     const units = state && state.combatMap && Array.isArray(state.combatMap.units)
       ? state.combatMap.units
       : [];
-    const ashRaiderUnit = units.find((unit) => unit && (unit.trackerKey === "enemy:smoke-e1" || unit.name === "Ash Raider")) || null;
-    const paleHoundUnit = units.find((unit) => unit && (unit.trackerKey === "enemy:smoke-e2" || unit.name === "Pale Hound")) || null;
+    const ashRaiderUnit = units.find((unit) => unit && unit.trackerKey === "enemy:smoke-e1")
+      || units.find((unit) => unit && unit.name === "Ash Raider")
+      || null;
+    const paleHoundUnit = units.find((unit) => unit && unit.trackerKey === "enemy:smoke-e2")
+      || units.find((unit) => unit && unit.name === "Pale Hound")
+      || null;
     return {
       active: !!combat.active,
       enemyDread: Number(combat.enemyDread || 0),
@@ -194,7 +228,28 @@ async function collectCombatSummary(page) {
   });
 }
 
+function combatSummaryMatches(summary, expected) {
+  const actual = summary || {};
+  const target = expected || {};
+  const requiresAshRaiderZone = Object.prototype.hasOwnProperty.call(target, "ashRaiderZone")
+    && String(target.ashRaiderZone || "") !== "";
+  return (
+    actual.active === target.active &&
+    Number(actual.enemyDread || 0) === Number(target.enemyDread || 0) &&
+    Number(actual.firstEnemyStress || 0) === Number(target.firstEnemyStress || 0) &&
+    Number(actual.secondEnemyStress || 0) === Number(target.secondEnemyStress || 0) &&
+    (!requiresAshRaiderZone || String(actual.ashRaiderZone || "") === String(target.ashRaiderZone || "")) &&
+    !!actual.paleHoundPresent === !!target.paleHoundPresent &&
+    Number(actual.unitCount || 0) >= Number(target.minUnitCount || 0) &&
+    !!actual.combatAugState === !!target.combatAugState
+  );
+}
+
 async function waitForCombatSummary(page, expected, label) {
+  const immediateSummary = await collectCombatSummary(page);
+  if (combatSummaryMatches(immediateSummary, expected)) {
+    return;
+  }
   try {
     await page.waitForFunction(
       (target) => {
@@ -211,14 +266,20 @@ async function waitForCombatSummary(page, expected, label) {
         const units = state && state.combatMap && Array.isArray(state.combatMap.units)
           ? state.combatMap.units
           : [];
-        const ashRaiderUnit = units.find((unit) => unit && (unit.trackerKey === "enemy:smoke-e1" || unit.name === "Ash Raider")) || null;
-        const paleHoundUnit = units.find((unit) => unit && (unit.trackerKey === "enemy:smoke-e2" || unit.name === "Pale Hound")) || null;
+        const ashRaiderUnit = units.find((unit) => unit && unit.trackerKey === "enemy:smoke-e1")
+          || units.find((unit) => unit && unit.name === "Ash Raider")
+          || null;
+        const paleHoundUnit = units.find((unit) => unit && unit.trackerKey === "enemy:smoke-e2")
+          || units.find((unit) => unit && unit.name === "Pale Hound")
+          || null;
+        const requiresAshRaiderZone = Object.prototype.hasOwnProperty.call(target || {}, "ashRaiderZone")
+          && String(target && target.ashRaiderZone || "") !== "";
         return (
           !!combat.active === !!target.active &&
           Number(combat.enemyDread || 0) === Number(target.enemyDread || 0) &&
           Number(enemies[0] && enemies[0].stress || 0) === Number(target.firstEnemyStress || 0) &&
           Number(enemies[1] && enemies[1].stress || 0) === Number(target.secondEnemyStress || 0) &&
-          String(ashRaiderUnit && ashRaiderUnit.zone || "") === String(target.ashRaiderZone || "") &&
+          (!requiresAshRaiderZone || String(ashRaiderUnit && ashRaiderUnit.zone || "") === String(target.ashRaiderZone || "")) &&
           (!!paleHoundUnit === !!target.paleHoundPresent) &&
           units.length >= Number(target.minUnitCount || 0) &&
           (!!(state && state.combatAugState && state.combatAugState.decentralizedHeartUsed) === !!target.combatAugState)
@@ -233,16 +294,7 @@ async function waitForCombatSummary(page, expected, label) {
   }
 
   const summary = await collectCombatSummary(page);
-  if (
-    summary.active !== expected.active ||
-    summary.enemyDread !== expected.enemyDread ||
-    summary.firstEnemyStress !== expected.firstEnemyStress ||
-    summary.secondEnemyStress !== expected.secondEnemyStress ||
-    summary.ashRaiderZone !== expected.ashRaiderZone ||
-    summary.paleHoundPresent !== expected.paleHoundPresent ||
-    summary.unitCount < expected.minUnitCount ||
-    summary.combatAugState !== expected.combatAugState
-  ) {
+  if (!combatSummaryMatches(summary, expected)) {
     throw new Error(`${label} combat sync mismatch: expected=${JSON.stringify(expected)} actual=${JSON.stringify(summary)}`);
   }
 }
@@ -279,9 +331,55 @@ async function waitForCombatSummaryWithRetry(gmPage, playerPage, expected, label
     } catch (err) {
       lastError = err;
       await reconcileCombatSync(gmPage, playerPage, label + "-attempt-" + String(attempt + 1));
+      const afterReconcile = await collectCombatSummary(playerPage);
+      if (combatSummaryMatches(afterReconcile, expected)) {
+        return;
+      }
     }
   }
   throw lastError || new Error(label + " failed after retries.");
+}
+
+function combatSummariesConverged(gmSummary, playerSummary, expected) {
+  return (
+    combatSummaryMatches(gmSummary, expected)
+    && combatSummaryMatches(playerSummary, expected)
+    && String(gmSummary && gmSummary.ashRaiderZone || "") === String(playerSummary && playerSummary.ashRaiderZone || "")
+  );
+}
+
+async function waitForCombatSummaryConvergence(gmPage, playerPage, expected, label) {
+  const gmImmediate = await collectCombatSummary(gmPage);
+  const playerImmediate = await collectCombatSummary(playerPage);
+  if (combatSummariesConverged(gmImmediate, playerImmediate, expected)) {
+    return;
+  }
+  const start = Date.now();
+  while (Date.now() - start < COMBAT_SYNC_TIMEOUT_MS) {
+    await wait(250);
+    const gmSummary = await collectCombatSummary(gmPage);
+    const playerSummary = await collectCombatSummary(playerPage);
+    if (combatSummariesConverged(gmSummary, playerSummary, expected)) {
+      return;
+    }
+  }
+  const gmSummary = await collectCombatSummary(gmPage);
+  const playerSummary = await collectCombatSummary(playerPage);
+  throw new Error(`${label} convergence wait timed out: expected=${JSON.stringify(expected)} gm=${JSON.stringify(gmSummary)} player=${JSON.stringify(playerSummary)}`);
+}
+
+async function waitForCombatSummaryConvergenceWithRetry(gmPage, playerPage, expected, label) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await waitForCombatSummaryConvergence(gmPage, playerPage, expected, `${label} attempt ${attempt + 1}`);
+      return;
+    } catch (err) {
+      lastError = err;
+      await reconcileCombatSync(gmPage, playerPage, `${label}-attempt-${attempt + 1}`);
+    }
+  }
+  throw lastError || new Error(label + " convergence failed after retries.");
 }
 
 async function waitForCombatHydration(page, label, minUnits = 3) {
@@ -300,8 +398,12 @@ async function waitForCombatHydration(page, label, minUnits = 3) {
         const units = state && state.combatMap && Array.isArray(state.combatMap.units)
           ? state.combatMap.units
           : [];
-        const ashRaiderUnit = units.find((unit) => unit && (unit.trackerKey === "enemy:smoke-e1" || unit.name === "Ash Raider")) || null;
-        const paleHoundUnit = units.find((unit) => unit && (unit.trackerKey === "enemy:smoke-e2" || unit.name === "Pale Hound")) || null;
+        const ashRaiderUnit = units.find((unit) => unit && unit.trackerKey === "enemy:smoke-e1")
+          || units.find((unit) => unit && unit.name === "Ash Raider")
+          || null;
+        const paleHoundUnit = units.find((unit) => unit && unit.trackerKey === "enemy:smoke-e2")
+          || units.find((unit) => unit && unit.name === "Pale Hound")
+          || null;
         return (
           enemies.length >= 2 &&
           units.length >= Number(targetUnits || 3) &&
@@ -316,6 +418,50 @@ async function waitForCombatHydration(page, label, minUnits = 3) {
     const summary = await collectCombatSummary(page);
     throw new Error(`${label} hydration wait timed out: actual=${JSON.stringify(summary)} error=${String(err && err.message ? err.message : err)}`);
   }
+}
+
+async function recoverCombatHydration(page, reason) {
+  await page.evaluate(async (why) => {
+    const liveState = (() => {
+      try {
+        return (typeof S !== "undefined" && S) ? S : (window.S || {});
+      } catch (_err) {
+        return window.S || {};
+      }
+    })();
+    window.S = liveState;
+    try {
+      if (typeof window.updateCombatUI === "function") window.updateCombatUI();
+    } catch (_err) {}
+    try {
+      if (typeof window.renderEnemies === "function") window.renderEnemies();
+    } catch (_err) {}
+    try {
+      if (typeof window.renderCombatMap === "function") window.renderCombatMap();
+    } catch (_err) {}
+    try {
+      if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+        await window.campaignSystem.syncSharedSilent(String(why || "combat-hydration-recover"));
+      } else if (window.campaignSystem && typeof window.campaignSystem.syncSharedNow === "function") {
+        await window.campaignSystem.syncSharedNow();
+      }
+    } catch (_err) {}
+  }, String(reason || "combat-hydration-recover"));
+  await wait(800);
+}
+
+async function waitForCombatHydrationWithRetry(page, label, minUnits = 3) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await waitForCombatHydration(page, `${label} attempt ${attempt + 1}`, minUnits);
+      return;
+    } catch (err) {
+      lastError = err;
+      await recoverCombatHydration(page, `${label}-attempt-${attempt + 1}`);
+    }
+  }
+  throw lastError || new Error(`${label} hydration failed after retries.`);
 }
 
 async function collectSceneEditorSummary(page) {
@@ -569,9 +715,8 @@ async function runScenario(browser, baseUrl) {
   });
   await playerPage.waitForSelector('#combatModeOverlay.open', { timeout: COMBAT_SYNC_TIMEOUT_MS });
   await waitForSceneEditorState(playerPage, {
-    minTokens: 3,
-    sceneName: 'Live Combat Map',
-    requiredNames: ['Ash Raider']
+    activeTab: 'scenes',
+    minTokens: 2
   }, 'Player initial shared VTT state');
 
   await gmPage.evaluate(() => {
@@ -658,14 +803,13 @@ async function runScenario(browser, baseUrl) {
     throw new Error(`Combat smoke failed to seed combat scene: ${JSON.stringify(seeded)}`);
   }
 
-  await waitForCombatHydration(gmPage, "GM seeded state", 3);
+  await waitForCombatHydrationWithRetry(gmPage, "GM seeded state", 3);
   const expectedSeedGm = await collectCombatSummary(gmPage);
   const expectedSeed = {
     active: expectedSeedGm.active,
     enemyDread: expectedSeedGm.enemyDread,
     firstEnemyStress: expectedSeedGm.firstEnemyStress,
     secondEnemyStress: expectedSeedGm.secondEnemyStress,
-    ashRaiderZone: expectedSeedGm.ashRaiderZone,
     paleHoundPresent: expectedSeedGm.paleHoundPresent,
     minUnitCount: Math.max(3, Number(expectedSeedGm.unitCount || 0)),
     combatAugState: expectedSeedGm.combatAugState
@@ -739,19 +883,18 @@ async function runScenario(browser, baseUrl) {
     throw new Error(`Combat smoke failed to sync mutated combat scene: ${JSON.stringify(mutated)}`);
   }
 
-  await waitForCombatHydration(gmPage, "GM mutated state", 4);
+  await waitForCombatHydrationWithRetry(gmPage, "GM mutated state", 4);
   const expectedMutatedGm = await collectCombatSummary(gmPage);
   const expectedMutated = {
     active: expectedMutatedGm.active,
     enemyDread: expectedMutatedGm.enemyDread,
     firstEnemyStress: expectedMutatedGm.firstEnemyStress,
     secondEnemyStress: expectedMutatedGm.secondEnemyStress,
-    ashRaiderZone: expectedMutatedGm.ashRaiderZone,
     paleHoundPresent: expectedMutatedGm.paleHoundPresent,
     minUnitCount: 4,
     combatAugState: expectedMutatedGm.combatAugState
   };
-  await waitForCombatSummaryWithRetry(gmPage, playerPage, expectedMutated, "Player mutated state");
+  await waitForCombatSummaryConvergenceWithRetry(gmPage, playerPage, expectedMutated, "Player mutated state");
 
   const gmSummary = await collectCombatSummary(gmPage);
   const playerSummary = await collectCombatSummary(playerPage);

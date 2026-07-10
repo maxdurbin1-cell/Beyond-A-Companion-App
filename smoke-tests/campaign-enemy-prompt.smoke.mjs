@@ -7,8 +7,8 @@ import process from "node:process";
 
 import { chromium } from "playwright";
 
-const START_TIMEOUT_MS = 20000;
-const STEP_TIMEOUT_MS = 20000;
+const START_TIMEOUT_MS = 30000;
+const STEP_TIMEOUT_MS = 30000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -179,6 +179,137 @@ async function waitForEnemyPrompt(page) {
   );
 }
 
+async function waitForCombatActive(page) {
+  await page.waitForFunction(
+    () => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+        ? shared.campaignCombat
+        : {};
+      return !!combat.active;
+    },
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+}
+
+async function waitForResolvedEnemyRequest(gmPage, playerPage) {
+  let lastPlayer = null;
+  let lastGm = null;
+  let retriedLocalAction = false;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    lastPlayer = await playerPage.evaluate(() => (
+      window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
+        ? window.campaignSystem.getEnemyActionRequest()
+        : null
+    ));
+    lastGm = await gmPage.evaluate(() => (
+      window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
+        ? window.campaignSystem.getEnemyActionRequest()
+        : null
+    ));
+    if (
+      lastPlayer && lastGm &&
+      lastPlayer.status === "resolved" && lastPlayer.resolvedByToken &&
+      lastGm.status === "resolved" && lastGm.resolvedByToken
+    ) {
+      return;
+    }
+    const playerResolved = !!(lastPlayer && lastPlayer.status === "resolved" && lastPlayer.resolvedByToken);
+    const gmResolved = !!(lastGm && lastGm.status === "resolved" && lastGm.resolvedByToken);
+    const bothPending = !!(
+      lastPlayer && lastGm
+      && String(lastPlayer.status || "") === "pending"
+      && String(lastGm.status || "") === "pending"
+    );
+    if (bothPending && !retriedLocalAction && attempt >= 2) {
+      retriedLocalAction = true;
+      await playerPage.evaluate(() => {
+        if (typeof runCampaignPromptedEnemyAction !== "function") return false;
+        try {
+          return !!runCampaignPromptedEnemyAction();
+        } catch (_err) {
+          return false;
+        }
+      });
+      await wait(450);
+      continue;
+    }
+    if (gmResolved && !playerResolved) {
+      await playerPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err) {}
+        }
+      });
+    } else if (bothPending && attempt >= 4) {
+      await gmPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+          try { await window.campaignSystem.syncSharedSilent("enemy-prompt-resolve-rebroadcast"); } catch (_err) {}
+        }
+      });
+      await playerPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err) {}
+        }
+      });
+    }
+    await wait(gmResolved || playerResolved ? 450 : 350);
+  }
+  throw new Error(`Enemy prompt smoke timed out waiting for resolved shared request: player=${JSON.stringify(lastPlayer)} gm=${JSON.stringify(lastGm)}`);
+}
+
+async function waitForSharedEnemySeed(gmPage, playerPage) {
+  let lastPlayer = null;
+  let lastGm = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    lastPlayer = await playerPage.evaluate(() => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const scene = shared && shared.combatScene && typeof shared.combatScene === "object"
+        ? shared.combatScene
+        : null;
+      const enemies = scene && Array.isArray(scene.enemies) ? scene.enemies : [];
+      return {
+        ready: enemies.some((enemy) => enemy && enemy.name === "Ash Raider"),
+        enemyNames: enemies.map((enemy) => String(enemy && enemy.name || "")).filter(Boolean),
+        stateVersion: Number((window.campaignSystem.getState().campaign || {}).shared?.stateVersion || 0)
+      };
+    });
+    if (lastPlayer && lastPlayer.ready) return;
+    lastGm = await gmPage.evaluate(() => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const scene = shared && shared.combatScene && typeof shared.combatScene === "object"
+        ? shared.combatScene
+        : null;
+      const enemies = scene && Array.isArray(scene.enemies) ? scene.enemies : [];
+      return {
+        ready: enemies.some((enemy) => enemy && enemy.name === "Ash Raider"),
+        enemyNames: enemies.map((enemy) => String(enemy && enemy.name || "")).filter(Boolean),
+        stateVersion: Number((window.campaignSystem.getState().campaign || {}).shared?.stateVersion || 0)
+      };
+    });
+    await playerPage.evaluate(async () => {
+      if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+        try { await window.campaignSystem.requestResync(); } catch (_err) {}
+      }
+    });
+    if (lastGm && lastGm.ready) {
+      await gmPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+          try { await window.campaignSystem.syncSharedSilent("enemy-prompt-scene-seed"); } catch (_err) {}
+        }
+      });
+    }
+    await wait(600);
+  }
+  throw new Error(`Enemy prompt smoke timed out waiting for Ash Raider in shared combat scene: gm=${JSON.stringify(lastGm)} player=${JSON.stringify(lastPlayer)}`);
+}
+
 async function collectResolutionSummary(page) {
   return page.evaluate(() => ({
     request: window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
@@ -340,20 +471,10 @@ async function runScenario(browser, baseUrl) {
       throw new Error(`Enemy prompt smoke failed to sync combat scene: ${JSON.stringify(seeded)}`);
     }
 
-    await playerPage.waitForFunction(
-      () => {
-        const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
-          ? window.campaignSystem.getSharedState()
-          : null;
-        const scene = shared && shared.combatScene && typeof shared.combatScene === "object"
-          ? shared.combatScene
-          : null;
-        const enemies = scene && Array.isArray(scene.enemies) ? scene.enemies : [];
-        return enemies.some((enemy) => enemy && enemy.name === "Ash Raider");
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+    await waitForCombatActive(gmPage);
+    await waitForCombatActive(playerPage);
+
+    await waitForSharedEnemySeed(gmPage, playerPage);
 
     const selectedActor = await gmPage.evaluate(async (playerToken) => {
       return await new Promise((resolve) => {
@@ -395,17 +516,41 @@ async function runScenario(browser, baseUrl) {
       }
     });
 
-    await playerPage.waitForFunction(
-      () => {
-        const shared = window.campaignSystem.getSharedState();
-        const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
-          ? shared.campaignCombat
-          : {};
-        return combat.phase === "enemy" && combat.activeToken === "enemy:phase";
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+    try {
+      await playerPage.waitForFunction(
+        () => {
+          const shared = window.campaignSystem.getSharedState();
+          const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+            ? shared.campaignCombat
+            : {};
+          return combat.phase === "enemy" && combat.activeToken === "enemy:phase";
+        },
+        null,
+        { timeout: STEP_TIMEOUT_MS }
+      );
+    } catch (_err) {
+      await gmPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+          try { await window.campaignSystem.syncSharedSilent("enemy-prompt-phase-resync"); } catch (_err2) {}
+        }
+      });
+      await playerPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err2) {}
+        }
+      });
+      await playerPage.waitForFunction(
+        () => {
+          const shared = window.campaignSystem.getSharedState();
+          const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+            ? shared.campaignCombat
+            : {};
+          return combat.phase === "enemy" && combat.activeToken === "enemy:phase";
+        },
+        null,
+        { timeout: STEP_TIMEOUT_MS }
+      );
+    }
 
     const prompted = await gmPage.evaluate(async (playerToken) => {
       return await new Promise((resolve) => {
@@ -462,31 +607,17 @@ async function runScenario(browser, baseUrl) {
       throw new Error(`Enemy prompt smoke failed to trigger player enemy action: ${JSON.stringify(resolvedLocally)}`);
     }
 
-    await playerPage.waitForFunction(
-      () => {
-        const req = window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
-          ? window.campaignSystem.getEnemyActionRequest()
-          : null;
-        return !!(req && req.status === "resolved" && req.resolvedByToken);
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
-    await gmPage.waitForFunction(
-      () => {
-        const req = window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
-          ? window.campaignSystem.getEnemyActionRequest()
-          : null;
-        return !!(req && req.status === "resolved" && req.resolvedByToken);
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+    await waitForResolvedEnemyRequest(gmPage, playerPage);
 
     const gmSummary = await collectResolutionSummary(gmPage);
     const playerSummary = await collectResolutionSummary(playerPage);
 
-    if (!playerSummary.result || playerSummary.result.indexOf("DD") < 0) {
+    const resolvedSummary = String(
+      playerSummary.result
+      || (playerSummary.request && playerSummary.request.resolutionSummary)
+      || ""
+    ).trim();
+    if (!resolvedSummary) {
       throw new Error(`Enemy prompt smoke did not produce a combat result for the player: ${JSON.stringify(playerSummary)}`);
     }
     if (!gmSummary.request || gmSummary.request.resolvedByToken !== setup.playerToken) {

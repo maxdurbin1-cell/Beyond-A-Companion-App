@@ -11,6 +11,14 @@
     }
   }
 
+  function getLocalStorageSafe() {
+    try {
+      return window.localStorage || null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
   function readSessionPayload(storageArea) {
     if (!storageArea || typeof storageArea.getItem !== "function") return null;
     try {
@@ -44,6 +52,7 @@
     lastAutoResolvedRollKey: "",
     autoRestoreTried: false,
     restoringSession: false,
+    sessionPersistenceSuppressed: false,
     dockOpen: false,
     lastDockLogSize: 0,
     timelineFilter: "all",
@@ -51,6 +60,7 @@
     hiddenTimelineUndoBatches: [],
     lastCharacterHash: "",
     lastAppliedSelfCharacterAt: 0,
+    characterSyncSuppressUntil: 0,
     gmIdea: "",
     gmWayfarerSort: "online",
     lastSharedHash: "",
@@ -128,6 +138,7 @@
     dockTimelinePinned: false,
     dockTimelineUnseen: 0,
     lastDockTimelineEntryKey: "",
+    lastGlobalQuickAccessHash: "",
     tableSceneMode: "auto",
     effectiveTableSceneMode: "exploration",
     timelineFilterManual: false,
@@ -301,6 +312,10 @@
     return state.playerName;
   }
 
+  function getCampaignRoleLabel(role) {
+    return role === "gm" ? "GM" : "Player";
+  }
+
   function emitWithAck(eventName, payload) {
     return new Promise(function (resolve) {
       if (!state.socket) {
@@ -313,6 +328,54 @@
     });
   }
 
+  function waitForSocketConnection(timeoutMs) {
+    return new Promise(function (resolve) {
+      if (state.connected) {
+        resolve(true);
+        return;
+      }
+      if (!state.socket) {
+        resolve(false);
+        return;
+      }
+
+      var settled = false;
+      var timer = setTimeout(function () {
+        finish(false);
+      }, Math.max(400, Number(timeoutMs || 2600)));
+
+      function cleanup() {
+        clearTimeout(timer);
+        try {
+          if (typeof state.socket.off === "function") {
+            state.socket.off("connect", onConnect);
+            state.socket.off("connect_error", onError);
+          }
+        } catch (_err) {}
+      }
+
+      function finish(ok) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(!!ok);
+      }
+
+      function onConnect() {
+        finish(true);
+      }
+
+      function onError() {
+        finish(false);
+      }
+
+      if (typeof state.socket.on === "function") {
+        state.socket.on("connect", onConnect);
+        state.socket.on("connect_error", onError);
+      }
+    });
+  }
+
   function formatCode(code) {
     return String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
   }
@@ -322,6 +385,21 @@
     if (!t) return "";
     try {
       return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function formatDateTime(value) {
+    var t = Number(value || 0);
+    if (!t) return "";
+    try {
+      return new Date(t).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+      });
     } catch (_err) {
       return "";
     }
@@ -924,6 +1002,22 @@
       ? window.S.combat.sceneEditor
       : null;
     var localSceneId = getCombatSceneEditorSnapshotActiveSceneId(localScene);
+    if (expectedSession) {
+      var expectedSnapshot = sharedScene && sharedScene.sceneEditor && typeof sharedScene.sceneEditor === "object"
+        ? (deepCloneJson(sharedScene.sceneEditor) || sharedScene.sceneEditor)
+        : null;
+      var expectedSnapshotSceneId = getCombatSceneEditorSnapshotActiveSceneId(expectedSnapshot);
+      if (!hasRenderableCombatSceneEditorSnapshot(expectedSnapshot)) return null;
+      if (expectedSceneId && expectedSnapshotSceneId && expectedSnapshotSceneId !== expectedSceneId) return null;
+      if (window.S && typeof window.S === "object") {
+        if (!window.S.combat || typeof window.S.combat !== "object") {
+          window.S.combat = {};
+        }
+        window.S.combat.sceneEditor = deepCloneJson(expectedSnapshot) || expectedSnapshot;
+        return window.S.combat.sceneEditor;
+      }
+      return expectedSnapshot;
+    }
     if (hasRenderableCombatSceneEditorSnapshot(localScene) && (!expectedSceneId || localSceneId === expectedSceneId)) {
       return localScene;
     }
@@ -1514,9 +1608,26 @@
           };
     }
 
+    var preservePlayerCombatTab = state.role === "player"
+      && sharedCombat
+      && sharedCombat.active
+      && activeTab === "combat"
+      && tab
+      && tab !== "combat"
+      && tab !== "scenes";
+
+    if (preservePlayerCombatTab) {
+      if (travelAt) {
+        state.lastCampaignTravelAppliedAt = travelAt;
+      }
+      return;
+    }
+
     var preservePlayerPersonalTab = state.role === "player"
       && !options.force
       && !playerSharedVttPrompt
+      && tab !== "combat"
+      && tab !== "scenes"
       && Math.max(0, Number(travel.phaseCost || 0) || 0) <= 0
       && !isPlayerViewOutOfLock(travel);
 
@@ -2137,6 +2248,247 @@
       sharedState.pendingChecks.history = sharedState.pendingChecks.history.slice(-80);
     }
     return sharedState.pendingChecks;
+  }
+
+  function ensureGmForgeState(sharedState) {
+    if (!sharedState) sharedState = getMutableCampaignSharedState();
+    if (!sharedState.gmForge || typeof sharedState.gmForge !== "object") {
+      sharedState.gmForge = { savedPresets: [], lastPresetId: "", updatedAt: 0 };
+    }
+    if (!Array.isArray(sharedState.gmForge.savedPresets)) {
+      sharedState.gmForge.savedPresets = [];
+    }
+    if (sharedState.gmForge.savedPresets.length > 24) {
+      sharedState.gmForge.savedPresets = sharedState.gmForge.savedPresets.slice(-24);
+    }
+    sharedState.gmForge.lastPresetId = String(sharedState.gmForge.lastPresetId || "");
+    sharedState.gmForge.updatedAt = Math.max(0, Number(sharedState.gmForge.updatedAt || 0));
+    return sharedState.gmForge;
+  }
+
+  function ensureCampaignChronicleState(sharedState) {
+    if (!sharedState) sharedState = getMutableCampaignSharedState();
+    if (!Array.isArray(sharedState.campaignChronicle)) {
+      sharedState.campaignChronicle = [];
+    }
+    if (sharedState.campaignChronicle.length > 180) {
+      sharedState.campaignChronicle = sharedState.campaignChronicle.slice(-180);
+    }
+    return sharedState.campaignChronicle;
+  }
+
+  function ensureCampaignHooksState(sharedState) {
+    if (!sharedState) sharedState = getMutableCampaignSharedState();
+    if (!Array.isArray(sharedState.unresolvedHooks)) {
+      sharedState.unresolvedHooks = [];
+    }
+    if (sharedState.unresolvedHooks.length > 160) {
+      sharedState.unresolvedHooks = sharedState.unresolvedHooks.slice(-160);
+    }
+    return sharedState.unresolvedHooks;
+  }
+
+  function sanitizeGmForgePreset(input) {
+    var source = input && typeof input === "object" ? input : {};
+    var draft = source.draft && typeof source.draft === "object" ? source.draft : {};
+    return {
+      id: String(source.id || ("forge-" + Date.now() + "-" + Math.floor(Math.random() * 100000))),
+      name: String(source.name || source.label || draft.templateLabel || draft.title || "GM Forge Preset").slice(0, 64),
+      summary: String(source.summary || draft.briefing || "").slice(0, 180),
+      updatedAt: Number(source.updatedAt || Date.now()) || Date.now(),
+      draft: {
+        title: String(draft.title || "").slice(0, 80),
+        diff: String(draft.diff || "medium").slice(0, 24),
+        region: String(draft.region || "province").slice(0, 24),
+        loc: String(draft.loc || "").slice(0, 80),
+        fp: Math.max(0, Math.trunc(Number(draft.fp || 0) || 0)),
+        briefing: String(draft.briefing || "").slice(0, 360),
+        contact: String(draft.contact || "").slice(0, 100),
+        threat: String(draft.threat || "").slice(0, 100),
+        keyMarker: String(draft.keyMarker || "").slice(0, 100),
+        enemy: String(draft.enemy || "").slice(0, 100),
+        checkpoints: String(draft.checkpoints || "").slice(0, 320),
+        gmNotes: String(draft.gmNotes || "").slice(0, 420),
+        hooks: String(draft.hooks || "").slice(0, 360),
+        templateId: String(draft.templateId || "").slice(0, 120),
+        templateLabel: String(draft.templateLabel || "").slice(0, 80),
+        missionType: String(draft.missionType || "job").slice(0, 40),
+        presetId: String(draft.presetId || "").slice(0, 80),
+        packId: String(draft.packId || "").slice(0, 80)
+      }
+    };
+  }
+
+  function buildCampaignChronicleEntry(input) {
+    var source = input && typeof input === "object" ? input : {};
+    return {
+      id: String(source.id || ("chronicle-" + Date.now() + "-" + Math.floor(Math.random() * 100000))),
+      title: String(source.title || source.label || "Campaign Note").slice(0, 80),
+      text: String(source.text || source.body || "").slice(0, 500),
+      kind: String(source.kind || "note").slice(0, 24),
+      missionId: String(source.missionId || "").slice(0, 80),
+      templateId: String(source.templateId || "").slice(0, 120),
+      missionType: String(source.missionType || "").slice(0, 40),
+      at: Number(source.at || Date.now()) || Date.now(),
+      by: String(source.by || state.playerName || ensureName() || "GM").slice(0, 48)
+    };
+  }
+
+  function buildCampaignHookEntry(input) {
+    var source = input && typeof input === "object" ? input : {};
+    return {
+      id: String(source.id || ("hook-" + Date.now() + "-" + Math.floor(Math.random() * 100000))),
+      text: String(source.text || source.title || "").slice(0, 220),
+      source: String(source.source || source.title || "GM Forge").slice(0, 80),
+      missionId: String(source.missionId || "").slice(0, 80),
+      templateId: String(source.templateId || "").slice(0, 120),
+      priority: String(source.priority || "normal").slice(0, 16),
+      status: String(source.status || "open") === "resolved" ? "resolved" : "open",
+      at: Number(source.at || Date.now()) || Date.now(),
+      resolvedAt: Math.max(0, Number(source.resolvedAt || 0)),
+      by: String(source.by || state.playerName || ensureName() || "GM").slice(0, 48)
+    };
+  }
+
+  function getCampaignChronicleEntries() {
+    var list = ensureCampaignChronicleState(getCampaignSharedState());
+    return deepCloneJson(list) || [];
+  }
+
+  function getCampaignHooks() {
+    var list = ensureCampaignHooksState(getCampaignSharedState());
+    return deepCloneJson(list) || [];
+  }
+
+  function syncForgeAndChroniclePatch(patch, reason) {
+    if (!state.code || !state.connected || state.role !== "gm") return;
+    syncSharedPatch(patch, reason).catch(function () {});
+  }
+
+  function saveGmForgePreset(preset) {
+    var next = sanitizeGmForgePreset(preset);
+    var shared = getMutableCampaignSharedState();
+    var forge = ensureGmForgeState(shared);
+    var existing = (forge.savedPresets || []).filter(function (row) {
+      return String(row && row.id || "") !== String(next.id || "");
+    });
+    existing.unshift(next);
+    forge.savedPresets = existing.slice(0, 24);
+    forge.lastPresetId = String(next.id || "");
+    forge.updatedAt = Date.now();
+    syncForgeAndChroniclePatch({ gmForge: deepCloneJson(forge) || forge }, "gm-forge-preset-save");
+    return next;
+  }
+
+  function deleteGmForgePreset(presetId) {
+    var id = String(presetId || "").trim();
+    if (!id) return false;
+    var shared = getMutableCampaignSharedState();
+    var forge = ensureGmForgeState(shared);
+    var before = forge.savedPresets.length;
+    forge.savedPresets = forge.savedPresets.filter(function (row) {
+      return String(row && row.id || "") !== id;
+    });
+    if (forge.lastPresetId === id) forge.lastPresetId = "";
+    forge.updatedAt = Date.now();
+    if (forge.savedPresets.length === before) return false;
+    syncForgeAndChroniclePatch({ gmForge: deepCloneJson(forge) || forge }, "gm-forge-preset-delete");
+    return true;
+  }
+
+  function setGmForgeLastPreset(presetId) {
+    var id = String(presetId || "").trim();
+    var shared = getMutableCampaignSharedState();
+    var forge = ensureGmForgeState(shared);
+    forge.lastPresetId = id;
+    forge.updatedAt = Date.now();
+    syncForgeAndChroniclePatch({ gmForge: deepCloneJson(forge) || forge }, "gm-forge-preset-last");
+    return id;
+  }
+
+  function getGmForgePresets() {
+    var forge = ensureGmForgeState(getCampaignSharedState());
+    return deepCloneJson(forge.savedPresets) || [];
+  }
+
+  function addCampaignChronicleEntry(input) {
+    var entry = buildCampaignChronicleEntry(input);
+    if (!String(entry.title || "").trim() && !String(entry.text || "").trim()) return false;
+    var shared = getMutableCampaignSharedState();
+    var chronicle = ensureCampaignChronicleState(shared);
+    chronicle.unshift(entry);
+    if (chronicle.length > 180) shared.campaignChronicle = chronicle.slice(0, 180);
+    appendSessionTimeline("chronicle", "Chronicle updated: " + String(entry.title || "Campaign Note") + ".", {
+      chronicleId: entry.id,
+      kind: entry.kind,
+      missionId: entry.missionId
+    });
+    syncForgeAndChroniclePatch({
+      campaignChronicle: deepCloneJson(shared.campaignChronicle || chronicle) || chronicle,
+      sessionTimeline: deepCloneJson(shared.sessionTimeline || ensureSessionTimelineState(shared))
+    }, "campaign-chronicle-add");
+    return entry;
+  }
+
+  function addCampaignHook(input) {
+    var hook = buildCampaignHookEntry(input);
+    if (!String(hook.text || "").trim()) return false;
+    var shared = getMutableCampaignSharedState();
+    var hooks = ensureCampaignHooksState(shared);
+    hooks.unshift(hook);
+    if (hooks.length > 160) shared.unresolvedHooks = hooks.slice(0, 160);
+    appendSessionTimeline("hook", "Open hook tracked: " + String(hook.text || "Open hook") + ".", {
+      hookId: hook.id,
+      source: hook.source,
+      missionId: hook.missionId
+    });
+    syncForgeAndChroniclePatch({
+      unresolvedHooks: deepCloneJson(shared.unresolvedHooks || hooks) || hooks,
+      sessionTimeline: deepCloneJson(shared.sessionTimeline || ensureSessionTimelineState(shared))
+    }, "campaign-hook-add");
+    return hook;
+  }
+
+  function resolveCampaignHook(hookId) {
+    var id = String(hookId || "").trim();
+    if (!id) return false;
+    var shared = getMutableCampaignSharedState();
+    var hooks = ensureCampaignHooksState(shared);
+    var changed = false;
+    hooks.forEach(function (hook) {
+      if (String(hook && hook.id || "") !== id || String(hook.status || "") === "resolved") return;
+      hook.status = "resolved";
+      hook.resolvedAt = Date.now();
+      changed = true;
+    });
+    if (!changed) return false;
+    appendSessionTimeline("hook", "Hook resolved.", { hookId: id });
+    syncForgeAndChroniclePatch({
+      unresolvedHooks: deepCloneJson(hooks) || hooks,
+      sessionTimeline: deepCloneJson(shared.sessionTimeline || ensureSessionTimelineState(shared))
+    }, "campaign-hook-resolve");
+    return true;
+  }
+
+  function reopenCampaignHook(hookId) {
+    var id = String(hookId || "").trim();
+    if (!id) return false;
+    var shared = getMutableCampaignSharedState();
+    var hooks = ensureCampaignHooksState(shared);
+    var changed = false;
+    hooks.forEach(function (hook) {
+      if (String(hook && hook.id || "") !== id || String(hook.status || "") !== "resolved") return;
+      hook.status = "open";
+      hook.resolvedAt = 0;
+      changed = true;
+    });
+    if (!changed) return false;
+    appendSessionTimeline("hook", "Hook reopened.", { hookId: id });
+    syncForgeAndChroniclePatch({
+      unresolvedHooks: deepCloneJson(hooks) || hooks,
+      sessionTimeline: deepCloneJson(shared.sessionTimeline || ensureSessionTimelineState(shared))
+    }, "campaign-hook-reopen");
+    return true;
   }
 
   function getPendingChecks() {
@@ -3444,7 +3796,10 @@
       provinceSelections: existingSelections,
       readyCheck: deepCloneJson(current.readyCheck || ensureReadyCheckState(current)),
       pendingChecks: deepCloneJson(current.pendingChecks || ensurePendingChecksState(current)),
-      sessionTimeline: deepCloneJson(current.sessionTimeline || ensureSessionTimelineState(current))
+      sessionTimeline: deepCloneJson(current.sessionTimeline || ensureSessionTimelineState(current)),
+      gmForge: deepCloneJson(current.gmForge || ensureGmForgeState(current)),
+      campaignChronicle: deepCloneJson(current.campaignChronicle || ensureCampaignChronicleState(current)),
+      unresolvedHooks: deepCloneJson(current.unresolvedHooks || ensureCampaignHooksState(current))
     };
     var shouldPushAuthoritativeMaps = (state.role === "gm") || !state.code;
     if (shouldPushAuthoritativeMaps) {
@@ -3517,6 +3872,20 @@
     }
     nextPatch.combatScene = mergedScene;
     return nextPatch;
+  }
+
+  function applyLocalSharedPatch(patch) {
+    if (!patch || typeof patch !== "object") return;
+    var current = getMutableCampaignSharedState();
+    if (!current || typeof current !== "object") return;
+    var nextPatch = deepCloneJson(patch) || {};
+    if (nextPatch.combatScene && typeof nextPatch.combatScene === "object") {
+      nextPatch = mergeCombatScenePatchWithCurrent(nextPatch);
+    }
+    Object.keys(nextPatch).forEach(function (key) {
+      if (key === "__combatSceneSyncGeneration" || key === "__combatSceneAutoSync") return;
+      current[key] = deepCloneJson(nextPatch[key]);
+    });
   }
 
   function getProgressHash() {
@@ -3754,7 +4123,11 @@
         }
         var vttSession = mergedCombat.vttSession && typeof mergedCombat.vttSession === "object" ? mergedCombat.vttSession : null;
         var vttAt = Number(vttSession && vttSession.enteredAt || 0);
-        if (mergedCombat.active && state.role === "player" && vttAt && vttAt !== state.lastCampaignVttPromptAt) {
+        var sharedSceneEditorSnapshot = sharedState.combatScene && sharedState.combatScene.sceneEditor && typeof sharedState.combatScene.sceneEditor === "object"
+          ? sharedState.combatScene.sceneEditor
+          : null;
+        var hasRenderableSharedScenePrompt = hasRenderableCombatSceneEditorSnapshot(sharedSceneEditorSnapshot);
+        if (mergedCombat.active && state.role === "player" && vttAt && vttAt !== state.lastCampaignVttPromptAt && hasRenderableSharedScenePrompt) {
           state.lastCampaignVttPromptAt = vttAt;
           promptCampaignCombatModeInvite(vttSession);
         }
@@ -3856,6 +4229,19 @@
       if (Array.isArray(sharedState.sessionTimeline)) {
         var current = getCampaignSharedState() || {};
         current.sessionTimeline = deepCloneJson(sharedState.sessionTimeline) || [];
+      }
+      if (sharedState.gmForge && typeof sharedState.gmForge === "object") {
+        var current = getCampaignSharedState() || {};
+        current.gmForge = deepCloneJson(sharedState.gmForge) || ensureGmForgeState(current);
+        ensureGmForgeState(current);
+      }
+      if (Array.isArray(sharedState.campaignChronicle)) {
+        var current = getCampaignSharedState() || {};
+        current.campaignChronicle = deepCloneJson(sharedState.campaignChronicle) || [];
+      }
+      if (Array.isArray(sharedState.unresolvedHooks)) {
+        var current = getCampaignSharedState() || {};
+        current.unresolvedHooks = deepCloneJson(sharedState.unresolvedHooks) || [];
       }
       if (Array.isArray(sharedState.actionQueue)) {
         var current = getCampaignSharedState() || {};
@@ -4469,46 +4855,179 @@
     }
   }
 
-  function loadSession() {
-    var parsed = readSessionPayload(getSessionStorageSafe());
-    if (!parsed || typeof parsed !== "object") return null;
+  function normalizeStoredSessionPayload(sessionLike) {
+    var parsed = sessionLike && typeof sessionLike === "object" ? sessionLike : null;
+    if (!parsed) return null;
+    var code = formatCode(parsed.code || "");
+    if (!code) return null;
     return {
-      code: formatCode(parsed.code || ""),
+      code: code,
       token: String(parsed.token || "").trim(),
-      name: String(parsed.name || "").trim().slice(0, 32),
-      role: parsed.role === "gm" ? "gm" : "player"
+      name: String(parsed.name || "").trim().slice(0, 32) || (parsed.role === "gm" ? "GM" : "Player"),
+      role: parsed.role === "gm" ? "gm" : "player",
+      savedAt: Math.max(0, Number(parsed.savedAt || parsed.updatedAt || 0)),
+      lastSnapshotAt: Math.max(0, Number(parsed.lastSnapshotAt || 0)),
+      lastAuthoritativeAt: Math.max(0, Number(parsed.lastAuthoritativeAt || 0)),
+      lastSyncAt: Math.max(0, Number(parsed.lastSyncAt || 0)),
+      lastSceneLabel: String(parsed.lastSceneLabel || "").trim().slice(0, 80),
+      restoreError: String(parsed.restoreError || "").trim().slice(0, 220),
+      restoreFailedAt: Math.max(0, Number(parsed.restoreFailedAt || 0)),
+      source: String(parsed.source || "").trim()
     };
   }
 
-  function persistSession() {
-    if (!state.code || !state.token) return;
-    var payload = {
-      code: state.code,
-      token: state.token,
-      name: state.playerName || ensureName(),
-      role: state.role === "gm" ? "gm" : "player"
-    };
-    var sessionStore = getSessionStorageSafe();
+  function readStoredSession(storageArea, source) {
+    var normalized = normalizeStoredSessionPayload(readSessionPayload(storageArea));
+    if (!normalized) return null;
+    if (source) normalized.source = source;
+    return normalized;
+  }
+
+  function writeSessionPayload(storageArea, payload) {
+    if (!storageArea || typeof storageArea.setItem !== "function" || !payload) return false;
     try {
-      if (sessionStore && typeof sessionStore.setItem === "function") {
-        sessionStore.setItem(SESSION_KEY, JSON.stringify(payload));
-      }
-    } catch (_err) {}
+      storageArea.setItem(SESSION_KEY, JSON.stringify(payload));
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function removeSessionPayload(storageArea) {
+    if (!storageArea || typeof storageArea.removeItem !== "function") return;
     try {
-      localStorage.removeItem(SESSION_KEY);
+      storageArea.removeItem(SESSION_KEY);
     } catch (_err) {}
   }
 
-  function clearSession() {
-    var sessionStore = getSessionStorageSafe();
-    try {
-      if (sessionStore && typeof sessionStore.removeItem === "function") {
-        sessionStore.removeItem(SESSION_KEY);
-      }
-    } catch (_err) {}
-    try {
-      localStorage.removeItem(SESSION_KEY);
-    } catch (_err) {}
+  function buildSessionPayload(base) {
+    var existing = normalizeStoredSessionPayload(base) || {};
+    var tableState = getCampaignTableState(getCampaignSharedState());
+    return normalizeStoredSessionPayload({
+      code: existing.code || state.code,
+      token: Object.prototype.hasOwnProperty.call(existing, "token") ? existing.token : String(state.token || "").trim(),
+      name: existing.name || state.playerName || ensureName(),
+      role: existing.role === "gm" ? "gm" : (state.role === "gm" ? "gm" : "player"),
+      savedAt: existing.savedAt || Date.now(),
+      lastSnapshotAt: existing.lastSnapshotAt || Number(state.lastCampaignStateAt || 0),
+      lastAuthoritativeAt: existing.lastAuthoritativeAt || Number(state.lastAuthoritativeAt || 0),
+      lastSyncAt: existing.lastSyncAt || Number(state.lastSyncAt || 0),
+      lastSceneLabel: existing.lastSceneLabel || String(tableState && tableState.label || ""),
+      restoreError: existing.restoreError || "",
+      restoreFailedAt: existing.restoreFailedAt || 0
+    });
+  }
+
+  function loadSession(options) {
+    var opts = options || {};
+    var source = String(opts.source || "").toLowerCase();
+    var sessionValue = source === "persistent" ? null : readStoredSession(getSessionStorageSafe(), "session");
+    var persistentValue = source === "session" ? null : readStoredSession(getLocalStorageSafe(), "persistent");
+    if (source === "session") return sessionValue;
+    if (source === "persistent") return persistentValue;
+    if (opts.preferPersistent) return persistentValue || sessionValue || null;
+    return sessionValue || persistentValue || null;
+  }
+
+  function persistSession(options) {
+    var opts = options || {};
+    if (state.sessionPersistenceSuppressed && !opts.force) {
+      return null;
+    }
+    var payload = buildSessionPayload(opts.payload || {});
+    if (!payload || !payload.code) return null;
+    if (!payload.token && !opts.allowWithoutToken) return null;
+    if (!opts.persistentOnly) {
+      writeSessionPayload(getSessionStorageSafe(), payload);
+    }
+    if (!opts.sessionOnly) {
+      writeSessionPayload(getLocalStorageSafe(), payload);
+    }
+    return payload;
+  }
+
+  function clearSession(options) {
+    var opts = options || {};
+    if (!opts.skipSession) {
+      removeSessionPayload(getSessionStorageSafe());
+    }
+    if (!opts.skipPersistent) {
+      removeSessionPayload(getLocalStorageSafe());
+    }
+  }
+
+  function markSessionRestoreFailure(sessionLike, errorText) {
+    var payload = buildSessionPayload(sessionLike || loadSession({ preferPersistent: true }) || {});
+    if (!payload) return null;
+    payload.restoreError = String(errorText || "Saved campaign session could not be restored.").trim().slice(0, 220);
+    payload.restoreFailedAt = Date.now();
+    payload.savedAt = payload.savedAt || payload.restoreFailedAt;
+    clearSession({ skipPersistent: true });
+    persistSession({
+      payload: payload,
+      persistentOnly: true,
+      allowWithoutToken: true
+    });
+    return payload;
+  }
+
+  function getSavedCampaignSessionSummary() {
+    var session = loadSession({ preferPersistent: true });
+    if (!session) {
+      return {
+        hasSaved: false,
+        activeMatch: false,
+        canResume: false,
+        statusKey: "empty",
+        statusLabel: "No saved seat",
+        detail: "Join a campaign and this browser will remember your room, role, and seat for faster recovery.",
+        session: null,
+        roleLabel: "Player",
+        savedAtText: "",
+        lastActiveText: "",
+        lastActiveAt: 0,
+        badgeTone: "offline"
+      };
+    }
+
+    var roleLabel = getCampaignRoleLabel(session.role);
+    var activeMatch = !!(
+      state.code
+      && formatCode(state.code) === session.code
+      && String(state.role || "") === String(session.role || "")
+      && (!state.token || !session.token || String(state.token) === String(session.token))
+    );
+    var lastActiveAt = Math.max(
+      Number(session.restoreFailedAt || 0),
+      Number(session.lastSnapshotAt || 0),
+      Number(session.lastAuthoritativeAt || 0),
+      Number(session.lastSyncAt || 0),
+      Number(session.savedAt || 0)
+    );
+    var failureText = String(session.restoreError || "").trim();
+    var statusKey = activeMatch ? "active" : (failureText ? "attention" : "ready");
+    var statusLabel = activeMatch
+      ? "Active at table"
+      : (failureText ? "Needs attention" : "Ready to resume");
+    var detail = activeMatch
+      ? ("You are already seated in " + session.code + " as " + roleLabel + ".")
+      : (failureText
+        ? failureText
+        : ("Saved " + roleLabel.toLowerCase() + " seat ready for room " + session.code + "."));
+    return {
+      hasSaved: true,
+      activeMatch: activeMatch,
+      canResume: !!session.token,
+      statusKey: statusKey,
+      statusLabel: statusLabel,
+      detail: detail,
+      session: session,
+      roleLabel: roleLabel,
+      savedAtText: formatDateTime(session.savedAt),
+      lastActiveText: formatDateTime(lastActiveAt),
+      lastActiveAt: lastActiveAt,
+      badgeTone: statusKey === "attention" ? "stale" : (activeMatch ? "online" : "syncing")
+    };
   }
 
   // ========== PHASE 1: GM MODES & CAMPAIGN COMBAT ==========
@@ -5467,6 +5986,18 @@
         sharedState.combatScene.sceneEditor = null;
         sharedState.combatScene.syncMeta = null;
       }
+      var combatTravel = ensureCampaignTravelState(sharedState);
+      var combatContext = String(getActiveContextId() || combatTravel.context || "traveling");
+      combatTravel.context = combatContext;
+      combatTravel.region = getCameraRegion("combat", combatContext);
+      combatTravel.tab = "combat";
+      combatTravel.label = "Combat";
+      combatTravel.provinceKey = "";
+      combatTravel.movedBy = String(state.playerName || ensureName() || "GM");
+      combatTravel.reason = "combat-start";
+      combatTravel.phaseCost = 0;
+      combatTravel.updatedAt = Date.now();
+      sharedState.campaignTravel = deepCloneJson(combatTravel) || combatTravel;
       if (window.S && window.S.combat && typeof window.S.combat === "object") {
         window.S.combat.sceneEditor = null;
         window.S.combat.sceneSyncMeta = null;
@@ -5482,7 +6013,8 @@
         } else {
           var startPatch = syncSharedPatch({
             campaignCombat: sharedState.campaignCombat,
-            combatScene: sharedState.combatScene
+            combatScene: sharedState.combatScene,
+            campaignTravel: sharedState.campaignTravel
           }, "start-campaign-combat");
           if (startPatch && typeof startPatch.catch === "function") {
             startPatch.catch(function () {});
@@ -5492,6 +6024,14 @@
           "Campaign Combat",
           "Combat opened by " + combatState.startedBy + ". The GM now chooses which Wayfarer acts each round before the enemy turn."
         );
+      }
+      if (typeof window.switchTab === "function") {
+        try {
+          window.__campaignSuppressNavigationSync = true;
+          window.switchTab("combat", document.getElementById("tabnav-combat") || null);
+        } catch (_navErr) {
+          window.__campaignSuppressNavigationSync = false;
+        }
       }
       if (callback) callback({ ok: true });
     } catch (err) {
@@ -5629,7 +6169,7 @@
             resolutionSummary: String(payload.resolutionSummary || "").trim().slice(0, 240)
           }
         }
-      }, "resolve-enemy-action").then(function (res) {
+      }, "resolve-enemy-action", { bypassQueue: true }).then(function (res) {
         if (callback) callback(res || { ok: false, error: "Could not resolve enemy action." });
       }).catch(function (err) {
         if (callback) callback({ ok: false, error: String(err) });
@@ -5916,16 +6456,17 @@
     safeNotif("That player sync update had no permitted shared fields, so it was ignored.", "warn");
   }
 
-  async function syncPlayerSharedPatch(patch, reason) {
+  async function syncPlayerSharedPatch(patch, reason, options) {
     if (!state.socket || !state.connected || !state.code) return { ok: false, error: "Not connected." };
     if (!patch || typeof patch !== "object") return { ok: false, error: "Invalid patch." };
+    var opts = options && typeof options === "object" ? options : {};
     var safePatch = sanitizePlayerSharedPatch(patch);
     if (!Object.keys(safePatch).length) {
       maybeNotifyPlayerPatchGuardrail(reason || "player-patch");
       return { ok: false, error: "No permitted player patch keys." };
     }
     var gmSettings = ensureGmSettings();
-    if (String(gmSettings.mode || "passive") === "active") {
+    if (!opts.bypassQueue && String(gmSettings.mode || "passive") === "active") {
       var queue = ensureActionQueue();
       queue.push({
         id: String(Math.random()).slice(2, 10),
@@ -5967,7 +6508,12 @@
     if (state.role === "player") {
       return syncPlayerSharedPatch(patch, reason || "player-shared-patch");
     }
-    return pushSharedState(prepareOutgoingCombatScenePatch(patch), reason || "gm-shared-patch");
+    var outgoingPatch = prepareOutgoingCombatScenePatch(patch);
+    var res = await pushSharedState(outgoingPatch, reason || "gm-shared-patch");
+    if (res && res.ok) {
+      applyLocalSharedPatch(outgoingPatch);
+    }
+    return res;
   }
 
   // Player submits action (add to queue for GM approval if in active mode)
@@ -7000,33 +7546,43 @@
   }
 
   async function shareBackpackItem(slotIndex) {
-    if (typeof window.S === "undefined" || !window.S) return;
+    if (typeof window.S === "undefined" || !window.S) return { ok: false, error: "Missing character state." };
     if (!Array.isArray(window.S.backpack)) {
       safeNotif("No backpack items to share.", "warn");
-      return;
+      return { ok: false, error: "No backpack items to share." };
     }
     var idx = Math.max(0, Number(slotIndex || 0));
     var item = normalizeItemLabel(window.S.backpack[idx]);
     if (!item) {
       safeNotif("That backpack slot is empty.", "warn");
-      return;
+      return { ok: false, error: "That backpack slot is empty." };
     }
+    state.characterSyncSuppressUntil = Date.now() + 1200;
     var res = await emitWithAck("campaign:stashShare", { item: item });
     if (!res.ok) {
       safeNotif(res.error || "Could not share item.", "warn");
-      return;
+      return { ok: false, error: res.error || "Could not share item." };
     }
+    var sharedState = getMutableCampaignSharedState();
+    if (!Array.isArray(sharedState.partyStash)) sharedState.partyStash = [];
+    sharedState.partyStash = sharedState.partyStash.slice();
+    sharedState.partyStash.push(item);
     window.S.backpack[idx] = "";
     if (typeof window.renderBackpackUI === "function") window.renderBackpackUI();
-    syncCharacterToCampaign(true);
+    await syncCharacterToCampaign(true);
     safeNotif("Shared item to party stash: " + item, "good");
+    return {
+      ok: true,
+      item: item,
+      backpack: Array.isArray(window.S.backpack) ? window.S.backpack.slice() : []
+    };
   }
 
   async function claimSharedItem(stashIndex) {
     var hasSlot = Array.isArray(window.S && window.S.backpack) && window.S.backpack.indexOf("") >= 0;
     if (!hasSlot) {
       safeNotif("Backpack full.", "warn");
-      return;
+      return { ok: false, error: "Backpack full." };
     }
     var shared = getCampaignSharedState();
     var list = Array.isArray(shared.partyStash) ? shared.partyStash.slice() : [];
@@ -7035,30 +7591,47 @@
     var localItem = normalizeItemLabel(list[idx]);
     if (!localItem) {
       safeNotif("That party stash item is no longer available.", "warn");
-      return;
+      return { ok: false, error: "That party stash item is no longer available." };
     }
+    state.characterSyncSuppressUntil = Date.now() + 1200;
     var res = await emitWithAck("campaign:stashClaim", { index: idx });
     if (!res.ok) {
       safeNotif(res.error || "Could not claim party item.", "warn");
-      return;
+      return { ok: false, error: res.error || "Could not claim party item." };
     }
     // Prefer server-confirmed item name; fall back to the locally-read value so the
     // slot text is never blank even if the server ack arrives before the state snapshot.
     var claimedItem = normalizeItemLabel((res && res.item) || localItem);
     if (!claimedItem) {
       safeNotif("Claimed item, but item name was empty. Check your backpack.", "warn");
-      return;
+      return { ok: false, error: "Claimed item name was empty." };
     }
     if (!addItemToBackpack(claimedItem)) {
       safeNotif("Claimed item, but backpack storage failed.", "warn");
-      return;
+      return { ok: false, error: "Claimed item, but backpack storage failed." };
     }
+    var nextSharedState = getMutableCampaignSharedState();
+    var nextPartyStash = Array.isArray(nextSharedState.partyStash) ? nextSharedState.partyStash.slice() : [];
+    if (idx >= 0 && idx < nextPartyStash.length && normalizeItemLabel(nextPartyStash[idx]) === claimedItem) {
+      nextPartyStash.splice(idx, 1);
+    } else {
+      var localIdx = nextPartyStash.findIndex(function (entry) {
+        return normalizeItemLabel(entry) === claimedItem;
+      });
+      if (localIdx >= 0) nextPartyStash.splice(localIdx, 1);
+    }
+    nextSharedState.partyStash = nextPartyStash;
     // Re-render manually in case the incoming state snapshot clears the slot before renderBackpackUI.
     if (typeof window.renderBackpackUI === "function") {
       setTimeout(function () { window.renderBackpackUI(); }, 80);
     }
-    syncCharacterToCampaign(true);
+    await syncCharacterToCampaign(true);
     safeNotif("Claimed from party stash: " + claimedItem, "good");
+    return {
+      ok: true,
+      item: claimedItem,
+      backpack: Array.isArray(window.S.backpack) ? window.S.backpack.slice() : []
+    };
   }
 
   function copyRosterItem(token, itemIndex) {
@@ -7081,6 +7654,7 @@
 
   async function syncCharacterToCampaign(force) {
     if (!state.socket || !state.connected || !state.code) return;
+    if (!force && Number(state.characterSyncSuppressUntil || 0) > Date.now()) return;
     var summary = collectCharacterSummary();
     var hash = JSON.stringify(summary);
     if (!force && hash === state.lastCharacterHash) return;
@@ -7152,6 +7726,70 @@
       return '<div class="campaign-log-row">'
         + '<span class="campaign-log-kind">' + escapeHtml(kind) + '</span>'
         + '<span>' + escapeHtml(text + ' · ' + by + ' · ' + ts) + '</span>'
+        + '</div>';
+    }).join("");
+  }
+
+  function buildSessionRecapHighlights(sessionTimeline, chronicle, hooks) {
+    var lines = [];
+    var latestTimeline = Array.isArray(sessionTimeline) && sessionTimeline.length ? sessionTimeline[sessionTimeline.length - 1] : null;
+    var latestChronicle = Array.isArray(chronicle) && chronicle.length ? chronicle[0] : null;
+    var openHooks = Array.isArray(hooks) ? hooks.filter(function (hook) { return String(hook && hook.status || "open") !== "resolved"; }) : [];
+    if (latestChronicle) {
+      lines.push("Latest chronicle: " + String(latestChronicle.title || "Campaign Note") + ".");
+    }
+    if (latestTimeline) {
+      lines.push("Latest table event: " + String(latestTimeline.text || "Recent activity") + ".");
+    }
+    if (openHooks.length) {
+      lines.push(openHooks.length + " open hook" + (openHooks.length === 1 ? "" : "s") + " still hanging over the table.");
+    } else {
+      lines.push("No open hooks are currently tracked.");
+    }
+    return lines.slice(0, 4);
+  }
+
+  function renderCampaignChronicle(log, limit) {
+    if (!Array.isArray(log) || !log.length) {
+      return '<div class="campaign-muted">No chronicle entries yet.</div>';
+    }
+    return log.slice(0, limit || 10).map(function (entry) {
+      var title = String(entry && entry.title || "Campaign Note");
+      var text = String(entry && entry.text || "");
+      var by = String(entry && entry.by || "GM");
+      var ts = formatTimestamp(entry && entry.at);
+      return '<div class="campaign-log-row" style="display:block;">'
+        + '<div style="display:flex;justify-content:space-between;gap:.35rem;flex-wrap:wrap;">'
+        + '<span class="campaign-log-kind">' + escapeHtml(title) + '</span>'
+        + '<span class="campaign-muted">' + escapeHtml(by + " · " + ts) + '</span>'
+        + '</div>'
+        + '<div class="campaign-muted" style="margin-top:.18rem;color:var(--text2);">' + escapeHtml(text || "No details recorded.") + '</div>'
+        + '</div>';
+    }).join("");
+  }
+
+  function renderCampaignHooks(hooks, canManage) {
+    if (!Array.isArray(hooks) || !hooks.length) {
+      return '<div class="campaign-muted">No hooks tracked yet.</div>';
+    }
+    return hooks.slice(0, 16).map(function (hook) {
+      var status = String(hook && hook.status || "open");
+      var title = String(hook && hook.text || hook && hook.title || "Open hook");
+      var source = String(hook && hook.source || "GM Forge");
+      var id = String(hook && hook.id || "");
+      var actions = "";
+      if (canManage && id) {
+        actions = status === "resolved"
+          ? '<button class="btn btn-xs" onclick="window.campaignSystem.reopenCampaignHook(\'' + escapeHtml(id) + '\')">Reopen</button>'
+          : '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.resolveCampaignHook(\'' + escapeHtml(id) + '\')">Resolve</button>';
+      }
+      return '<div class="campaign-log-row" style="display:flex;justify-content:space-between;align-items:flex-start;gap:.45rem;">'
+        + '<div style="min-width:0;">'
+        + '<span class="campaign-log-kind">' + escapeHtml(status) + '</span>'
+        + '<div class="campaign-muted" style="margin-top:.18rem;color:var(--text2);">' + escapeHtml(title) + '</div>'
+        + '<div class="campaign-muted" style="margin-top:.12rem;">' + escapeHtml(source) + '</div>'
+        + '</div>'
+        + actions
         + '</div>';
     }).join("");
   }
@@ -7281,8 +7919,216 @@
     bindCampaignSoundtrackInputs();
   }
 
+  async function ensureCampaignConnectionReady() {
+    if (!ensureSocket()) {
+      safeNotif("Multiplayer requires running the local campaign server.", "warn");
+      return false;
+    }
+    if (state.connected) return true;
+    try {
+      if (state.socket && typeof state.socket.connect === "function") {
+        state.socket.connect();
+      }
+    } catch (_err) {}
+    var connected = await waitForSocketConnection(3200);
+    if (!connected) {
+      safeNotif("Could not reach the campaign server. Try again in a moment.", "warn");
+      renderSettingsSection();
+      renderDockPanel();
+      return false;
+    }
+    return true;
+  }
+
+  function buildCampaignRecoveryCardHtml() {
+    var summary = getSavedCampaignSessionSummary();
+    if (!summary.hasSaved) {
+      return ''
+        + '<div class="campaign-card">'
+        + '<div class="campaign-card-title">Campaign Resume</div>'
+        + '<div class="campaign-muted">No saved campaign seat yet. Once you join a room, this browser will remember the code, role, and seat so you can resume or rejoin without rebuilding the table state by hand.</div>'
+        + '<div class="campaign-actions" style="margin-top:.35rem;">'
+        + '<button class="btn btn-xs" onclick="window.campaignSystem.openCampaignRecoveryCenter()">How Resume Works</button>'
+        + '</div>'
+        + '</div>';
+    }
+
+    var session = summary.session;
+    var sceneLabel = String(session.lastSceneLabel || "Campaign");
+    var savedAtText = summary.savedAtText || "-";
+    var lastActiveText = summary.lastActiveText || "-";
+    var primaryLabel = summary.activeMatch
+      ? "Reconnect This Seat"
+      : (summary.canResume ? ("Resume " + summary.roleLabel + " Seat") : "Rejoin This Room");
+    var primaryAction = summary.activeMatch
+      ? 'window.campaignSystem.reconnectNow()'
+      : (summary.canResume
+        ? 'window.campaignSystem.resumeSavedCampaignSession()'
+        : 'window.campaignSystem.rejoinSavedCampaignSession()');
+
+    return ''
+      + '<div class="campaign-card">'
+      + '<div class="campaign-card-title">Campaign Resume</div>'
+      + '<div class="campaign-status-row">'
+      + '<span class="campaign-badge ' + escapeHtml(summary.badgeTone) + '">' + escapeHtml(summary.statusLabel) + '</span>'
+      + '<span class="campaign-muted">Room <strong style="color:var(--teal);">' + escapeHtml(session.code) + '</strong></span>'
+      + '<span class="campaign-muted">' + escapeHtml(summary.roleLabel) + ' · ' + escapeHtml(session.name) + '</span>'
+      + '</div>'
+      + '<div class="campaign-muted" style="margin-top:.24rem;">' + escapeHtml(summary.detail) + '</div>'
+      + '<div class="campaign-muted" style="margin-top:.22rem;">Last saved: <strong style="color:var(--text2);">' + escapeHtml(savedAtText) + '</strong> · Scene <strong style="color:var(--gold2);">' + escapeHtml(sceneLabel) + '</strong></div>'
+      + '<div class="campaign-muted" style="margin-top:.22rem;">Last table activity: <strong style="color:var(--text2);">' + escapeHtml(lastActiveText) + '</strong></div>'
+      + '<div class="campaign-actions" style="margin-top:.35rem;">'
+      + '<button class="btn btn-xs btn-teal" onclick="' + primaryAction + '">' + escapeHtml(primaryLabel) + '</button>'
+      + (!summary.activeMatch ? '<button class="btn btn-xs" onclick="window.campaignSystem.rejoinSavedCampaignSession()">Rejoin Fresh</button>' : '')
+      + '<button class="btn btn-xs" onclick="window.campaignSystem.openCampaignRecoveryCenter()">Details</button>'
+      + '<button class="btn btn-xs btn-red" onclick="window.campaignSystem.forgetSavedCampaignSession()">Forget Saved Seat</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function openCampaignRecoveryCenter() {
+    var summary = getSavedCampaignSessionSummary();
+    if (typeof window.openModal !== "function") {
+      if (window.settingsSystem && typeof window.settingsSystem.openSettings === "function") {
+        window.settingsSystem.openSettings();
+        if (typeof window.settingsSystem.setActiveTab === "function") {
+          window.settingsSystem.setActiveTab("campaign");
+        }
+      }
+      safeNotif(summary.hasSaved ? "Campaign resume details are in Settings > Campaign." : "Join a campaign to enable resume/rejoin tools.", "info");
+      return;
+    }
+
+    var html = '';
+    if (!summary.hasSaved) {
+      html = ''
+        + '<div style="display:flex;flex-direction:column;gap:.55rem;">'
+        + '<div style="font-size:.84rem;color:var(--muted2);line-height:1.55;">Campaign resume stores your room code, role, and seat in this browser after you join a table. When you come back, you can resume the same seat or rejoin the room fresh without rebuilding the campaign by hand.</div>'
+        + '<div style="display:flex;justify-content:flex-end;gap:.35rem;margin-top:.2rem;">'
+        + '<button class="btn btn-sm" onclick="closeModal()">Close</button>'
+        + '</div>'
+        + '</div>';
+      window.openModal("Campaign Resume", html);
+      return;
+    }
+
+    var session = summary.session;
+    html = ''
+      + '<div style="display:flex;flex-direction:column;gap:.65rem;">'
+      + '<div style="padding:.65rem;border:1px solid rgba(60,150,150,.32);border-radius:.55rem;background:rgba(10,22,24,.42);display:flex;flex-direction:column;gap:.28rem;">'
+      + '<div style="display:flex;flex-wrap:wrap;gap:.35rem;align-items:center;">'
+      + '<span class="campaign-badge ' + escapeHtml(summary.badgeTone) + '">' + escapeHtml(summary.statusLabel) + '</span>'
+      + '<span style="font-size:.8rem;color:var(--muted2);">Room <strong style="color:var(--teal);">' + escapeHtml(session.code) + '</strong></span>'
+      + '<span style="font-size:.8rem;color:var(--muted2);">' + escapeHtml(summary.roleLabel) + ' · ' + escapeHtml(session.name) + '</span>'
+      + '</div>'
+      + '<div style="font-size:.82rem;color:var(--muted2);line-height:1.5;">' + escapeHtml(summary.detail) + '</div>'
+      + '<div style="font-size:.78rem;color:var(--muted2);">Last saved: <strong style="color:var(--text2);">' + escapeHtml(summary.savedAtText || "-") + '</strong></div>'
+      + '<div style="font-size:.78rem;color:var(--muted2);">Last scene: <strong style="color:var(--gold2);">' + escapeHtml(String(session.lastSceneLabel || "Campaign")) + '</strong></div>'
+      + '<div style="font-size:.78rem;color:var(--muted2);">Last table activity: <strong style="color:var(--text2);">' + escapeHtml(summary.lastActiveText || "-") + '</strong></div>'
+      + '</div>'
+      + '<div style="font-size:.8rem;color:var(--muted2);line-height:1.55;">'
+      + (summary.canResume
+        ? 'Resume Saved Seat reconnects to the same saved GM or player seat. Rejoin Fresh uses the same room code and name, but asks the server for a new seat instead.'
+        : 'This saved room no longer has a reusable seat token, so rejoin creates a fresh seat in the same room code.')
+      + '</div>'
+      + '<div style="display:flex;justify-content:flex-end;gap:.35rem;flex-wrap:wrap;">'
+      + (summary.canResume
+        ? '<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.resumeSavedCampaignSessionFromModal()">Resume Saved Seat</button>'
+        : '')
+      + '<button class="btn btn-sm" onclick="window.campaignSystem.rejoinSavedCampaignSessionFromModal()">Rejoin Fresh</button>'
+      + '<button class="btn btn-sm btn-red" onclick="window.campaignSystem.forgetSavedCampaignSessionFromModal()">Forget Saved Seat</button>'
+      + '<button class="btn btn-sm" onclick="closeModal()">Close</button>'
+      + '</div>'
+      + '</div>';
+    window.openModal("Campaign Resume", html);
+  }
+
+  async function resumeSavedCampaignSession(options) {
+    var opts = options && typeof options === "object" ? options : {};
+    var summary = getSavedCampaignSessionSummary();
+    var session = summary.session;
+    if (!session || !session.code) {
+      safeNotif("No saved campaign session to resume.", "warn");
+      return { ok: false, error: "No saved campaign session." };
+    }
+
+    state.playerName = String(session.name || state.playerName || ensureName());
+    state.uiDraft.name = state.playerName;
+    state.uiDraft.code = session.code;
+    state.uiDraft.joinPassword = "";
+    renderSettingsSection();
+
+    var connected = await ensureCampaignConnectionReady();
+    if (!connected) {
+      return { ok: false, error: "Could not connect to server." };
+    }
+
+    var joinResult = await joinCampaign(session.role, {
+      code: session.code,
+      name: session.name,
+      token: opts.fresh ? "" : String(session.token || ""),
+      fresh: !!opts.fresh,
+      silent: !!opts.silent
+    });
+
+    if (!joinResult || !joinResult.ok) {
+      if (!opts.fresh) {
+        markSessionRestoreFailure(session, (joinResult && joinResult.error) || "Saved campaign session could not be restored.");
+        renderSettingsSection();
+        renderDockPanel();
+      }
+      return joinResult || { ok: false, error: "Could not resume session." };
+    }
+
+    return joinResult;
+  }
+
+  async function rejoinSavedCampaignSession() {
+    return resumeSavedCampaignSession({ fresh: true });
+  }
+
+  async function resumeSavedCampaignSessionFromModal() {
+    var res = await resumeSavedCampaignSession();
+    if (res && res.ok && typeof window.closeModal === "function") {
+      window.closeModal();
+    }
+    return res;
+  }
+
+  async function rejoinSavedCampaignSessionFromModal() {
+    var res = await rejoinSavedCampaignSession();
+    if (res && res.ok && typeof window.closeModal === "function") {
+      window.closeModal();
+    }
+    return res;
+  }
+
+  function forgetSavedCampaignSession() {
+    clearSession();
+    state.sessionPersistenceSuppressed = !!(state.code && state.role);
+    renderSettingsSection();
+    renderDockPanel();
+    safeNotif(
+      state.sessionPersistenceSuppressed
+        ? "Forgot this campaign seat for this browser. It will stay unsaved until you join again."
+        : "Forgot saved campaign seat for this browser.",
+      "good"
+    );
+  }
+
+  function forgetSavedCampaignSessionFromModal() {
+    forgetSavedCampaignSession();
+    if (typeof window.closeModal === "function") {
+      window.closeModal();
+    }
+  }
+
   function renderSettingsSection(options) {
     var section = document.getElementById("campaignSettingsSection");
+    if (!section) {
+      ensureSettingsSection();
+      section = document.getElementById("campaignSettingsSection");
+    }
     if (!section) return;
 
     captureDraftInputs();
@@ -7351,6 +8197,19 @@
     var sessionTimeline = Array.isArray(sharedState.sessionTimeline)
       ? sharedState.sessionTimeline
       : ensureSessionTimelineState(sharedState);
+    var campaignChronicle = Array.isArray(sharedState.campaignChronicle)
+      ? sharedState.campaignChronicle
+      : ensureCampaignChronicleState(sharedState);
+    var unresolvedHooks = Array.isArray(sharedState.unresolvedHooks)
+      ? sharedState.unresolvedHooks
+      : ensureCampaignHooksState(sharedState);
+    var gmForge = sharedState && sharedState.gmForge && typeof sharedState.gmForge === "object"
+      ? sharedState.gmForge
+      : ensureGmForgeState(sharedState);
+    var recapHighlights = buildSessionRecapHighlights(sessionTimeline, campaignChronicle, unresolvedHooks);
+    var openHookCount = unresolvedHooks.filter(function (hook) {
+      return String(hook && hook.status || "open") !== "resolved";
+    }).length;
     var readyCheck = sharedState && sharedState.readyCheck && typeof sharedState.readyCheck === "object"
       ? sharedState.readyCheck
       : ensureReadyCheckState(sharedState);
@@ -7396,6 +8255,7 @@
     var nameValue = state.uiDraft.name || state.playerName || ensureName();
     var codeValue = state.uiDraft.code || state.code || "";
     var joinPasswordValue = state.uiDraft.joinPassword || "";
+    var recoveryCardHtml = buildCampaignRecoveryCardHtml();
     var noteSummaries = campaign && Array.isArray(campaign.notesSummary) ? campaign.notesSummary : [];
     var roster = campaign && Array.isArray(campaign.roster) ? campaign.roster : [];
     var quickStartRole = isGm ? "GM" : (state.role === "player" ? "Player" : "Unassigned");
@@ -7455,6 +8315,36 @@
         + '<div class="campaign-muted" style="margin-top:.22rem;">You can still open <strong style="color:var(--gold2);">Character</strong> or <strong style="color:var(--gold2);">Merchant</strong> any time for personal sheet and shopping actions.</div>'
         + '</div>')
       : '';
+    var playerLiteEnabled = isPlayerLiteModeEnabled();
+    var playerLiteCardHtml = state.code
+      ? ('<div class="campaign-card">'
+        + '<div class="campaign-card-title">Mobile / Player-Lite</div>'
+        + '<div class="campaign-muted">Player-lite keeps the table readable on phones and touch laptops by collapsing dense campaign cards and making action rows easier to tap.</div>'
+        + '<div class="campaign-actions" style="margin-top:.35rem;">'
+        + '<button class="btn btn-xs ' + (playerLiteEnabled ? 'btn-teal' : '') + '" onclick="window.campaignSystem.setPlayerLiteMode(' + (!playerLiteEnabled) + ')">' + (playerLiteEnabled ? 'Player-Lite ON' : 'Player-Lite OFF') + '</button>'
+        + '<button class="btn btn-xs" onclick="window.settingsSystem.togglePhoneLayoutMode()">Toggle Phone Layout</button>'
+        + '</div>'
+        + '<div class="campaign-muted" style="margin-top:.22rem;">Phone layout restructures the whole app. Player-lite only changes the campaign surfaces.</div>'
+        + '</div>')
+      : '';
+    var forgeSummaryCardHtml = isGm && state.code
+      ? ('<div class="campaign-card">'
+        + '<div class="campaign-card-title">GM Forge Library</div>'
+        + '<div class="campaign-muted">Saved presets in this campaign: <strong style="color:var(--gold2);">' + String(Array.isArray(gmForge.savedPresets) ? gmForge.savedPresets.length : 0) + '</strong></div>'
+        + '<div class="campaign-muted" style="margin-top:.2rem;">Last preset: <strong style="color:var(--text2);">' + escapeHtml(String(gmForge.lastPresetId || "None")) + '</strong></div>'
+        + '<div class="campaign-muted" style="margin-top:.2rem;">Open the GM Dashboard to load packs, save reusable setups, and seed missions fast.</div>'
+        + '</div>')
+      : '';
+    var diagnosticsCardHtml = state.code
+      ? ('<div class="campaign-card">'
+        + '<div class="campaign-card-title">Bug Report & Diagnostics</div>'
+        + '<div class="campaign-muted">Capture a diagnostics bundle with sync state, roster, combat context, and ' + (isGm ? 'an authoritative snapshot.' : 'your local seat context.') + '</div>'
+        + '<div class="campaign-actions" style="margin-top:.35rem;">'
+        + '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.exportDiagnosticsBundle()">Export Diagnostics</button>'
+        + '<button class="btn btn-xs" onclick="window.campaignSystem.copyDiagnosticsSummary()">Copy Summary</button>'
+        + '</div>'
+        + '</div>')
+      : '';
 
     section.innerHTML = ""
       + '<h4>Campaign (Multiplayer)</h4>'
@@ -7483,9 +8373,11 @@
       + '<button class="btn btn-xs" onclick="window.campaignSystem.joinCampaign(\'gm\')">Join GM</button>'
       + '<button class="btn btn-xs btn-red" onclick="window.campaignSystem.leaveCampaign()">Leave</button>'
       + "</div>"
+      + recoveryCardHtml
       + playerCameraLockBannerHtml
       + quickStartHtml
       + playerLiveTableHtml
+      + playerLiteCardHtml
       + '<div class="campaign-card">'
       + '<div class="campaign-card-title">Shared Teamwork Points</div>'
       + '<div class="campaign-tmw">' + sharedTmw + "</div>"
@@ -7824,6 +8716,7 @@
       + '</div>'
       + renderCharacterRoster(roster, isGm)
       + '</div>'
+      + forgeSummaryCardHtml
       + (isGm
         ? (""
           + '<div class="campaign-card">'
@@ -7835,6 +8728,7 @@
           + (state.gmIdea ? ('<div class="campaign-muted" style="margin-top:.35rem;color:var(--text2);">' + escapeHtml(state.gmIdea) + '</div>') : '')
           + '</div>')
         : "")
+      + diagnosticsCardHtml
       + '<div class="campaign-card">'
       + '<div class="campaign-card-title">Party Backpack Sharing (Party Stash)</div>'
       + '<div class="campaign-muted">Share items from your backpack to a shared pool, then claim them on any wayfarer. Roster buttons copy visible items into your backpack first.</div>'
@@ -7858,8 +8752,25 @@
       + renderLog(campaign ? campaign.log : [])
       + "</div>"
       + '<div class="campaign-card">'
+      + '<div class="campaign-card-title">Session Recap Summary</div>'
+      + (recapHighlights.length
+        ? ('<ol class="campaign-quickstart-list">' + recapHighlights.map(function (line) {
+            return '<li>' + escapeHtml(line) + '</li>';
+          }).join('') + '</ol>')
+        : '<div class="campaign-muted">No recap summary yet.</div>')
+      + "</div>"
+      + '<div class="campaign-card">'
       + '<div class="campaign-card-title">Session Recap Timeline</div>'
       + renderSessionTimeline(sessionTimeline, 18)
+      + "</div>"
+      + '<div class="campaign-card">'
+      + '<div class="campaign-card-title">Campaign Chronicle</div>'
+      + renderCampaignChronicle(campaignChronicle, 10)
+      + "</div>"
+      + '<div class="campaign-card">'
+      + '<div class="campaign-card-title">Unresolved Hooks</div>'
+      + '<div class="campaign-muted" style="margin-bottom:.3rem;">Open hooks: <strong style="color:var(--gold2);">' + String(openHookCount) + '</strong></div>'
+      + renderCampaignHooks(unresolvedHooks, isGm)
       + "</div>"
       + '<div class="campaign-card">'
       + '<div class="campaign-card-title">Shared Economy Ledger</div>'
@@ -7869,6 +8780,7 @@
     bindDraftInputs();
     applyGmCompactLayout();
     applyPlayerCompactLayout();
+    applyPlayerLiteMode();
     restoreCampaignSoundtrackDraftFocus();
   }
 
@@ -7885,6 +8797,7 @@
       "GM Campaign Debug": true,
       "GM Campaign Controls": true,
       "GM Economy Controls & Audit": true,
+      "Bug Report & Diagnostics": true,
       "Recent Log": true,
       "Shared Economy Ledger": true,
       "Phase 3: Contested Rolls": true,
@@ -7898,7 +8811,12 @@
       "Phase 2: Action Queue (Active Mode)": true,
       "Party Roster (All Players)": true,
       "Campaign Wayfarers": true,
-      "Online Members": true
+      "Online Members": true,
+      "GM Forge Library": true,
+      "Campaign Chronicle": true,
+      "Unresolved Hooks": true,
+      "Session Recap Summary": true,
+      "Session Recap Timeline": true
     };
 
     var advanced = [];
@@ -7953,7 +8871,8 @@
     var essentialTitles = {
       "Shared Teamwork Points": true,
       "Ready Check": true,
-      "Online Members": true
+      "Online Members": true,
+      "Mobile / Player-Lite": true
     };
     var partyTitles = {
       "Party Roster (All Players)": true,
@@ -7967,7 +8886,11 @@
       "Private Notes": true,
       "Recent Log": true,
       "Session Recap Timeline": true,
-      "Shared Economy Ledger": true
+      "Session Recap Summary": true,
+      "Campaign Chronicle": true,
+      "Unresolved Hooks": true,
+      "Shared Economy Ledger": true,
+      "Bug Report & Diagnostics": true
     };
 
     var essentials = [];
@@ -8012,6 +8935,35 @@
       insertionAnchor.parentNode.insertBefore(host, insertionAnchor.nextSibling);
     } else {
       section.appendChild(host);
+    }
+  }
+
+  function isPlayerLiteModeEnabled() {
+    try {
+      return String(window.localStorage && window.localStorage.getItem("btl-campaign-player-lite") || "0") === "1";
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function applyPlayerLiteMode() {
+    var body = document.body;
+    if (!body) return;
+    var enabled = isPlayerLiteModeEnabled();
+    body.classList.toggle("campaign-player-lite-mode", !!enabled);
+  }
+
+  function setPlayerLiteMode(enabled) {
+    var next = !!enabled;
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem("btl-campaign-player-lite", next ? "1" : "0");
+      }
+    } catch (_err) {}
+    applyPlayerLiteMode();
+    renderSettingsSection();
+    if (typeof window.showNotif === "function") {
+      window.showNotif(next ? "Player-lite mode enabled." : "Player-lite mode disabled.", "good");
     }
   }
 
@@ -8120,9 +9072,440 @@
     };
   }
 
+  function buildCampaignUiAction(label, onclick, tone, disabled) {
+    return {
+      label: String(label || "").trim(),
+      onclick: String(onclick || "").trim(),
+      tone: String(tone || "").trim().toLowerCase(),
+      disabled: !!disabled
+    };
+  }
+
+  function pushCampaignUiAction(list, label, onclick, tone, disabled) {
+    if (!Array.isArray(list)) return;
+    var next = buildCampaignUiAction(label, onclick, tone, disabled);
+    if (!next.label || !next.onclick) return;
+    for (var i = 0; i < list.length; i += 1) {
+      var row = list[i];
+      if (!row) continue;
+      if (String(row.label || "") === next.label && String(row.onclick || "") === next.onclick) return;
+    }
+    list.push(next);
+  }
+
+  function getCampaignTabCommand(tabId) {
+    var tab = String(tabId || "").trim().toLowerCase();
+    if (!tab) return "";
+    return 'if (typeof window.switchTab === "function") window.switchTab("' + tab + '", document.getElementById("tabnav-' + tab + '"));';
+  }
+
+  function getCampaignDockCommand() {
+    return 'window.campaignSystem.openDock()';
+  }
+
+  function getCampaignJoinSharedVttCommand() {
+    return 'window.campaignSystem.joinSharedCombatMode()';
+  }
+
+  function getCampaignTargetDisplayName(token, fallback) {
+    var wanted = String(token || "").trim();
+    if (!wanted) return String(fallback || "table");
+    return getCampaignCharacterName(wanted, fallback || wanted);
+  }
+
+  function getOldestActivePendingCheck(sharedState) {
+    var pending = ensurePendingChecksState(sharedState || getCampaignSharedState());
+    var active = pending && pending.active && typeof pending.active === "object" ? pending.active : {};
+    var rows = Object.keys(active).map(function (id) {
+      return active[id];
+    }).filter(function (row) {
+      return !!(row && typeof row === "object");
+    }).sort(function (a, b) {
+      return Number(a && a.createdAt || 0) - Number(b && b.createdAt || 0);
+    });
+    return rows.length ? rows[0] : null;
+  }
+
+  function getCampaignEnemyActionSummary(request) {
+    if (!request || typeof request !== "object") return { title: "Enemy Action", detail: "", targetLabel: "the table" };
+    if (String(request.mode || "single") === "aoe") {
+      var band = String(request.rangeBand || request.aoeBand || "close").trim() || "close";
+      return {
+        title: "Enemy Action · AOE",
+        detail: "Lane " + band.toUpperCase(),
+        targetLabel: band.toUpperCase() + " lane"
+      };
+    }
+    return {
+      title: "Enemy Action",
+      detail: "Target " + String(request.targetName || "Wayfarer"),
+      targetLabel: String(request.targetName || "a Wayfarer")
+    };
+  }
+
+  function getCampaignLiveActionContract(sharedState, campaignState) {
+    var shared = sharedState || getCampaignSharedState() || {};
+    var campaign = campaignState || state.campaign || {};
+    var readyCheck = shared && shared.readyCheck && typeof shared.readyCheck === "object"
+      ? shared.readyCheck
+      : ensureReadyCheckState(shared);
+    var combatState = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? shared.campaignCombat
+      : ensureCampaignCombatState(shared);
+    var tableState = getCampaignTableState(shared);
+    var sceneState = resolveTableSceneState(shared, tableState, campaign);
+    var soundtrackSettings = normalizeCampaignSoundtrackSettings(ensureGmSettings(shared).soundtrack);
+    var soundtrackSummary = soundtrackSettings.enabled ? getCampaignSoundtrackSummary(soundtrackSettings) : null;
+    var activeRoll = campaign && campaign.activeRollRequest && campaign.activeRollRequest.id
+      ? campaign.activeRollRequest
+      : null;
+    var actor = getCampaignCombatActorSummary(combatState);
+    var enemyRequest = getCampaignEnemyActionRequest(combatState);
+    var pending = ensurePendingChecksState(shared);
+    var pendingActiveCount = pending && pending.active ? Object.keys(pending.active).length : 0;
+    var oldestPending = getOldestActivePendingCheck(shared);
+    var readyRequiredCount = Array.isArray(readyCheck && readyCheck.requiredTokens) ? readyCheck.requiredTokens.length : 0;
+    var readyResponseCount = getReadyCheckResponseCount(readyCheck);
+    var canRespondReady = !!(state.token && readyCheck && readyCheck.responses && !readyCheck.responses[state.token]);
+    var openCombatCommand = getCampaignTabCommand("combat");
+    var openCharacterCommand = getCampaignTabCommand("character");
+    var openMerchantCommand = getCampaignTabCommand("shop");
+    var openMissionsCommand = getCampaignTabCommand("missions");
+    var joinSharedVttCommand = getCampaignJoinSharedVttCommand();
+    var contract = {
+      kind: "idle",
+      id: "",
+      source: "table",
+      status: "idle",
+      tone: tableState && tableState.key === "combat" ? "teal" : "muted",
+      label: String(tableState && tableState.label || "Exploration"),
+      summary: "The table is clear and ready.",
+      detail: "",
+      prompt: state.role === "gm"
+        ? "Guide the next scene, prompt a roll, or open a shared area."
+        : "You can move between sheet, map, and merchant while waiting on the next cue.",
+      canActNow: false,
+      stat: "",
+      dread: 0,
+      scope: "table",
+      targetToken: "",
+      targetName: "",
+      targetTokens: [],
+      targetNames: [],
+      actingToken: "",
+      actingName: "",
+      pendingActiveCount: pendingActiveCount,
+      readyRequiredCount: readyRequiredCount,
+      readyResponseCount: readyResponseCount,
+      sceneMode: String(sceneState && sceneState.effective || "exploration"),
+      tableStateKey: String(tableState && tableState.key || "exploration"),
+      soundtrackLabel: soundtrackSummary ? String(soundtrackSummary.moodLabel || soundtrackSummary.suiteLabel || "") : "",
+      vttOpen: !!(combatState && combatState.vttSession),
+      actions: []
+    };
+
+    if (isRecoveryOnlySyncState()) {
+      contract.kind = "recovery";
+      contract.id = "recovery";
+      contract.status = "pending";
+      contract.tone = "red";
+      contract.label = "Reconnect In Progress";
+      contract.summary = String(state.syncText || "Reconciling shared campaign state.");
+      contract.prompt = "Hold risky actions until the authoritative snapshot settles.";
+      pushCampaignUiAction(contract.actions, "Reconnect", 'window.campaignSystem.reconnectNow()', "teal");
+      pushCampaignUiAction(contract.actions, "Fix Desync", 'window.campaignSystem.recoverSyncNow()', "red");
+      return contract;
+    }
+
+    if (activeRoll) {
+      var activeTargetToken = String(activeRoll.targetToken || "").trim();
+      var activeTargetName = activeTargetToken
+        ? getCampaignTargetDisplayName(activeTargetToken, activeRoll.targetName || activeTargetToken)
+        : "table";
+      var canOpenRoll = state.role !== "gm" && (!activeTargetToken || String(state.token || "") === activeTargetToken);
+      var responseCount = Array.isArray(activeRoll.responses) ? activeRoll.responses.length : 0;
+      contract.kind = "roll-request";
+      contract.id = String(activeRoll.id || "");
+      contract.source = "campaign-roll-request";
+      contract.status = "pending";
+      contract.tone = canOpenRoll ? "teal" : (state.role === "gm" ? "gold" : "muted");
+      contract.label = String(activeRoll.label || "Dread Check");
+      contract.summary = String(activeRoll.stat || "valor").toUpperCase() + " vs d" + Math.max(1, Number(activeRoll.dread || 8) || 8);
+      contract.detail = activeTargetToken
+        ? ("Target " + activeTargetName + " · " + responseCount + " response" + (responseCount === 1 ? "" : "s"))
+        : ("Open party response · " + responseCount + " response" + (responseCount === 1 ? "" : "s"));
+      contract.prompt = canOpenRoll
+        ? "You are the one who should click next."
+        : (state.role === "gm"
+          ? ("Waiting on " + activeTargetName + " to answer the live roll prompt.")
+          : ("Waiting on " + activeTargetName + " to answer the live roll prompt."));
+      contract.canActNow = canOpenRoll;
+      contract.stat = String(activeRoll.stat || "valor");
+      contract.dread = Math.max(1, Number(activeRoll.dread || 8) || 8);
+      contract.scope = activeTargetToken ? "individual" : "party";
+      contract.targetToken = activeTargetToken;
+      contract.targetName = activeTargetName;
+      contract.targetTokens = activeTargetToken ? [activeTargetToken] : [];
+      contract.targetNames = activeTargetToken ? [activeTargetName] : [];
+      if (canOpenRoll) {
+        pushCampaignUiAction(contract.actions, "Open Roll Prompt", 'window.campaignSystem.openActiveRollPrompt()', "teal");
+      } else if (state.role === "gm") {
+        pushCampaignUiAction(contract.actions, "Close Active Roll", 'window.campaignSystem.closeActiveRoll()', "red");
+      }
+      if (contract.vttOpen && state.role === "player") {
+        pushCampaignUiAction(contract.actions, "Join Shared VTT", joinSharedVttCommand, "teal");
+      } else {
+        pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "");
+      }
+      return contract;
+    }
+
+    if (readyCheck && readyCheck.id && String(readyCheck.status || "") === "pending") {
+      contract.kind = "ready-check";
+      contract.id = String(readyCheck.id || "");
+      contract.source = "ready-check";
+      contract.status = "pending";
+      contract.tone = canRespondReady ? "teal" : (state.role === "gm" ? "gold" : "muted");
+      contract.label = String(readyCheck.label || "Ready Check");
+      contract.summary = readyResponseCount + "/" + readyRequiredCount + " ready";
+      contract.detail = String(readyCheck.type || "shared action");
+      contract.prompt = canRespondReady
+        ? "Let the table know if you are ready to proceed."
+        : (state.role === "gm"
+          ? "You can wait, force-approve, or cancel before moving forward."
+          : "Waiting for the remaining responses before the table advances.");
+      contract.canActNow = !!(canRespondReady || state.role === "gm");
+      if (canRespondReady) {
+        pushCampaignUiAction(contract.actions, "Ready", 'window.campaignSystem.respondReadyCheck(true)', "teal");
+        pushCampaignUiAction(contract.actions, "Not Ready", 'window.campaignSystem.respondReadyCheck(false)', "red");
+      } else if (state.role === "gm") {
+        pushCampaignUiAction(contract.actions, "Force Approve", 'window.campaignSystem.forceApproveReadyCheck()', "teal");
+        pushCampaignUiAction(contract.actions, "Cancel", 'window.campaignSystem.cancelReadyCheck()', "red");
+      }
+      return contract;
+    }
+
+    if (combatState && combatState.active) {
+      if (String(combatState.phase || "wayfarer") === "enemy") {
+        var enemySummary = getCampaignEnemyActionSummary(enemyRequest);
+        var enemyTargetsMe = !!(state.role === "player" && state.token && enemyRequest && String(enemyRequest.status || "pending") === "pending" && isCampaignEnemyActionTargetToken(enemyRequest, state.token));
+        contract.kind = "enemy-action";
+        contract.id = String(enemyRequest && enemyRequest.id || "enemy-phase");
+        contract.source = enemyRequest ? "enemy-action-request" : "enemy-phase";
+        contract.status = enemyRequest ? String(enemyRequest.status || "pending") : "awaiting-prompt";
+        contract.tone = enemyTargetsMe ? "red" : (state.role === "gm" ? "gold" : "muted");
+        contract.label = enemyRequest ? enemySummary.title : "Enemy Phase";
+        contract.summary = enemyRequest
+          ? enemySummary.detail
+          : "GM chooses the next enemy target or lane.";
+        contract.detail = enemyRequest
+          ? (enemyTargetsMe
+            ? "This action is targeting you."
+            : ("Waiting on " + enemySummary.targetLabel + "."))
+          : (state.role === "gm" ? "Prompt an enemy action, then let that Wayfarer resolve it." : "Wait for the GM to send the next enemy prompt.");
+        contract.prompt = enemyTargetsMe
+          ? "Click Enemy Action on the Combat Tab or shared VTT now."
+          : (enemyRequest
+            ? (String(enemyRequest.status || "pending") === "resolved"
+              ? "The last enemy action is resolved. The GM can prompt again or end the round."
+              : "Enemy pressure is live; keep the table on the prompted target.")
+            : "Enemy turn is active.");
+        contract.canActNow = !!(enemyTargetsMe || (state.role === "gm" && !enemyRequest));
+        contract.scope = enemyRequest && String(enemyRequest.mode || "single") === "aoe" ? "lane" : "individual";
+        contract.targetToken = String(enemyRequest && enemyRequest.targetToken || "");
+        contract.targetName = String(enemyRequest && enemyRequest.targetName || "");
+        contract.targetTokens = enemyRequest && Array.isArray(enemyRequest.targetTokens) ? enemyRequest.targetTokens.slice() : [];
+        contract.targetNames = enemyRequest && Array.isArray(enemyRequest.targetNames) ? enemyRequest.targetNames.slice() : [];
+        if (enemyTargetsMe) {
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "red");
+          if (contract.vttOpen) pushCampaignUiAction(contract.actions, "Join Shared VTT", joinSharedVttCommand, "teal");
+        } else if (state.role === "gm") {
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "teal");
+          if (contract.vttOpen) pushCampaignUiAction(contract.actions, "Open Shared VTT", joinSharedVttCommand, "");
+        } else if (contract.vttOpen) {
+          pushCampaignUiAction(contract.actions, "Join Shared VTT", joinSharedVttCommand, "teal");
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "");
+        } else {
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "");
+        }
+        return contract;
+      }
+
+      if (actor.active) {
+        contract.kind = "turn-prompt";
+        contract.id = String(actor.key || "combat-turn");
+        contract.source = "campaign-turn-order";
+        contract.status = actor.hasActed ? "acted" : "pending";
+        contract.tone = actor.isMe ? "teal" : (actor.isPrompt ? "gold" : "muted");
+        contract.label = actor.isPrompt ? "Choose The Next Wayfarer" : String(actor.name || "Wayfarer");
+        contract.summary = "Round " + actor.round + " · Turn " + actor.index + "/" + actor.total;
+        contract.detail = actor.isPrompt
+          ? "GM prompt is open."
+          : (actor.isMe
+            ? "It is your turn to act."
+            : ((actor.isEnemy ? "Enemy turn is queued." : "Current acting Wayfarer")));
+        contract.prompt = actor.isPrompt
+          ? "Pick who goes next before the table can continue."
+          : (actor.isMe
+            ? "Resolve your action from Combat, Quick Panel, or the shared VTT."
+            : ("Waiting on " + actor.name + " to finish."));
+        contract.canActNow = !!(actor.isPrompt ? (state.role === "gm") : actor.isMe);
+        contract.actingToken = String(actor.token || "");
+        contract.actingName = String(actor.name || "");
+        if (actor.isPrompt) {
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "teal");
+          if (contract.vttOpen) pushCampaignUiAction(contract.actions, "Open Shared VTT", joinSharedVttCommand, "");
+        } else if (actor.isMe) {
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "teal");
+          if (contract.vttOpen) pushCampaignUiAction(contract.actions, "Join Shared VTT", joinSharedVttCommand, "");
+        } else if (contract.vttOpen && state.role === "player") {
+          pushCampaignUiAction(contract.actions, "Join Shared VTT", joinSharedVttCommand, "teal");
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "");
+        } else {
+          pushCampaignUiAction(contract.actions, "Open Combat", openCombatCommand, "");
+        }
+        return contract;
+      }
+    }
+
+    if (oldestPending) {
+      var pendingStat = String(oldestPending.stat || "").trim();
+      var pendingParticipants = Array.isArray(oldestPending.participants) ? oldestPending.participants.length : 0;
+      contract.kind = "pending-check";
+      contract.id = String(oldestPending.id || "");
+      contract.source = "pending-check";
+      contract.status = String(oldestPending.status || "pending");
+      contract.tone = state.role === "gm" ? "gold" : "muted";
+      contract.label = String(oldestPending.label || "Pending Check");
+      contract.summary = pendingStat ? (pendingStat.toUpperCase() + " vs d" + Math.max(1, Number(oldestPending.dread || 8) || 8)) : "GM outcome queue";
+      contract.detail = pendingParticipants ? (pendingParticipants + " participant" + (pendingParticipants === 1 ? "" : "s")) : String(oldestPending.scope || "campaign");
+      contract.prompt = state.role === "gm"
+        ? "A shared check is still waiting for your ruling."
+        : "A shared check is live. Watch for the next GM prompt or outcome.";
+      pushCampaignUiAction(contract.actions, "Open Dock", getCampaignDockCommand(), "teal");
+      if (state.role === "gm") pushCampaignUiAction(contract.actions, "Open Missions", openMissionsCommand, "");
+      return contract;
+    }
+
+    pushCampaignUiAction(contract.actions, "Open Dock", getCampaignDockCommand(), "teal");
+    if (state.role === "gm") {
+      pushCampaignUiAction(contract.actions, "GM Dashboard", 'if (typeof window.openGmDashboard === "function") window.openGmDashboard();', "");
+      pushCampaignUiAction(contract.actions, "Open Missions", openMissionsCommand, "");
+    } else {
+      pushCampaignUiAction(contract.actions, "Character", openCharacterCommand, "");
+      pushCampaignUiAction(contract.actions, "Merchant", openMerchantCommand, "");
+    }
+    return contract;
+  }
+
+  function renderCampaignActionButtons(actions, options) {
+    var opts = options && typeof options === "object" ? options : {};
+    var source = Array.isArray(actions) ? actions : [];
+    var limit = Math.max(0, Number(opts.limit || source.length) || 0);
+    if (!limit) return "";
+    return source.slice(0, limit).map(function (action) {
+      if (!action || !action.label || !action.onclick) return "";
+      var tone = String(action.tone || "").toLowerCase();
+      var toneClass = tone === "red"
+        ? " btn-red"
+        : (tone === "teal"
+          ? " btn-teal"
+          : (tone === "primary" ? " btn-primary" : ""));
+      var sizeClass = opts.sizeClass ? (" " + String(opts.sizeClass)) : "";
+      var disabledAttr = action.disabled ? " disabled" : "";
+      return '<button class="btn' + sizeClass + toneClass + '" onclick="' + escapeHtml(action.onclick) + '"' + disabledAttr + '>' + escapeHtml(action.label) + '</button>';
+    }).join("");
+  }
+
+  function renderCampaignDockLiveActionCard(contract) {
+    if (!contract || typeof contract !== "object") return "";
+    var kindLabels = {
+      recovery: "Recovery",
+      "roll-request": "Live Roll",
+      "ready-check": "Ready Check",
+      "enemy-action": "Enemy Phase",
+      "turn-prompt": "Turn Prompt",
+      "pending-check": "GM Queue",
+      idle: "Table Flow"
+    };
+    var actionsHtml = renderCampaignActionButtons(contract.actions, { limit: 2, sizeClass: "btn-xs" });
+    return ''
+      + '<div class="campaign-dock-status-card">'
+      + '<div class="campaign-dock-status-label">' + escapeHtml(String(kindLabels[contract.kind] || "Live Prompt")) + '</div>'
+      + '<div class="campaign-dock-status-main">' + escapeHtml(String(contract.label || "Table")) + '</div>'
+      + '<div class="campaign-dock-status-sub">' + escapeHtml(String(contract.summary || "")) + (contract.detail ? ' · ' + escapeHtml(String(contract.detail || "")) : '') + '</div>'
+      + (contract.prompt ? '<div class="campaign-dock-status-sub" style="margin-top:.16rem;">' + escapeHtml(String(contract.prompt || "")) + '</div>' : '')
+      + (actionsHtml ? '<div class="campaign-dock-roll-actions">' + actionsHtml + '</div>' : '')
+      + '</div>';
+  }
+
+  function renderGlobalQuickAccess() {
+    var root = document.getElementById("globalQuickAccess");
+    if (!root) return;
+    if (!state.code) {
+      root.innerHTML = "";
+      root.classList.remove("is-active");
+      root.style.display = "none";
+      root.hidden = true;
+      state.lastGlobalQuickAccessHash = "";
+      return;
+    }
+
+    var shared = getCampaignSharedState();
+    var contract = getCampaignLiveActionContract(shared, state.campaign || {});
+    var soundtrackChip = contract.soundtrackLabel
+      ? ('<span class="table-rail-chip is-gold">Music · ' + escapeHtml(contract.soundtrackLabel) + '</span>')
+      : '';
+    var chips = ''
+      + '<span class="table-rail-chip is-teal">Code · ' + escapeHtml(state.code || "-") + '</span>'
+      + '<span class="table-rail-chip">Role · ' + escapeHtml(state.role === "gm" ? "GM" : "Player") + '</span>'
+      + '<span class="table-rail-chip is-' + escapeHtml(state.syncHealth || "muted") + '">Sync · ' + escapeHtml(String(state.syncText || state.syncHealth || "idle")) + '</span>'
+      + '<span class="table-rail-chip">Scene · ' + escapeHtml(String(contract.tableStateKey === "combat" ? "Combat" : contract.tableStateLabel || "Exploration")) + '</span>'
+      + (contract.vttOpen ? '<span class="table-rail-chip is-teal">Shared VTT</span>' : '')
+      + (contract.pendingActiveCount > 0 ? '<span class="table-rail-chip">Checks · ' + contract.pendingActiveCount + '</span>' : '')
+      + soundtrackChip;
+    var buttonsHtml = renderCampaignActionButtons(contract.actions, { limit: 4, sizeClass: "btn-sm" });
+    var hash = JSON.stringify({
+      code: state.code,
+      role: state.role,
+      syncText: state.syncText,
+      syncHealth: state.syncHealth,
+      contract: {
+        kind: contract.kind,
+        id: contract.id,
+        label: contract.label,
+        summary: contract.summary,
+        detail: contract.detail,
+        prompt: contract.prompt,
+        tone: contract.tone,
+        pendingActiveCount: contract.pendingActiveCount,
+        vttOpen: contract.vttOpen,
+        soundtrackLabel: contract.soundtrackLabel,
+        actionKeys: (Array.isArray(contract.actions) ? contract.actions : []).map(function (action) {
+          return String(action && action.label || "") + "|" + String(action && action.onclick || "");
+        })
+      }
+    });
+    if (hash === state.lastGlobalQuickAccessHash) return;
+    state.lastGlobalQuickAccessHash = hash;
+    root.hidden = false;
+    root.style.display = "";
+    root.classList.add("is-active");
+    root.innerHTML = ''
+      + '<span class="qa-label">Table</span>'
+      + '<div class="table-rail-copy">'
+      + '<div class="table-rail-title">' + escapeHtml(String(contract.label || "Table Ready")) + '</div>'
+      + '<div class="table-rail-sub">' + escapeHtml(String(contract.summary || "")) + (contract.detail ? ' · ' + escapeHtml(String(contract.detail || "")) : '') + '</div>'
+      + (contract.prompt ? '<div class="table-rail-sub is-muted">' + escapeHtml(String(contract.prompt || "")) + '</div>' : '')
+      + '</div>'
+      + '<div class="table-rail-chip-row">' + chips + '</div>'
+      + (buttonsHtml ? '<div class="table-rail-actions">' + buttonsHtml + '</div>' : '');
+  }
+
   function renderDockPanel() {
     var root = document.getElementById("campaignDock");
     if (!root) {
+      renderGlobalQuickAccess();
       applyGlobalSceneFocus("");
       return;
     }
@@ -8153,6 +9536,7 @@
     var sceneState = resolveTableSceneState(shared, tableState, campaign);
     var sceneMode = String(sceneState && sceneState.effective || "exploration");
     var sceneDescriptor = sceneState && sceneState.descriptor ? sceneState.descriptor : getTableSceneDescriptor(sceneMode);
+    var liveAction = getCampaignLiveActionContract(shared, campaign || {});
 
     root.classList.toggle("campaign-scene-narrative", sceneMode === "narrative");
     root.classList.toggle("campaign-scene-exploration", sceneMode === "exploration");
@@ -8162,6 +9546,7 @@
     if (state.tableSceneMode === "auto") {
       applySceneTimelinePreset(sceneMode, false);
     }
+    renderGlobalQuickAccess();
 
     var dockToggle = document.getElementById("campaignDockToggle");
     if (dockToggle) {
@@ -8209,7 +9594,9 @@
       var canRespondReady = !!(state.token && readyCheck && readyCheck.responses && !readyCheck.responses[state.token]);
       var cards = [];
 
-      if (actor.active) {
+      cards.push(renderCampaignDockLiveActionCard(liveAction));
+
+      if (actor.active && liveAction.kind !== "turn-prompt" && liveAction.kind !== "enemy-action") {
         var now = Date.now();
         var enemyRequest = getCampaignEnemyActionRequest(combatState);
         if (actor.key && actor.key !== state.lastDockActorKey) {
@@ -8244,7 +9631,7 @@
         state.dockActorFlashUntil = 0;
       }
 
-      if (readyCheck && readyCheck.id && readyStatus !== "idle") {
+      if (readyCheck && readyCheck.id && readyStatus !== "idle" && liveAction.kind !== "ready-check") {
         cards.push(''
           + '<div class="campaign-dock-status-card">'
           + '<div class="campaign-dock-status-label">Ready Check</div>'
@@ -8260,7 +9647,7 @@
       }
 
       liveStatus.innerHTML = cards.length
-        ? ('<div class="campaign-dock-status-grid">' + cards.join("") + '</div>')
+        ? ('<div class="campaign-dock-status-grid">' + cards.filter(Boolean).join("") + '</div>')
         : '<div class="campaign-dock-empty">No active initiative or ready check.</div>';
     }
 
@@ -8432,7 +9819,7 @@
     if (!force && state.autoRestoreTried) return;
     if (!force) state.autoRestoreTried = true;
 
-    var session = loadSession();
+    var session = loadSession({ source: "session" });
     if (!session || !session.code) return;
 
     state.restoringSession = true;
@@ -8445,8 +9832,11 @@
     state.restoringSession = false;
 
     if (!res.ok) {
-      clearSession();
-      safeNotif("Saved campaign session could not be restored.", "warn");
+      state.uiDraft.name = session.name || state.uiDraft.name || ensureName();
+      state.uiDraft.code = session.code;
+      state.uiDraft.joinPassword = "";
+      markSessionRestoreFailure(session, res.error || "Saved campaign session could not be restored.");
+      safeNotif((res.error || "Saved campaign session could not be restored.") + " Use Resume or Rejoin in Settings > Campaign.", "warn");
       renderSettingsSection();
       renderDockPanel();
       return;
@@ -8457,6 +9847,7 @@
     state.token = String(res.token || "");
     state.playerName = String(res.name || session.name || ensureName());
     state.activePromptId = "";
+    state.sessionPersistenceSuppressed = false;
     persistSession();
 
     refreshSettingsModeFromCampaign();
@@ -8503,6 +9894,14 @@
     state.socket.on("campaign:state", function (snapshot) {
       syncWindowStateAlias();
       var previousSharedState = getCampaignSharedState();
+      var incomingVersion = snapshot && snapshot.shared ? Number(snapshot.shared.stateVersion || 0) : 0;
+      state.lastServerStateVersion = Math.max(state.lastServerStateVersion, incomingVersion);
+      if (incomingVersion && state.lastSharedVersion && incomingVersion < state.lastSharedVersion) {
+        setSyncHealth("stale", "Reconciling...");
+        maybeDeterministicReconcile("version-drift");
+        return;
+      }
+
       state.campaign = snapshot || null;
       state.code = snapshot && snapshot.code ? String(snapshot.code) : "";
       state.lastCampaignStateAt = Date.now();
@@ -8520,17 +9919,9 @@
         state.lastAuthoritativeAt = Number(snapshot.shared.updatedAt || 0) || state.lastAuthoritativeAt;
       }
 
-      var incomingVersion = snapshot && snapshot.shared ? Number(snapshot.shared.stateVersion || 0) : 0;
-      state.lastServerStateVersion = Math.max(state.lastServerStateVersion, incomingVersion);
-
       var nextTmw = snapshot && snapshot.shared ? Number(snapshot.shared.tmw || 0) : null;
       if (nextTmw !== null && nextTmw !== getTmwValue()) {
         setLocalTmw(nextTmw);
-      }
-
-      if (incomingVersion && state.lastSharedVersion && incomingVersion < state.lastSharedVersion) {
-        setSyncHealth("stale", "Reconciling...");
-        maybeDeterministicReconcile("version-drift");
       }
 
       applySharedState(
@@ -9228,10 +10619,7 @@
   }
 
   async function createCampaign() {
-    if (!ensureSocket()) {
-      safeNotif("Multiplayer requires running the local campaign server.", "warn");
-      return;
-    }
+    if (!(await ensureCampaignConnectionReady())) return { ok: false, error: "Server unavailable." };
 
     var name = readUiValue("campaignNameInput").trim() || ensureName();
     var joinPass = readUiValue("campaignPasswordInput");
@@ -9241,7 +10629,7 @@
     var res = await emitWithAck("campaign:create", { name: name, password: joinPass });
     if (!res.ok) {
       safeNotif(res.error || "Could not create campaign.", "warn");
-      return;
+      return res || { ok: false, error: "Could not create campaign." };
     }
 
     state.code = res.code;
@@ -9249,6 +10637,7 @@
     state.token = String(res.token || "");
     state.playerName = String(res.name || name || "GM");
     state.activePromptId = "";
+    state.sessionPersistenceSuppressed = false;
     state.lastAppliedSelfCharacterAt = 0;
     state.lastCharacterHash = "";
     state.uiDraft.code = res.code;
@@ -9264,26 +10653,25 @@
     syncCharacterToCampaign(true);
     renderSettingsSection();
     renderDockPanel();
+    return res;
   }
 
   async function joinCampaign(role, options) {
-    if (!ensureSocket()) {
-      safeNotif("Multiplayer requires running the local campaign server.", "warn");
-      return;
-    }
+    if (!(await ensureCampaignConnectionReady())) return { ok: false, error: "Server unavailable." };
 
     var opts = options || {};
-    var session = loadSession();
+    var session = loadSession({ preferPersistent: true });
 
     var name = (opts.name || readUiValue("campaignNameInput") || "").trim() || ensureName();
     var codeRaw = opts.code || readUiValue("campaignCodeInput") || (session ? session.code : "");
     var code = formatCode(codeRaw);
     var joinPass = opts.password || readUiValue("campaignPasswordInput") || "";
     var requestedRole = role === "gm" ? "gm" : "player";
+    var hasTokenOverride = Object.prototype.hasOwnProperty.call(opts, "token");
 
     if (!code) {
       if (!opts.silent) safeNotif("Enter a campaign code to join.", "warn");
-      return;
+      return { ok: false, error: "Missing campaign code." };
     }
 
     state.playerName = name;
@@ -9294,7 +10682,9 @@
     // Reuse token only when role and campaign code match the active/saved session.
     var activeToken = (state.code === code && state.role === requestedRole) ? String(state.token || "") : "";
     var sessionToken = (session && session.code === code && session.role === requestedRole) ? String(session.token || "") : "";
-    var tokenHint = String(opts.token || activeToken || sessionToken || "").trim();
+    var tokenHint = opts.fresh
+      ? ""
+      : String(hasTokenOverride ? opts.token : (activeToken || sessionToken || "")).trim();
 
     var res = await emitWithAck("campaign:join", {
       code: code,
@@ -9306,7 +10696,7 @@
 
     if (!res.ok) {
       if (!opts.silent) safeNotif(res.error || "Could not join campaign.", "warn");
-      return;
+      return res || { ok: false, error: "Could not join campaign." };
     }
 
     state.code = res.code;
@@ -9314,6 +10704,7 @@
     state.token = String(res.token || "");
     state.playerName = String(res.name || name || ensureName());
     state.activePromptId = "";
+    state.sessionPersistenceSuppressed = false;
     state.lastAppliedSelfCharacterAt = 0;
     state.lastCharacterHash = "";
     state.uiDraft.code = res.code;
@@ -9338,6 +10729,7 @@
     syncCharacterToCampaign(true);
     renderSettingsSection();
     renderDockPanel();
+    return res;
   }
 
   async function leaveCampaign() {
@@ -9350,6 +10742,7 @@
     state.token = "";
     state.campaign = null;
     state.activePromptId = "";
+    state.sessionPersistenceSuppressed = false;
     state.lastAppliedSelfCharacterAt = 0;
     state.lastCharacterHash = "";
     state.lastAppliedCampaignSoundtrackHash = "";
@@ -9367,6 +10760,7 @@
     safeNotif("Left campaign.", "warn");
     renderSettingsSection();
     renderDockPanel();
+    return { ok: true };
   }
 
   async function callRollRequest() {
@@ -9588,27 +10982,36 @@
   async function reconnectNow() {
     if (!ensureSocket()) {
       safeNotif("Multiplayer requires the local campaign server.", "warn");
-      return;
+      return { ok: false, error: "Server unavailable." };
     }
     if (state.socket && !state.connected && typeof state.socket.connect === "function") {
       state.socket.connect();
-      safeNotif("Reconnect requested.", "info");
-      return;
+      safeNotif(state.code ? "Reconnect requested." : "Connecting to campaign server...", "info");
+      return { ok: true, pending: true };
     }
-    if (state.code && state.role) {
-      await joinCampaign(state.role, {
-        code: state.code,
-        name: state.playerName || ensureName(),
-        token: state.token,
-        silent: true
-      });
-      refreshSyncHealth();
-      renderSettingsSection();
-      renderDockPanel();
-      safeNotif("Reconnect handshake complete.", "good");
-      return;
+    if (!state.code || !state.role) {
+      var savedSummary = getSavedCampaignSessionSummary();
+      if (savedSummary.hasSaved) {
+        return resumeSavedCampaignSession({ silent: true });
+      }
+      safeNotif("No active campaign session to reconnect.", "warn");
+      return { ok: false, error: "No active campaign session." };
     }
-    safeNotif("No active campaign session to reconnect.", "warn");
+    var joinResult = await joinCampaign(state.role, {
+      code: state.code,
+      name: state.playerName || ensureName(),
+      token: state.token,
+      silent: true
+    });
+    if (!joinResult || !joinResult.ok) {
+      safeNotif((joinResult && joinResult.error) || "Reconnect handshake failed.", "warn");
+      return joinResult || { ok: false, error: "Reconnect failed." };
+    }
+    refreshSyncHealth();
+    renderSettingsSection();
+    renderDockPanel();
+    safeNotif("Reconnect handshake complete.", "good");
+    return joinResult;
   }
 
   async function recoverSyncNow() {
@@ -10257,6 +11660,124 @@
     refreshSyncHealth();
   }
 
+  function buildCampaignDiagnosticsBundle(authoritativeSnapshot) {
+    var shared = getCampaignSharedState();
+    var combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? shared.campaignCombat
+      : {};
+    var soundtrack = ensureGmSettings(shared).soundtrack || {};
+    var hooks = getCampaignHooks();
+    var chronicle = getCampaignChronicleEntries();
+    var roster = buildPartyRoster().map(function (entry) {
+      return {
+        token: String(entry.token || ""),
+        name: String(entry.character && entry.character.name || entry.name || ""),
+        role: String(entry.role || ""),
+        health: Number(entry.character && entry.character.health || 0),
+        maxHealth: Number(entry.character && entry.character.maxHealth || 0),
+        mentalStress: Number(entry.character && entry.character.mentalStress || 0),
+        maxMentalStress: Number(entry.character && entry.character.maxMentalStress || 0)
+      };
+    });
+    return {
+      generatedAt: new Date().toISOString(),
+      app: {
+        href: String(window.location && window.location.href || ""),
+        userAgent: String(navigator && navigator.userAgent || "")
+      },
+      seat: {
+        code: String(state.code || ""),
+        role: String(state.role || ""),
+        token: String(state.token || ""),
+        playerName: String(state.playerName || ensureName() || ""),
+        connected: !!state.connected,
+        syncHealth: String(state.syncHealth || "idle"),
+        syncText: String(state.syncText || ""),
+        lastSnapshotAgeSeconds: state.lastCampaignStateAt ? getLastSnapshotAgeSeconds() : null,
+        lastAuthoritativeAt: Number(state.lastAuthoritativeAt || 0),
+        lastSyncAt: Number(state.lastSyncAt || 0)
+      },
+      table: {
+        tableState: getCampaignTableState(shared),
+        readyCheck: deepCloneJson(shared.readyCheck || ensureReadyCheckState(shared)),
+        pendingCheckCount: Object.keys((shared.pendingChecks && shared.pendingChecks.active) || {}).length,
+        activeRollRequest: deepCloneJson(state.campaign && state.campaign.activeRollRequest || null),
+        campaignTravel: deepCloneJson(shared.campaignTravel || null),
+        campaignCombat: deepCloneJson(combat || null),
+        soundtrack: deepCloneJson(soundtrack || null)
+      },
+      roster: roster,
+      chronicle: {
+        count: chronicle.length,
+        latest: chronicle.length ? chronicle[0] : null
+      },
+      hooks: {
+        total: hooks.length,
+        open: hooks.filter(function (hook) { return String(hook && hook.status || "open") !== "resolved"; }).length,
+        latestOpen: hooks.filter(function (hook) { return String(hook && hook.status || "open") !== "resolved"; }).slice(0, 5)
+      },
+      gmForge: deepCloneJson(shared.gmForge || ensureGmForgeState(shared)),
+      authoritativeSnapshot: authoritativeSnapshot || null
+    };
+  }
+
+  function downloadJsonFile(fileName, value) {
+    var text = JSON.stringify(value, null, 2);
+    try {
+      var blob = new Blob([text], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(function () {
+        try { URL.revokeObjectURL(url); } catch (_err) {}
+        try { link.remove(); } catch (_err2) {}
+      }, 0);
+    } catch (_err3) {}
+    return text;
+  }
+
+  async function exportDiagnosticsBundle() {
+    var authoritativeSnapshot = null;
+    if (state.role === "gm" && state.socket && state.code) {
+      var snapshotRes = await emitWithAck("campaign:exportSnapshot", {});
+      if (snapshotRes && snapshotRes.ok && snapshotRes.snapshot) {
+        authoritativeSnapshot = snapshotRes.snapshot;
+      }
+    }
+    var bundle = buildCampaignDiagnosticsBundle(authoritativeSnapshot);
+    var fileName = "campaign-diagnostics-" + String(state.code || "local") + "-" + Date.now() + ".json";
+    downloadJsonFile(fileName, bundle);
+    safeNotif("Diagnostics bundle exported.", "good");
+    return bundle;
+  }
+
+  async function copyDiagnosticsSummary() {
+    var bundle = buildCampaignDiagnosticsBundle(null);
+    var summary = JSON.stringify({
+      generatedAt: bundle.generatedAt,
+      seat: bundle.seat,
+      table: bundle.table,
+      chronicle: bundle.chronicle,
+      hooks: bundle.hooks
+    }, null, 2);
+    try {
+      if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(summary);
+        safeNotif("Diagnostics summary copied.", "good");
+        return true;
+      }
+    } catch (_err) {}
+    if (typeof window.openModal === "function") {
+      window.openModal("Diagnostics Summary", '<textarea style="width:100%;min-height:240px;background:#111723;border:1px solid #2a354a;color:var(--text);border-radius:.45rem;padding:.55rem;font-family:monospace;font-size:.75rem;">' + escapeHtml(summary) + '</textarea>');
+      return true;
+    }
+    safeNotif("Clipboard unavailable. Opened summary fallback failed.", "warn");
+    return false;
+  }
+
   async function exportSnapshot() {
     if (!state.socket || !state.code) {
       safeNotif("Only connected GM can export snapshots.", "warn");
@@ -10369,6 +11890,7 @@
     patchAreaSessionHooks();
     patchCameraLockHooks();
     patchCombatSyncHooks();
+    applyPlayerLiteMode();
     refreshProgressHash();
     ensureSocket();
     window.addEventListener("resize", function () { syncDockOffset(); });
@@ -10436,6 +11958,7 @@
     }
     ensureDockPanel();
     ensureMapSyncStatusBars();
+    renderGlobalQuickAccess();
     syncDockOffset();
   }
 
@@ -10541,6 +12064,18 @@
     resolveSceneCheckOutcome: resolveSceneCheckOutcome,
     requestSceneCheck: requestSceneCheck,
     registerSceneCheckHandler: registerSceneCheckHandler,
+    getGmForgePresets: getGmForgePresets,
+    saveGmForgePreset: saveGmForgePreset,
+    deleteGmForgePreset: deleteGmForgePreset,
+    setGmForgeLastPreset: setGmForgeLastPreset,
+    getCampaignChronicleEntries: getCampaignChronicleEntries,
+    addCampaignChronicleEntry: addCampaignChronicleEntry,
+    getCampaignHooks: getCampaignHooks,
+    addCampaignHook: addCampaignHook,
+    resolveCampaignHook: resolveCampaignHook,
+    reopenCampaignHook: reopenCampaignHook,
+    exportDiagnosticsBundle: exportDiagnosticsBundle,
+    copyDiagnosticsSummary: copyDiagnosticsSummary,
     exportSnapshot: exportSnapshot,
     importSnapshotPrompt: importSnapshotPrompt,
     importSnapshotFromModal: importSnapshotFromModal,
@@ -10624,9 +12159,18 @@
     getCharacterDice: getCharacterDice,
     getLargestWayfarersLeadDie: getLargestWayfarersLeadDie,
     getAllCharacterDice: getAllCharacterDice,
+    getSavedSessionSummary: getSavedCampaignSessionSummary,
+    openCampaignRecoveryCenter: openCampaignRecoveryCenter,
+    resumeSavedCampaignSession: resumeSavedCampaignSession,
+    rejoinSavedCampaignSession: rejoinSavedCampaignSession,
+    resumeSavedCampaignSessionFromModal: resumeSavedCampaignSessionFromModal,
+    rejoinSavedCampaignSessionFromModal: rejoinSavedCampaignSessionFromModal,
+    forgetSavedCampaignSession: forgetSavedCampaignSession,
+    forgetSavedCampaignSessionFromModal: forgetSavedCampaignSessionFromModal,
     refreshUI: function () {
       renderSettingsSection();
       renderDockPanel();
+      renderGlobalQuickAccess();
     },
     getState: function () {
       return {
@@ -10634,12 +12178,18 @@
         code: state.code,
         role: state.role,
         token: state.token,
-        campaign: state.campaign
+        campaign: state.campaign,
+        savedSession: getSavedCampaignSessionSummary()
       };
     },
     getSyncStatus: getSyncStatus,
+    setPlayerLiteMode: setPlayerLiteMode,
+    isPlayerLiteModeEnabled: isPlayerLiteModeEnabled,
     getSharedState: function () {
       return getCampaignSharedState();
+    },
+    getLiveActionContract: function () {
+      return getCampaignLiveActionContract(getCampaignSharedState(), state.campaign || {});
     },
     syncCharacterToCampaign: syncCharacterToCampaign,
     reconnectNow: reconnectNow,
