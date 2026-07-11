@@ -185,21 +185,32 @@ function runContextQuickAction(actionId) {
 
 function openMissionsTab() {
   if (typeof window.switchTab !== 'function') return;
-  var missionsBtn = document.getElementById('tabnav-missions');
-  window.switchTab('missions', missionsBtn || null);
+  function resolveMissionsBtn() {
+    return document.getElementById('tabnav-missions')
+      || document.querySelector('#mainNavTablist .tab-btn[data-tab="missions"]')
+      || null;
+  }
+
+  function reassertMissionsTab() {
+    var btn = resolveMissionsBtn();
+    var panel = document.getElementById('tab-missions');
+    if (!panel) return;
+    if (btn && btn.classList.contains('active') && panel.classList.contains('active')) return;
+    if (typeof window.switchTab === 'function') {
+      window.switchTab('missions', btn || null);
+    }
+    if (typeof window.requestMainNavOverflowSync === 'function') {
+      window.requestMainNavOverflowSync();
+    }
+  }
+
+  reassertMissionsTab();
 
   // Campaign sync can briefly replay older travel state during startup.
   // Re-assert Missions if it gets overwritten right after a user click.
-  [120, 420].forEach(function (delayMs) {
+  [0, 120, 420].forEach(function (delayMs) {
     setTimeout(function () {
-      var btn = document.getElementById('tabnav-missions');
-      var panel = document.getElementById('tab-missions');
-      if (!btn || !panel) return;
-      if (window.getComputedStyle(btn).display === 'none') return;
-      if (btn.classList.contains('active') && panel.classList.contains('active')) return;
-      if (typeof window.switchTab === 'function') {
-        window.switchTab('missions', btn);
-      }
+      reassertMissionsTab();
     }, delayMs);
   });
 }

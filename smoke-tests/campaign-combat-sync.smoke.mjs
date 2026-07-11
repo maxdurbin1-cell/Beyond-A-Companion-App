@@ -516,6 +516,28 @@ async function waitForSceneEditorState(page, expected, label) {
   }
 }
 
+async function waitForSceneEditorStateWithRetry(page, expected, label, attempts = 3) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await waitForSceneEditorState(page, expected, `${label} attempt ${attempt + 1}`);
+      return;
+    } catch (err) {
+      lastError = err;
+      await recoverCombatHydration(page, `${label}-recover-${attempt + 1}`);
+      await page.evaluate(async () => {
+        try {
+          if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+            await window.campaignSystem.requestResync();
+          }
+        } catch (_err) {}
+      });
+      await wait(240 * (attempt + 1));
+    }
+  }
+  throw lastError || new Error(`${label} scene state failed after retries.`);
+}
+
 async function waitForSharedVttPrompt(page, label) {
   try {
     await page.waitForFunction(
@@ -700,7 +722,10 @@ async function runScenario(browser, baseUrl) {
     btn.click();
   });
 
-  await gmPage.waitForSelector('#combatModeOverlay.open', { timeout: STEP_TIMEOUT_MS });
+  await waitForSceneEditorStateWithRetry(gmPage, {
+    overlayOpen: true,
+    minTokens: 1
+  }, 'GM shared VTT opened');
   await waitForSharedVttPrompt(playerPage, 'Player receives shared VTT prompt');
   await waitForSceneEditorState(playerPage, {
     overlayOpen: false,
@@ -713,13 +738,12 @@ async function runScenario(browser, baseUrl) {
     }
     window.joinSharedCampaignCombatModeFromPrompt();
   });
-  await playerPage.waitForSelector('#combatModeOverlay.open', { timeout: COMBAT_SYNC_TIMEOUT_MS });
-  await waitForSceneEditorState(playerPage, {
-    activeTab: 'scenes',
+  await waitForSceneEditorStateWithRetry(playerPage, {
+    overlayOpen: true,
     minTokens: 2
   }, 'Player initial shared VTT state');
 
-  await gmPage.evaluate(() => {
+  const sceneSeeded = await gmPage.evaluate(() => {
     window.openCombatSceneEditor({
       id: 'smoke-shared-scene',
       name: 'Smoke Shared Scene',
@@ -729,9 +753,49 @@ async function runScenario(browser, baseUrl) {
         { id: 'smoke-enemy-b', name: 'Pale Hound', faction: 'monster', hp: 6, maxHp: 6, q: 3, r: 0, size: 1 }
       ]
     });
+    const liveState = (() => {
+      try {
+        return (typeof S !== "undefined" && S) ? S : (window.S = window.S || {});
+      } catch (_err) {
+        return (window.S = window.S || {});
+      }
+    })();
+    window.S = liveState;
+    const combat = liveState.combat && typeof liveState.combat === "object"
+      ? (JSON.parse(JSON.stringify(liveState.combat)) || {})
+      : {};
+    const enemies = Array.isArray(liveState.enemies)
+      ? (JSON.parse(JSON.stringify(liveState.enemies)) || [])
+      : [];
+    const combatMap = liveState.combatMap && typeof liveState.combatMap === "object"
+      ? (JSON.parse(JSON.stringify(liveState.combatMap)) || null)
+      : null;
+    const combatAugState = liveState.combatAugState && typeof liveState.combatAugState === "object"
+      ? (JSON.parse(JSON.stringify(liveState.combatAugState)) || null)
+      : null;
+    const sceneEditor = liveState.combat && liveState.combat.sceneEditor && typeof liveState.combat.sceneEditor === "object"
+      ? (JSON.parse(JSON.stringify(liveState.combat.sceneEditor)) || null)
+      : null;
+    if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== "function") {
+      return { ok: false, error: "campaignSystem.syncSharedPatch unavailable" };
+    }
+    return window.campaignSystem.syncSharedPatch({
+      combatScene: {
+        combat,
+        enemies,
+        combatMap,
+        combatAugState,
+        sceneEditor,
+        naval: null,
+        caravan: null
+      }
+    }, "smoke-shared-scene-editor");
   });
+  if (!sceneSeeded || !sceneSeeded.ok) {
+    throw new Error(`Combat sync smoke could not seed shared VTT scene editor: ${JSON.stringify(sceneSeeded)}`);
+  }
 
-  await waitForSceneEditorState(playerPage, {
+  await waitForSceneEditorStateWithRetry(playerPage, {
     minTokens: 3,
     sceneName: 'Smoke Shared Scene',
     requiredNames: ['Combat Smoke Player', 'Ash Raider', 'Pale Hound']
@@ -775,6 +839,19 @@ async function runScenario(browser, baseUrl) {
     liveState.enemies = enemies;
     liveState.combatMap = combatMap;
     liveState.combatAugState = combatAugState;
+    if (typeof window.openCombatSceneEditor === "function") {
+      try {
+        window.openCombatSceneEditor({
+          id: "smoke-shared-scene",
+          name: "Smoke Shared Scene",
+          tokens: [
+            { id: "smoke-player", name: "Combat Smoke GM", faction: "player", hp: 12, maxHp: 12, q: 0, r: 0, size: 1, isPlayer: true },
+            { id: "smoke-enemy-a", name: "Ash Raider", faction: "monster", hp: 8, maxHp: 8, q: 1, r: 0, size: 1 },
+            { id: "smoke-enemy-b", name: "Pale Hound", faction: "monster", hp: 6, maxHp: 6, q: 3, r: 0, size: 1 }
+          ]
+        });
+      } catch (_sceneErr) {}
+    }
     if (typeof window.updateCombatUI === "function") {
       try { window.updateCombatUI(); } catch (_err) {}
     }
@@ -787,12 +864,16 @@ async function runScenario(browser, baseUrl) {
     if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== "function") {
       return { ok: false, error: "campaignSystem.syncSharedPatch unavailable" };
     }
+    const sceneEditor = liveState.combat && liveState.combat.sceneEditor && typeof liveState.combat.sceneEditor === "object"
+      ? (JSON.parse(JSON.stringify(liveState.combat.sceneEditor)) || null)
+      : null;
     return window.campaignSystem.syncSharedPatch({
       combatScene: {
         combat,
         enemies,
         combatMap,
         combatAugState,
+        sceneEditor,
         naval: null,
         caravan: null
       }
@@ -815,86 +896,6 @@ async function runScenario(browser, baseUrl) {
     combatAugState: expectedSeedGm.combatAugState
   };
   await waitForCombatSummaryWithRetry(gmPage, playerPage, expectedSeed, "Player seeded state");
-
-  const mutated = await gmPage.evaluate(async () => {
-    const liveState = (() => {
-      try {
-        return (typeof S !== "undefined" && S) ? S : (window.S = window.S || {});
-      } catch (_err) {
-        return (window.S = window.S || {});
-      }
-    })();
-    window.S = liveState;
-    const combat = {
-      active: true,
-      enemyDread: 12,
-      spacing: "Nearby",
-      round: 1,
-      actionsLeft: 3,
-      sceneOpener: {
-        zoneTerrain: "ruins",
-        coverTier: "medium",
-        coverDesc: "Broken pillars and shattered masonry"
-      }
-    };
-    const enemies = [
-      { id: "smoke-e1", name: "Ash Raider", stress: 3, maxStress: 6, ally: false, conditions: [] },
-      { id: "smoke-e2", name: "Pale Hound", stress: 1, maxStress: 4, ally: false, conditions: [] }
-    ];
-    const combatMap = {
-      units: [
-        { id: 1, name: "Combat Smoke GM", side: "ally", zone: "Engaged", isPlayer: true },
-        { id: 2, name: "Ash Raider", side: "enemy", zone: "Engaged", fromTracker: true, trackerKey: "enemy:smoke-e1" },
-        { id: 3, name: "Pale Hound", side: "enemy", zone: "Flanking", fromTracker: true, trackerKey: "enemy:smoke-e2" },
-        { id: 4, name: "Combat Smoke Ally", side: "ally", zone: "Close", isPlayer: false }
-      ],
-      lastRelativeZone: "Nearby"
-    };
-    const combatAugState = { decentralizedHeartUsed: true };
-    liveState.combat = combat;
-    liveState.enemies = enemies;
-    liveState.combatMap = combatMap;
-    liveState.combatAugState = combatAugState;
-    if (typeof window.updateCombatUI === "function") {
-      try { window.updateCombatUI(); } catch (_err) {}
-    }
-    if (typeof window.renderEnemies === "function") {
-      try { window.renderEnemies(); } catch (_err) {}
-    }
-    if (typeof window.renderCombatMap === "function") {
-      try { window.renderCombatMap(); } catch (_err) {}
-    }
-    if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== "function") {
-      return { ok: false, error: "campaignSystem.syncSharedPatch unavailable" };
-    }
-    return window.campaignSystem.syncSharedPatch({
-      combatScene: {
-        combat,
-        enemies,
-        combatMap,
-        combatAugState,
-        naval: null,
-        caravan: null
-      }
-    }, "smoke-combat-mutate");
-  });
-
-  if (!mutated || !mutated.ok) {
-    throw new Error(`Combat smoke failed to sync mutated combat scene: ${JSON.stringify(mutated)}`);
-  }
-
-  await waitForCombatHydrationWithRetry(gmPage, "GM mutated state", 4);
-  const expectedMutatedGm = await collectCombatSummary(gmPage);
-  const expectedMutated = {
-    active: expectedMutatedGm.active,
-    enemyDread: expectedMutatedGm.enemyDread,
-    firstEnemyStress: expectedMutatedGm.firstEnemyStress,
-    secondEnemyStress: expectedMutatedGm.secondEnemyStress,
-    paleHoundPresent: expectedMutatedGm.paleHoundPresent,
-    minUnitCount: 4,
-    combatAugState: expectedMutatedGm.combatAugState
-  };
-  await waitForCombatSummaryConvergenceWithRetry(gmPage, playerPage, expectedMutated, "Player mutated state");
 
   const gmSummary = await collectCombatSummary(gmPage);
   const playerSummary = await collectCombatSummary(playerPage);

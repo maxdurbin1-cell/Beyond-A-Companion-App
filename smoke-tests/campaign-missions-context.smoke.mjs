@@ -90,9 +90,114 @@ async function clearSession(page) {
   await dismissBlockingOverlays(page);
 }
 
+async function syncShared(page, reason) {
+  const out = await page.evaluate(async (syncReason) => {
+    if (!window.campaignSystem || typeof window.campaignSystem.syncSharedSilent !== "function") {
+      return { ok: false, error: "syncSharedSilent unavailable" };
+    }
+    for (let i = 0; i < 6; i += 1) {
+      try {
+        const res = await window.campaignSystem.syncSharedSilent(`${syncReason}-${i}`);
+        if (res && res.ok) return res;
+      } catch (_err) {}
+      await new Promise((resolve) => setTimeout(resolve, 180 * (i + 1)));
+    }
+    return { ok: false, error: "sync retries exhausted" };
+  }, reason);
+  if (!out || !out.ok) {
+    throw new Error(`Shared sync failed for ${reason}: ${JSON.stringify(out)}`);
+  }
+}
+
 async function setContext(page, ctx) {
-  const btn = page.locator(`.ctx-btn[data-ctx="${ctx}"]`);
-  await btn.click();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await page.evaluate(async (nextCtx) => {
+      if (typeof window.setContext !== "function") {
+        return { ok: false, error: "setContext unavailable" };
+      }
+      const ctxBtn = document.querySelector(`.ctx-btn[data-ctx="${nextCtx}"]`);
+      window.setContext(nextCtx, ctxBtn || null);
+      if (typeof window.requestMainNavOverflowSync === "function") {
+        window.requestMainNavOverflowSync();
+      }
+      const activeBtn = document.querySelector("#mainNavTablist .tab-btn.active[data-tab]");
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const travel = shared && shared.campaignTravel && typeof shared.campaignTravel === "object"
+        ? shared.campaignTravel
+        : null;
+      return {
+        ok: true,
+        activeContext: String(window._activeContext || ""),
+        activeTab: String(activeBtn && activeBtn.getAttribute("data-tab") || ""),
+        travelContext: String(travel && travel.context || "")
+      };
+    }, ctx);
+    if (!result || !result.ok) {
+      throw new Error(`Could not set context ${ctx}: ${JSON.stringify(result)}`);
+    }
+    await syncShared(page, `missions-context-${ctx}-attempt-${attempt + 1}`);
+    try {
+      await page.waitForFunction(
+        (expectedCtx) => {
+          const coreTabByContext = {
+            traveling: "tabnav-character",
+            holding: "tabnav-map",
+            sea: "tabnav-lastsea",
+            space: "tabnav-galaxy"
+          };
+          const coreTabId = coreTabByContext[String(expectedCtx || "")] || "";
+          const coreTab = coreTabId ? document.getElementById(coreTabId) : null;
+          return !!(
+            String(window._activeContext || "") === String(expectedCtx || "")
+            && coreTab
+            && window.getComputedStyle(coreTab).display !== "none"
+          );
+        },
+        ctx,
+        { timeout: Math.max(6000, Math.floor(STEP_TIMEOUT_MS / 2)) }
+      );
+      await dismissBlockingOverlays(page);
+      return;
+    } catch (_err) {
+      await page.evaluate(async () => {
+        try {
+          if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+            await window.campaignSystem.requestResync();
+          }
+        } catch (_err2) {}
+      });
+      await wait(220 * (attempt + 1));
+    }
+  }
+  const diagnostics = await page.evaluate((expectedCtx) => {
+    const coreTabByContext = {
+      traveling: "tabnav-character",
+      holding: "tabnav-map",
+      sea: "tabnav-lastsea",
+      space: "tabnav-galaxy"
+    };
+    const coreTabId = coreTabByContext[String(expectedCtx || "")] || "";
+    const coreTab = coreTabId ? document.getElementById(coreTabId) : null;
+    const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+      ? window.campaignSystem.getSharedState()
+      : null;
+    const travel = shared && shared.campaignTravel && typeof shared.campaignTravel === "object"
+      ? shared.campaignTravel
+      : null;
+    return {
+      expectedCtx: String(expectedCtx || ""),
+      activeContext: String(window._activeContext || ""),
+      coreTabId,
+      coreTabDisplay: coreTab ? String(window.getComputedStyle(coreTab).display || "") : "missing",
+      activeTab: String((document.querySelector("#mainNavTablist .tab-btn.active[data-tab]") || {}).id || ""),
+      visibleTabs: Array.from(document.querySelectorAll("#mainNav .tab-btn")).filter((el) => window.getComputedStyle(el).display !== "none").map((el) => String(el.id || el.textContent || "")),
+      travelContext: String(travel && travel.context || ""),
+      travelTab: String(travel && travel.tab || "")
+    };
+  }, ctx);
+  throw new Error(`Could not settle context ${ctx}: ${JSON.stringify(diagnostics)}`);
 }
 
 async function clickMissionsAndAssert(page, ctx, label) {
@@ -157,36 +262,70 @@ async function clickMissionsAndAssert(page, ctx, label) {
   await page.waitForFunction(
     () => {
       const btn = document.getElementById("tabnav-missions");
-      if (!btn) return false;
-      return window.getComputedStyle(btn).display !== "none";
+      return !!btn;
     },
     null,
     { timeout: STEP_TIMEOUT_MS }
   );
 
-  await page.evaluate(() => {
-    if (typeof window.openMissionsTab !== "function") {
-      throw new Error("openMissionsTab unavailable");
+  let missionsActivated = false;
+  for (let attempt = 0; attempt < 3 && !missionsActivated; attempt += 1) {
+    const activation = await page.evaluate((attemptNumber) => {
+      const btn = document.getElementById("tabnav-missions");
+      const btnHidden = !!(btn && window.getComputedStyle(btn).display === "none");
+      const overflowItem = Array.from(document.querySelectorAll("#mainNavOverflowPanel .tab-btn,[data-overflow-for]"))
+        .find((el) => {
+          const overflowFor = String(el.getAttribute("data-overflow-for") || "");
+          const text = String(el.textContent || "").trim();
+          return overflowFor === "tabnav-missions" || text === "Missions";
+        }) || null;
+      try {
+        if (btnHidden && overflowItem && typeof overflowItem.click === "function") {
+          overflowItem.click();
+          return { ok: true, path: "overflow-click" };
+        }
+        if (btn && typeof btn.click === "function") {
+          btn.click();
+          return { ok: true, path: btnHidden ? "hidden-btn-click" : "visible-btn-click" };
+        }
+        if (attemptNumber === 0 && typeof window.openMissionsTab === "function") {
+          window.openMissionsTab();
+          return { ok: true, path: "openMissionsTab" };
+        }
+        if (typeof window.switchTab === "function") {
+          window.switchTab("missions", btn || null);
+          return { ok: true, path: btn ? "switchTab-direct" : "switchTab-null" };
+        }
+        return { ok: false, error: "No missions activation path available" };
+      } catch (err) {
+        return { ok: false, error: String(err && err.message ? err.message : err) };
+      }
+    }, attempt);
+    if (!activation || !activation.ok) {
+      throw new Error(`Could not activate missions in ${ctx}: ${JSON.stringify(activation)}`);
     }
-    window.openMissionsTab();
-  });
-  await dismissBlockingOverlays(page);
+    await dismissBlockingOverlays(page);
+    try {
+      await page.waitForFunction(
+        () => {
+          const panel = document.getElementById("tab-missions");
+          const btn = document.getElementById("tabnav-missions");
+          return !!(
+            panel && btn
+            && panel.classList.contains("active")
+            && btn.classList.contains("active")
+          );
+        },
+        null,
+        { timeout: Math.max(4000, Math.floor(STEP_TIMEOUT_MS / 2)) }
+      );
+      missionsActivated = true;
+    } catch (_err) {
+      await wait(180 * (attempt + 1));
+    }
+  }
 
-  try {
-    await page.waitForFunction(
-      () => {
-        const panel = document.getElementById("tab-missions");
-        const btn = document.getElementById("tabnav-missions");
-        return !!(
-          panel && btn
-          && panel.classList.contains("active")
-          && btn.classList.contains("active")
-        );
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
-  } catch (err) {
+  if (!missionsActivated) {
     const postClick = await page.evaluate((activeCtx) => {
       const btn = document.getElementById("tabnav-missions");
       const panel = document.getElementById("tab-missions");
@@ -207,7 +346,7 @@ async function clickMissionsAndAssert(page, ctx, label) {
         campaignRole: String(state && state.role || "")
       };
     }, ctx);
-    throw new Error(`Missions panel activation timed out in ${ctx}: ${JSON.stringify({ postClick, pageErrors, error: String(err && err.message ? err.message : err) })}`);
+    throw new Error(`Missions panel activation timed out in ${ctx}: ${JSON.stringify({ postClick, pageErrors })}`);
   }
 
   const postClick = await page.evaluate((activeCtx) => {

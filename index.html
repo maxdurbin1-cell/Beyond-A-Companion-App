@@ -11037,6 +11037,8 @@ function runCampaignPromptedEnemyAction(){
   }
   triggerEnemyActionEvent({
     campaignRequest:request,
+    enemyId:String(request.enemyId||''),
+    enemyName:String(request.enemyName||''),
     rangeBand:band,
     targetZoneLabel:String(request.targetZoneLabel||''),
     skipTurnGate:true,
@@ -11051,7 +11053,24 @@ function triggerEnemyActionEvent(options){
   if(!opts.skipTurnGate){
     if(!requireCampaignTurn('enemy'))return;
   }
-  var actingEnemy=getPrimaryCombatEnemy();
+  var actingEnemy=null;
+  if(opts.enemyId&&typeof getCombatEnemyById==='function'){
+    actingEnemy=getCombatEnemyById(opts.enemyId);
+  }
+  if(!actingEnemy&&opts.enemyName&&Array.isArray(S&&S.enemies?S.enemies:[])){
+    var wantedName=String(opts.enemyName||'').trim().toLowerCase();
+    if(wantedName){
+      actingEnemy=S.enemies.find(function(enemy){
+        return enemy&&!enemy.ally&&String(enemy.name||'').trim().toLowerCase()===wantedName;
+      })||null;
+    }
+  }
+  if(!actingEnemy){
+    actingEnemy=getPrimaryCombatEnemy();
+  }
+  if(actingEnemy&&typeof setCombatFocusEnemy==='function'&&actingEnemy.id!==undefined&&actingEnemy.id!==null){
+    try{setCombatFocusEnemy(actingEnemy.id);}catch(_err){}
+  }
   if(!actingEnemy){showNotif('Add an enemy first.','warn');return;}
   if(!opts.skipBudget&& !consumeEnemyActionBudget('enemy event'))return;
   if(!opts.skipEnemyMutation&&consumeEnemyTurnBlock(actingEnemy))return;

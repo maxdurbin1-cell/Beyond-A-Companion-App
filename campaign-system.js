@@ -115,6 +115,7 @@
     lastCampaignAreaPromptKey: "",
     activeCampaignAreaSessionId: "",
     activeCampaignAreaRenderHash: "",
+    sharedVttJoinRetryAt: 0,
     lastAppliedCampaignSoundtrackHash: "",
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
@@ -1043,7 +1044,25 @@
     var sceneSnapshot = getSharedCombatSceneEditorSnapshot();
     if (!sceneSnapshot) {
       if (state.role === "player") {
-        safeNotif("The shared VTT is still syncing from the GM. Wait for the join prompt or try Request Resync.", "warn");
+        var retryAt = Date.now();
+        var shouldRetry = retryAt - Number(state.sharedVttJoinRetryAt || 0) > 900;
+        state.sharedVttJoinRetryAt = retryAt;
+        if (shouldRetry) {
+          try {
+            var retryRequest = requestResync();
+            if (retryRequest && typeof retryRequest.catch === "function") {
+              retryRequest.catch(function () {});
+            }
+          } catch (_resyncErr) {}
+          setTimeout(function () {
+            try {
+              if (state.role === "player" && state.code && Date.now() - Number(state.sharedVttJoinRetryAt || 0) < 2500) {
+                joinSharedCampaignCombatMode();
+              }
+            } catch (_retryErr) {}
+          }, 320);
+        }
+        safeNotif("The shared VTT is still syncing from the GM. Reconnecting now...", "warn");
         return false;
       }
       if (typeof window.openCombatSceneEditorFromExpedition === "function") {
@@ -1069,9 +1088,18 @@
         sceneName: resolveSharedCombatSceneName()
       });
       if (!opened) {
+        if (state.role === "player") {
+          try {
+            var retryRequest2 = requestResync();
+            if (retryRequest2 && typeof retryRequest2.catch === "function") {
+              retryRequest2.catch(function () {});
+            }
+          } catch (_resyncErr2) {}
+        }
         safeNotif("Could not join the shared Combat Mode scene.", "warn");
         return false;
       }
+      state.sharedVttJoinRetryAt = 0;
       safeNotif("Joined the shared Combat Mode scene.", "good");
       return true;
     } catch (_err) {
@@ -4415,13 +4443,25 @@
       state.syncQueuedReason = String(reason || state.syncQueuedReason || "queued");
       return;
     }
+    var syncReason = String(reason || "auto");
     var shared = collectSharedState();
+    if (syncReason === "tick" && shared && typeof shared === "object") {
+      var currentShared = getCampaignSharedState();
+      var liveCombat = currentShared && currentShared.campaignCombat && typeof currentShared.campaignCombat === "object"
+        ? currentShared.campaignCombat
+        : null;
+      var localCombatSceneActive = !!(window.S && window.S.combat && typeof window.S.combat === "object" && window.S.combat.active);
+      if ((liveCombat && liveCombat.active) || localCombatSceneActive) {
+        delete shared.campaignCombat;
+        delete shared.combatScene;
+      }
+    }
     if (shared && typeof shared === "object" && shared.combatScene && typeof shared.combatScene === "object") {
       attachCombatSceneSyncMeta(shared, Math.max(0, Number(state.combatSceneSyncGeneration || 0)), true);
     }
     var hash = JSON.stringify(shared);
     if (!hash || hash === state.lastSharedHash) return;
-    var res = await pushSharedState(shared, reason || "auto");
+    var res = await pushSharedState(shared, syncReason);
     if (res && res.ok) {
       state.lastSharedHash = hash;
       state.lastSharedVersion = Math.max(state.lastSharedVersion, Number(res.stateVersion || 0));

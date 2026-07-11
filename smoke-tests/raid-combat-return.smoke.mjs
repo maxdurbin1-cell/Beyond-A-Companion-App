@@ -157,7 +157,9 @@ async function runScenario(browser) {
       overlay &&
       overlay.classList.contains("open") &&
       /Raid Combat/i.test(titleText) &&
-      /Combat Engaged/i.test(text)
+      /Stage:/i.test(text) &&
+      /Enemy Action/i.test(text) &&
+      /Turn:/i.test(text)
     );
     const hasRaidQuickPanel = /Stage:/i.test(qpText) && /Enemy Action/i.test(qpText) && /Turn:/i.test(qpText);
     return !!(
