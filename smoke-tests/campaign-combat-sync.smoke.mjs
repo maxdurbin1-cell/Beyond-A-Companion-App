@@ -446,6 +446,19 @@ async function recoverCombatHydration(page, reason) {
         await window.campaignSystem.syncSharedNow();
       }
     } catch (_err) {}
+    try {
+      const overlay = document.getElementById("combatModeOverlay");
+      const overlayOpen = !!(overlay && overlay.classList.contains("open"));
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+        ? shared.campaignCombat
+        : null;
+      if (!overlayOpen && combat && combat.active && combat.vttSession && typeof window.campaignSystem.joinSharedCombatMode === "function") {
+        try { window.campaignSystem.joinSharedCombatMode(); } catch (_joinErr) {}
+      }
+    } catch (_err) {}
   }, String(reason || "combat-hydration-recover"));
   await wait(800);
 }
@@ -742,64 +755,6 @@ async function runScenario(browser, baseUrl) {
     overlayOpen: true,
     minTokens: 2
   }, 'Player initial shared VTT state');
-
-  const sceneSeeded = await gmPage.evaluate(() => {
-    window.openCombatSceneEditor({
-      id: 'smoke-shared-scene',
-      name: 'Smoke Shared Scene',
-      tokens: [
-        { id: 'smoke-player', name: 'Combat Smoke GM', faction: 'player', hp: 12, maxHp: 12, q: 0, r: 0, size: 1, isPlayer: true },
-        { id: 'smoke-enemy-a', name: 'Ash Raider', faction: 'monster', hp: 8, maxHp: 8, q: 1, r: 0, size: 1 },
-        { id: 'smoke-enemy-b', name: 'Pale Hound', faction: 'monster', hp: 6, maxHp: 6, q: 3, r: 0, size: 1 }
-      ]
-    });
-    const liveState = (() => {
-      try {
-        return (typeof S !== "undefined" && S) ? S : (window.S = window.S || {});
-      } catch (_err) {
-        return (window.S = window.S || {});
-      }
-    })();
-    window.S = liveState;
-    const combat = liveState.combat && typeof liveState.combat === "object"
-      ? (JSON.parse(JSON.stringify(liveState.combat)) || {})
-      : {};
-    const enemies = Array.isArray(liveState.enemies)
-      ? (JSON.parse(JSON.stringify(liveState.enemies)) || [])
-      : [];
-    const combatMap = liveState.combatMap && typeof liveState.combatMap === "object"
-      ? (JSON.parse(JSON.stringify(liveState.combatMap)) || null)
-      : null;
-    const combatAugState = liveState.combatAugState && typeof liveState.combatAugState === "object"
-      ? (JSON.parse(JSON.stringify(liveState.combatAugState)) || null)
-      : null;
-    const sceneEditor = liveState.combat && liveState.combat.sceneEditor && typeof liveState.combat.sceneEditor === "object"
-      ? (JSON.parse(JSON.stringify(liveState.combat.sceneEditor)) || null)
-      : null;
-    if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== "function") {
-      return { ok: false, error: "campaignSystem.syncSharedPatch unavailable" };
-    }
-    return window.campaignSystem.syncSharedPatch({
-      combatScene: {
-        combat,
-        enemies,
-        combatMap,
-        combatAugState,
-        sceneEditor,
-        naval: null,
-        caravan: null
-      }
-    }, "smoke-shared-scene-editor");
-  });
-  if (!sceneSeeded || !sceneSeeded.ok) {
-    throw new Error(`Combat sync smoke could not seed shared VTT scene editor: ${JSON.stringify(sceneSeeded)}`);
-  }
-
-  await waitForSceneEditorStateWithRetry(playerPage, {
-    minTokens: 3,
-    sceneName: 'Smoke Shared Scene',
-    requiredNames: ['Combat Smoke Player', 'Ash Raider', 'Pale Hound']
-  }, 'Player refreshed shared VTT state');
 
   const seeded = await gmPage.evaluate(async () => {
     const liveState = (() => {

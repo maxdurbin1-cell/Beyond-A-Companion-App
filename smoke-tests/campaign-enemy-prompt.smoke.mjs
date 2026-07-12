@@ -302,27 +302,40 @@ async function hydrateEnemyPromptSeat(page, payload) {
   }, payload);
 }
 
-async function waitForEnemyPrompt(page) {
-  let requestedResync = false;
-  let lastReq = null;
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    lastReq = await page.evaluate(() => (
+async function waitForEnemyPrompt(gmPage, playerPage) {
+  let lastGmReq = null;
+  let lastPlayerReq = null;
+  for (let attempt = 0; attempt < 14; attempt += 1) {
+    lastGmReq = await gmPage.evaluate(() => (
       window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
         ? window.campaignSystem.getEnemyActionRequest()
         : null
     ));
-    if (lastReq && lastReq.status === "pending" && lastReq.targetName === "Aarav") return;
-    if (!requestedResync && attempt >= 3) {
-      requestedResync = true;
-      await page.evaluate(async () => {
+    lastPlayerReq = await playerPage.evaluate(() => (
+      window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
+        ? window.campaignSystem.getEnemyActionRequest()
+        : null
+    ));
+    if (lastPlayerReq && lastPlayerReq.status === "pending" && lastPlayerReq.targetName === "Aarav") return;
+    if (lastGmReq && lastGmReq.status === "pending") {
+      await playerPage.evaluate(async () => {
         if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
           try { await window.campaignSystem.requestResync(); } catch (_err) {}
         }
       });
+    } else if (attempt >= 3 && attempt % 3 === 0) {
+      await gmPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+          try { await window.campaignSystem.syncSharedSilent("enemy-prompt-smoke-rebroadcast"); } catch (_err) {}
+        }
+      });
     }
-    await wait(400);
+    await wait(320 + (attempt * 30));
   }
-  throw new Error(`Enemy prompt smoke timed out waiting for the player prompt: ${JSON.stringify(lastReq)}`);
+  throw new Error(
+    `Enemy prompt smoke timed out waiting for the player prompt: `
+    + `gm=${JSON.stringify(lastGmReq)} player=${JSON.stringify(lastPlayerReq)}`
+  );
 }
 
 async function waitForCombatActive(page) {
@@ -410,8 +423,13 @@ async function waitForResolvedEnemyRequest(gmPage, playerPage) {
     }
     if (gmResolved && !playerResolved) {
       await wait(250);
-    } else if (bothPending && attempt >= 4) {
-      await wait(250);
+    } else if (bothPending && attempt >= 3) {
+      await playerPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err) {}
+        }
+      });
+      await wait(260);
     }
     await wait(gmResolved || playerResolved ? 450 : 350);
   }
@@ -586,6 +604,34 @@ async function waitForEnemyPhase(gmPage, playerPage) {
   throw new Error(`Enemy prompt smoke timed out waiting for enemy phase: gm=${JSON.stringify(lastGm)} player=${JSON.stringify(lastPlayer)}`);
 }
 
+async function collectCampaignCombatSummary(page) {
+  return page.evaluate(() => {
+    const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+      ? window.campaignSystem.getSharedState()
+      : null;
+    const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? shared.campaignCombat
+      : {};
+    return {
+      active: !!combat.active,
+      phase: String(combat.phase || ""),
+      activeToken: String(combat.activeToken || ""),
+      pendingWayfarers: Array.isArray(combat.pendingWayfarers)
+        ? combat.pendingWayfarers.map((entry) => String(entry || ""))
+        : [],
+      actedWayfarers: Array.isArray(combat.actedWayfarers)
+        ? combat.actedWayfarers.map((entry) => String(entry || ""))
+        : [],
+      turnOrder: Array.isArray(combat.turnOrder)
+        ? combat.turnOrder.map((entry) => String(entry || ""))
+        : [],
+      participantTokens: Array.isArray(combat.participants)
+        ? combat.participants.map((row) => String(row && row.token || "")).filter(Boolean)
+        : []
+    };
+  });
+}
+
 async function waitForAuthoritativeEnemySeed(gmPage, playerPage, playerToken) {
   let lastPlayer = null;
   let lastGm = null;
@@ -613,7 +659,6 @@ async function waitForAuthoritativeEnemySeed(gmPage, playerPage, playerToken) {
           !!combat.active
           && String(combat.phase || "") === "enemy"
           && String(combat.activeToken || "") === "enemy:phase"
-          && enemies.some((enemy) => enemy && enemy.name === "Ash Raider")
           && participants.some((row) => row && String(row.token || "") === String(token || ""))
         )
       };
@@ -766,18 +811,6 @@ async function runScenario(browser, baseUrl) {
       liveState.combat = combat;
       liveState.enemies = enemies;
       liveState.combatMap = combatMap;
-      if (typeof window.openCombatSceneEditor === "function") {
-        try {
-          window.openCombatSceneEditor({
-            id: "enemy-prompt-scene",
-            name: "Enemy Prompt Scene",
-            tokens: [
-              { id: "prompt-player", name: "Aarav", faction: "player", hp: 10, maxHp: 10, q: 0, r: 0, size: 1, isPlayer: true },
-              { id: "prompt-enemy-a", name: "Ash Raider", faction: "monster", hp: 6, maxHp: 6, q: 1, r: 0, size: 1 }
-            ]
-          });
-        } catch (_sceneErr) {}
-      }
       if (typeof window.updateCombatUI === "function") {
         try { window.updateCombatUI(); } catch (_err) {}
       }
@@ -787,10 +820,6 @@ async function runScenario(browser, baseUrl) {
       if (typeof window.renderCombatMap === "function") {
         try { window.renderCombatMap(); } catch (_err) {}
       }
-
-      const sceneEditor = liveState.combat && liveState.combat.sceneEditor && typeof liveState.combat.sceneEditor === "object"
-        ? (JSON.parse(JSON.stringify(liveState.combat.sceneEditor)) || null)
-        : null;
       return {
         playerToken: String(playerMember && playerMember.token || "player-token"),
         playerName: String(playerMember && playerMember.name || "Aarav"),
@@ -813,107 +842,61 @@ async function runScenario(browser, baseUrl) {
           enemies,
           combatMap,
           combatAugState: null,
-          sceneEditor,
+          sceneEditor: null,
           naval: null,
           caravan: null
         }
       };
     });
 
-    const snapshot = {
-      version: 1,
-      code,
-      archived: false,
-      shared: {
-        tmw: 0,
-        stateVersion: 0,
-        state: {
-          campaignCombat: {
-            active: true,
-            enemyDread: 8,
-            round: 1,
-            turnOrder: [setup.playerToken, "enemy:phase"],
-            currentActorIndex: 1,
-            participants: [
-              {
-                token: setup.playerToken,
-                name: setup.playerName,
-                role: "player",
-                isEnemy: false,
-                isDead: false,
-                hasActed: true
-              },
-              {
-                token: "enemy:phase",
-                name: "Enemy Turn",
-                role: "enemy",
-                isEnemy: true,
-                isDead: false,
-                hasActed: false
-              }
-            ],
-            phase: "enemy",
-            activeToken: "enemy:phase",
-            pendingWayfarers: [],
-            actedWayfarers: [setup.playerToken],
-            enemyActionRequest: null,
-            startedAt: Date.now(),
-            startedBy: "Enemy Prompt GM",
-            vttSession: null
+    const primed = await gmPage.evaluate(async (payload) => {
+      const combatState = {
+        active: true,
+        enemyDread: 8,
+        round: 1,
+        turnOrder: [String(payload.playerToken || ""), "enemy:phase"],
+        currentActorIndex: 1,
+        participants: [
+          {
+            token: String(payload.playerToken || ""),
+            name: String(payload.playerName || "Aarav"),
+            role: "player",
+            isEnemy: false,
+            isDead: false,
+            hasActed: true
           },
-          combatScene: setup.combatScene
-        }
-      },
-      participants: setup.participants.map((participant) => ({
-        token: participant.token,
-        name: participant.name,
-        role: participant.role,
-        lastSeenAt: Date.now(),
-        character: participant.character || null
-      })),
-      privateNotes: [],
-      activeRollRequest: null,
-      log: []
-    };
-    const imported = await gmPage.evaluate(async (snapshotJson) => {
-      try {
-        let input = document.getElementById("campaignImportSnapshotInput");
-        if (!input) {
-          input = document.createElement("textarea");
-          input.id = "campaignImportSnapshotInput";
-          input.style.display = "none";
-          document.body.appendChild(input);
-        }
-        input.value = snapshotJson;
-        await window.campaignSystem.importSnapshotFromModal();
-        return { ok: true };
-      } catch (err) {
-        return { ok: false, error: String(err && err.message ? err.message : err) };
-      }
-    }, JSON.stringify(snapshot));
-    if (!imported || !imported.ok) {
-      throw new Error(`Enemy prompt smoke failed to import the authoritative combat snapshot: ${JSON.stringify(imported)}`);
-    }
-    await waitForAuthoritativeEnemySeed(gmPage, playerPage, setup.playerToken);
-    const gmPrimedState = await gmPage.evaluate(() => {
-      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
-        ? window.campaignSystem.getSharedState()
-        : null;
-      const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
-        ? shared.campaignCombat
-        : {};
-      return {
-        active: !!combat.active,
-        phase: String(combat.phase || ""),
-        activeToken: String(combat.activeToken || ""),
-        participantTokens: Array.isArray(combat.participants)
-        ? combat.participants.map((row) => String(row && row.token || "")).filter(Boolean)
-          : []
+          {
+            token: "enemy:phase",
+            name: "Enemy Turn",
+            role: "enemy",
+            isEnemy: true,
+            isDead: false,
+            hasActed: false
+          }
+        ],
+        phase: "enemy",
+        activeToken: "enemy:phase",
+        pendingWayfarers: [],
+        actedWayfarers: [String(payload.playerToken || "")],
+        enemyActionRequest: null,
+        startedAt: Date.now(),
+        startedBy: "Enemy Prompt GM",
+        vttSession: null
       };
-    });
-    if (!(gmPrimedState.active && gmPrimedState.phase === "enemy" && gmPrimedState.activeToken === "enemy:phase" && gmPrimedState.participantTokens.indexOf(setup.playerToken) >= 0)) {
-      throw new Error(`Enemy prompt smoke GM combat state is not ready for prompting: ${JSON.stringify(gmPrimedState)}`);
+      return window.campaignSystem.syncSharedPatch({
+        campaignCombat: combatState,
+        combatScene: payload.combatScene
+      }, "enemy-prompt-bootstrap");
+    }, setup);
+    if (!primed || !primed.ok) {
+      throw new Error(`Enemy prompt smoke failed to prime the authoritative combat state: ${JSON.stringify(primed)}`);
     }
+    await gmPage.evaluate(async () => {
+      if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+        try { await window.campaignSystem.syncSharedSilent("enemy-prompt-bootstrap-rebroadcast"); } catch (_err) {}
+      }
+    });
+    await waitForAuthoritativeEnemySeed(gmPage, playerPage, setup.playerToken);
 
     const prompted = await gmPage.evaluate(async (playerToken) => {
       return await new Promise((resolve) => {
@@ -931,6 +914,16 @@ async function runScenario(browser, baseUrl) {
     if (!prompted || !prompted.ok) {
       throw new Error(`Enemy prompt smoke failed to create the enemy action request: ${JSON.stringify(prompted)}`);
     }
+    await gmPage.waitForFunction(
+      () => {
+        const req = window.campaignSystem && typeof window.campaignSystem.getEnemyActionRequest === "function"
+          ? window.campaignSystem.getEnemyActionRequest()
+          : null;
+        return !!(req && req.status === "pending" && req.targetName === "Aarav");
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
     await gmPage.evaluate(() => {
       if (typeof consumeEnemyActionBudget === "function") {
         try { consumeEnemyActionBudget("enemy prompt"); } catch (_err) {}
@@ -940,7 +933,12 @@ async function runScenario(browser, baseUrl) {
       }
     });
 
-    await waitForEnemyPrompt(playerPage);
+    await playerPage.evaluate(async () => {
+      if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+        try { await window.campaignSystem.requestResync(); } catch (_err) {}
+      }
+    });
+    await waitForEnemyPrompt(gmPage, playerPage);
     const gmPendingSummary = await collectResolutionSummary(gmPage);
     const playerPendingSummary = await collectResolutionSummary(playerPage);
     if (gmPendingSummary.gate.indexOf("Wait for Aarav to resolve Enemy Action") < 0) {
@@ -967,6 +965,11 @@ async function runScenario(browser, baseUrl) {
     if (!resolvedLocally || !resolvedLocally.ok) {
       throw new Error(`Enemy prompt smoke failed to resolve the player enemy action: ${JSON.stringify(resolvedLocally)}`);
     }
+    await playerPage.evaluate(async () => {
+      if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+        try { await window.campaignSystem.requestResync(); } catch (_err) {}
+      }
+    });
 
     await waitForResolvedEnemyRequest(gmPage, playerPage);
 

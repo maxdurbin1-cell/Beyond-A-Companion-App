@@ -568,7 +568,7 @@ async function runScenario(browser, baseUrl) {
           selectedHexExists: !!window.selectedHex
         };
       }
-      window.rollHexEncounter(hex.col, hex.row);
+      await window.rollHexEncounter(hex.col, hex.row);
       await new Promise((resolve) => setTimeout(resolve, 180));
       el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
       const liveProvince = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;

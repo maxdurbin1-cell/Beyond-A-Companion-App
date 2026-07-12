@@ -3785,7 +3785,8 @@
   }
 
   function collectSharedState() {
-    if (typeof window.S === "undefined" || !window.S) return {};
+    var gameState = syncWindowStateAlias();
+    if (!gameState) return {};
     var current = getCampaignSharedState();
     var existingSelections = current && current.provinceSelections && typeof current.provinceSelections === "object"
       ? deepCloneJson(current.provinceSelections) || {}
@@ -3803,22 +3804,22 @@
       }
     }
     var shared = {
-      credits: Math.max(0, Number(window.S.credits || 0)),
-      renown: Math.max(0, Number(window.S.renown || 0)),
-      mentalStress: Math.max(0, Number((typeof current.mentalStress === "number" ? current.mentalStress : window.S.mentalStress) || 0)),
-      missionTokens: deepCloneJson(window.S.missionTokens || {}),
-      activeMissions: deepCloneJson(window.S.activeMissions || []),
-      completedMissions: deepCloneJson(window.S.completedMissions || []),
-      availableJobs: deepCloneJson(window.S.availableJobs || []),
-      storyline: deepCloneJson(window.S.storyline || {}),
-      caravan: deepCloneJson(window.S.caravan || {}),
-      holding: deepCloneJson(window.S.holding || {}),
-      starship: deepCloneJson(window.S.starship || {}),
-      factionRenown: deepCloneJson(window.S.factionRenown || {}),
-      factionBases: deepCloneJson(window.S.factionBases || {}),
-      factionWayfarerTasks: deepCloneJson(window.S.factionWayfarerTasks || []),
-      factionNarrative: deepCloneJson(window.S.factionNarrative || {}),
-      rival: deepCloneJson((window.S.rival && typeof window.S.rival === "object" ? window.S.rival : current.rival) || null),
+      credits: Math.max(0, Number(gameState.credits || 0)),
+      renown: Math.max(0, Number(gameState.renown || 0)),
+      mentalStress: Math.max(0, Number((typeof current.mentalStress === "number" ? current.mentalStress : gameState.mentalStress) || 0)),
+      missionTokens: deepCloneJson(gameState.missionTokens || {}),
+      activeMissions: deepCloneJson(gameState.activeMissions || []),
+      completedMissions: deepCloneJson(gameState.completedMissions || []),
+      availableJobs: deepCloneJson(gameState.availableJobs || []),
+      storyline: deepCloneJson(gameState.storyline || {}),
+      caravan: deepCloneJson(gameState.caravan || {}),
+      holding: deepCloneJson(gameState.holding || {}),
+      starship: deepCloneJson(gameState.starship || {}),
+      factionRenown: deepCloneJson(gameState.factionRenown || {}),
+      factionBases: deepCloneJson(gameState.factionBases || {}),
+      factionWayfarerTasks: deepCloneJson(gameState.factionWayfarerTasks || []),
+      factionNarrative: deepCloneJson(gameState.factionNarrative || {}),
+      rival: deepCloneJson((gameState.rival && typeof gameState.rival === "object" ? gameState.rival : current.rival) || null),
       partyStash: Array.isArray(current.partyStash) ? current.partyStash.slice() : [],
       economyLedger: mergeEconomyLedger(current.economyLedger),
       provinceSelections: existingSelections,
@@ -3834,11 +3835,11 @@
       shared.provinceMap = buildProvinceSharedSnapshot(mySelection);
     }
     if (shouldPushAuthoritativeMaps) {
-      shared.mapFog = deepCloneJson(window.S.mapFog || {});
-      shared.lastSea = deepCloneJson(window.S.lastSea || {});
-      shared.starSystem = deepCloneJson(window.S.starSystem || {});
-      shared.worldThatWas = deepCloneJson(window.S.worldThatWas || {});
-      shared.gameDate = deepCloneJson(window.S.gameDate || {});
+      shared.mapFog = deepCloneJson(gameState.mapFog || {});
+      shared.lastSea = deepCloneJson(gameState.lastSea || {});
+      shared.starSystem = deepCloneJson(gameState.starSystem || {});
+      shared.worldThatWas = deepCloneJson(gameState.worldThatWas || {});
+      shared.gameDate = deepCloneJson(gameState.gameDate || {});
       shared.combatScene = collectCombatSceneState();
       shared.gmSettings = deepCloneJson(current.gmSettings || ensureGmSettings());
       shared.campaignCombat = deepCloneJson(current.campaignCombat || ensureCampaignCombatState());
@@ -3849,33 +3850,37 @@
       shared.characterDeathStates = deepCloneJson(current.characterDeathStates || ensureCharacterDeathStates());
       shared.contestedRolls = deepCloneJson(current.contestedRolls || ensureContestedRolls());
       shared.characterDice = deepCloneJson(current.characterDice || ensureCharacterDice());
-      if (window.S.worldState && typeof window.S.worldState === "object") {
-        shared.worldState = deepCloneJson(window.S.worldState);
+      if (gameState.worldState && typeof gameState.worldState === "object") {
+        shared.worldState = deepCloneJson(gameState.worldState);
       }
     }
     return shared;
   }
 
   function collectProgressSharedPatch() {
-    if (typeof window.S === "undefined" || !window.S) return {};
-    return {
-      renown: Math.max(0, Number(window.S.renown || 0)),
-      credits: Math.max(0, Number(window.S.credits || 0)),
-      mentalStress: Math.max(0, Number(window.S.mentalStress || 0)),
-      missionTokens: deepCloneJson(window.S.missionTokens || {}),
-      activeMissions: deepCloneJson(window.S.activeMissions || []),
-      completedMissions: deepCloneJson(window.S.completedMissions || []),
-      availableJobs: deepCloneJson(window.S.availableJobs || []),
-      storyline: deepCloneJson(window.S.storyline || {}),
-      holding: deepCloneJson(window.S.holding || {}),
-      caravan: deepCloneJson(window.S.caravan || {}),
-      factionWayfarerTasks: deepCloneJson(window.S.factionWayfarerTasks || []),
-      factionNarrative: deepCloneJson(window.S.factionNarrative || {}),
-      factionRenown: deepCloneJson(window.S.factionRenown || {}),
-      factionBases: deepCloneJson(window.S.factionBases || {}),
-      rival: deepCloneJson(window.S.rival || {}),
-      worldState: deepCloneJson(window.S.worldState || {})
+    var gameState = syncWindowStateAlias();
+    if (!gameState) return {};
+    var patch = {
+      renown: Math.max(0, Number(gameState.renown || 0)),
+      credits: Math.max(0, Number(gameState.credits || 0)),
+      mentalStress: Math.max(0, Number(gameState.mentalStress || 0)),
+      missionTokens: deepCloneJson(gameState.missionTokens || {}),
+      activeMissions: deepCloneJson(gameState.activeMissions || []),
+      completedMissions: deepCloneJson(gameState.completedMissions || []),
+      availableJobs: deepCloneJson(gameState.availableJobs || []),
+      storyline: deepCloneJson(gameState.storyline || {}),
+      holding: deepCloneJson(gameState.holding || {}),
+      caravan: deepCloneJson(gameState.caravan || {}),
+      factionWayfarerTasks: deepCloneJson(gameState.factionWayfarerTasks || []),
+      rival: deepCloneJson(gameState.rival || {}),
+      worldState: deepCloneJson(gameState.worldState || {})
     };
+    if (state.role !== "player") {
+      patch.factionNarrative = deepCloneJson(gameState.factionNarrative || {});
+      patch.factionRenown = deepCloneJson(gameState.factionRenown || {});
+      patch.factionBases = deepCloneJson(gameState.factionBases || {});
+    }
+    return patch;
   }
 
   function mergeCombatScenePatchWithCurrent(patch) {
@@ -6202,14 +6207,10 @@
         if (callback) callback({ ok: false, error: "This enemy action targets another Wayfarer." });
         return;
       }
-      syncPlayerSharedPatch({
-        campaignCombat: {
-          enemyActionRequest: {
-            id: String(payload.id || liveEnemyRequest.id || ""),
-            resolutionSummary: String(payload.resolutionSummary || "").trim().slice(0, 240)
-          }
-        }
-      }, "resolve-enemy-action", { bypassQueue: true }).then(function (res) {
+      emitWithAck("campaign:resolveEnemyAction", {
+        id: String(payload.id || liveEnemyRequest.id || ""),
+        resolutionSummary: String(payload.resolutionSummary || "").trim().slice(0, 240)
+      }).then(function (res) {
         if (callback) callback(res || { ok: false, error: "Could not resolve enemy action." });
       }).catch(function (err) {
         if (callback) callback({ ok: false, error: String(err) });
@@ -11481,6 +11482,22 @@
     return out;
   }
 
+  async function syncFactionProgressPatch(patch, reason) {
+    if (!state.socket || !state.connected || !state.code) return { ok: false, error: "Not connected." };
+    if (state.role !== "gm") return { ok: false, error: "Only GM can sync faction progress." };
+    if (!patch || typeof patch !== "object") return { ok: false, error: "Invalid faction progress patch." };
+    var out = await emitWithAck("campaign:syncFactionProgress", {
+      state: patch,
+      reason: reason || "faction-progress"
+    });
+    if (!out || !out.ok) {
+      safeNotif((out && out.error) || "Could not sync faction progress to campaign.", "warn");
+      return out || { ok: false };
+    }
+    applyLocalSharedPatch(patch);
+    return out;
+  }
+
   async function sendChatMessage(options) {
     if (!state.socket || !state.code) {
       safeNotif("Join a campaign first.", "warn");
@@ -12231,6 +12248,7 @@
     getLiveActionContract: function () {
       return getCampaignLiveActionContract(getCampaignSharedState(), state.campaign || {});
     },
+    syncFactionProgressPatch: syncFactionProgressPatch,
     syncCharacterToCampaign: syncCharacterToCampaign,
     reconnectNow: reconnectNow,
     recoverSyncNow: recoverSyncNow,

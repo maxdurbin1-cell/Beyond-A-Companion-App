@@ -276,6 +276,116 @@ async function collectStashSnapshot(page, label) {
   }
 }
 
+async function waitForSharedStashItem(pages, item, label) {
+  let lastSnapshots = [];
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    lastSnapshots = await Promise.all(pages.map((entry) => collectStashSnapshot(entry.page, entry.label)));
+    const ready = lastSnapshots.every((entry) => (
+      entry && entry.ok
+      && entry.snapshot
+      && Array.isArray(entry.snapshot.partyStash)
+      && entry.snapshot.partyStash.indexOf(item) >= 0
+    ));
+    if (ready) return lastSnapshots;
+    if (attempt === 2 || attempt === 5 || attempt === 8) {
+      await Promise.all(pages.map(async (entry) => {
+        if (entry.role !== "player") return;
+        await entry.page.evaluate(async () => {
+          if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+            try { await window.campaignSystem.requestResync(); } catch (_err) {}
+          }
+        });
+      }));
+    }
+    await wait(260 + (attempt * 70));
+  }
+  throw new Error(
+    `${label}: ` + JSON.stringify({
+      item,
+      snapshots: lastSnapshots
+    })
+  );
+}
+
+async function waitForFactionContractSync(page, label, options) {
+  const opts = options || {};
+  let last = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    last = await page.evaluate(() => {
+      var st = window.campaignSystem && window.campaignSystem.getState ? window.campaignSystem.getState() : null;
+      var shared = st && st.campaign && st.campaign.shared && st.campaign.shared.state ? st.campaign.shared.state : {};
+      var completed = Array.isArray(shared && shared.completedMissions) ? shared.completedMissions : [];
+      var heroicPoints = shared && shared.factionNarrative && shared.factionNarrative.pathPoints
+        ? Number(shared.factionNarrative.pathPoints.heroic || 0)
+        : 0;
+      var completedContracts = shared && shared.factionNarrative && Array.isArray(shared.factionNarrative.completedContracts)
+        ? shared.factionNarrative.completedContracts.length
+        : 0;
+      var finaleUnlocked = !!(shared && shared.factionNarrative && shared.factionNarrative.finale && shared.factionNarrative.finale.unlocked);
+      var hasCompletedFactionContract = completed.some(function (mission) {
+        return !!(mission && mission.missionType === "faction_contract");
+      });
+      return {
+        sharedVersion: Number((st && st.campaign && st.campaign.shared && st.campaign.shared.stateVersion) || 0),
+        completedFactionContract: hasCompletedFactionContract,
+        heroicPoints: heroicPoints,
+        completedContracts: completedContracts,
+        finaleUnlocked: finaleUnlocked
+      };
+    });
+    if (
+      last
+      && last.completedFactionContract
+      && Number(last.heroicPoints || 0) >= 5
+      && Number(last.completedContracts || 0) >= 5
+      && last.finaleUnlocked
+    ) {
+      return last;
+    }
+    if (opts.retrySync && (attempt === 2 || attempt === 5 || attempt === 8)) {
+      await page.evaluate(async () => {
+        if (window.factionSystem && typeof window.factionSystem.syncCampaignState === "function") {
+          try { await window.factionSystem.syncCampaignState("scenario-ui-faction-mission-retry"); } catch (_err) {}
+        }
+      });
+    }
+    if (attempt === 2 || attempt === 5 || attempt === 8) {
+      await page.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err) {}
+        }
+      });
+    }
+    await wait(260 + (attempt * 90));
+  }
+  throw new Error(`${label}: ${JSON.stringify(last)}`);
+}
+
+async function collectFactionContractSnapshot(page, label) {
+  try {
+    const snapshot = await page.evaluate(() => {
+      var st = window.campaignSystem && window.campaignSystem.getState ? window.campaignSystem.getState() : null;
+      var sharedWrapper = st && st.campaign && st.campaign.shared ? st.campaign.shared : null;
+      var shared = sharedWrapper && sharedWrapper.state ? sharedWrapper.state : {};
+      var completed = Array.isArray(shared && shared.completedMissions) ? shared.completedMissions : [];
+      var narrative = shared && shared.factionNarrative && typeof shared.factionNarrative === "object"
+        ? shared.factionNarrative
+        : {};
+      return {
+        sharedVersion: Number((sharedWrapper && sharedWrapper.stateVersion) || 0),
+        completedFactionContracts: completed.filter((mission) => mission && mission.missionType === "faction_contract").length,
+        heroicPoints: Number((narrative.pathPoints && narrative.pathPoints.heroic) || 0),
+        completedContracts: Array.isArray(narrative.completedContracts) ? narrative.completedContracts.length : 0,
+        finaleUnlocked: !!(narrative.finale && narrative.finale.unlocked),
+        factionNarrativeKeys: Object.keys(narrative || {}).sort()
+      };
+    });
+    return { label, ok: true, snapshot };
+  } catch (err) {
+    return { label, ok: false, error: String(err && err.message ? err.message : err) };
+  }
+}
+
 async function waitForHydratedMaps(page, expected) {
   const goal = {
     provinceCells: Number(expected && expected.provinceCells || 0),
@@ -389,7 +499,15 @@ async function runScenario(browser) {
       finaleBeforeUnlocked: false,
       finaleAfterUnlocked: false,
       chosenFaction: "",
-      chosenMission: ""
+      chosenMission: "",
+      stateRefHeroicBeforeSync: 0,
+      stateRefCompletedContractsBeforeSync: 0,
+      windowHeroicBeforeSync: 0,
+      windowCompletedContractsBeforeSync: 0,
+      stateRefIsWindowState: false,
+      factionNarrativeRefShared: false,
+      clonedHeroicBeforeSync: 0,
+      clonedCompletedContractsBeforeSync: 0
     };
 
     if (!window.factionSystem || !window.factionSystem.FACTIONS) {
@@ -567,8 +685,27 @@ async function runScenario(browser) {
     window.S.factionBases = stateRef.factionBases && typeof stateRef.factionBases === "object" ? stateRef.factionBases : {};
     window.S.factionWayfarerTasks = Array.isArray(stateRef.factionWayfarerTasks) ? stateRef.factionWayfarerTasks : [];
     window.S.factionNarrative = stateRef.factionNarrative && typeof stateRef.factionNarrative === "object" ? stateRef.factionNarrative : {};
+    out.stateRefHeroicBeforeSync = Number((((stateRef.factionNarrative || {}).pathPoints || {}).heroic) || 0);
+    out.stateRefCompletedContractsBeforeSync = Array.isArray((stateRef.factionNarrative || {}).completedContracts)
+      ? stateRef.factionNarrative.completedContracts.length
+      : 0;
+    out.windowHeroicBeforeSync = Number((((window.S && window.S.factionNarrative || {}).pathPoints || {}).heroic) || 0);
+    out.windowCompletedContractsBeforeSync = Array.isArray(window.S && window.S.factionNarrative && window.S.factionNarrative.completedContracts)
+      ? window.S.factionNarrative.completedContracts.length
+      : 0;
+    out.stateRefIsWindowState = !!(window.S && stateRef && window.S === stateRef);
+    out.factionNarrativeRefShared = !!(window.S && stateRef && window.S.factionNarrative && stateRef.factionNarrative && window.S.factionNarrative === stateRef.factionNarrative);
+    try {
+      var clonedNarrative = JSON.parse(JSON.stringify((window.S && window.S.factionNarrative) || {}));
+      out.clonedHeroicBeforeSync = Number((((clonedNarrative || {}).pathPoints || {}).heroic) || 0);
+      out.clonedCompletedContractsBeforeSync = Array.isArray(clonedNarrative && clonedNarrative.completedContracts)
+        ? clonedNarrative.completedContracts.length
+        : 0;
+    } catch (_err) {}
 
-    const syncRes = await window.campaignSystem.syncSharedSilent("scenario-ui-faction-mission");
+    const syncRes = window.factionSystem && typeof window.factionSystem.syncCampaignState === "function"
+      ? await window.factionSystem.syncCampaignState("scenario-ui-faction-mission")
+      : await window.campaignSystem.syncSharedSilent("scenario-ui-faction-mission");
     out.ok = !!(syncRes && syncRes.ok);
     if (!out.ok) out.error = (syncRes && syncRes.error) || "UI flow sync failed.";
     return out;
@@ -608,6 +745,12 @@ async function runScenario(browser) {
     throw new Error(`Endings unlock assertion failed: ${JSON.stringify(factionMissionFlow)}`);
   }
 
+  try {
+    await waitForFactionContractSync(gmPage, "GM faction contract sync wait timed out", { retrySync: true });
+  } catch (err) {
+    throw new Error(String(err && err.message ? err.message : err) + " :: " + JSON.stringify({ factionMissionFlow }));
+  }
+
   const gmSummary = await collectMapSummary(gmPage);
   await waitForHydratedMaps(p1Page, gmSummary);
   await waitForHydratedMaps(p2Page, gmSummary);
@@ -638,27 +781,17 @@ async function runScenario(browser) {
   }
 
   try {
-    await p2Page.waitForFunction(
-      () => {
-        const st = window.campaignSystem.getState();
-        const shared = st && st.campaign && st.campaign.shared && st.campaign.shared.state ? st.campaign.shared.state : {};
-        return Array.isArray(shared.partyStash) && shared.partyStash.indexOf("Scenario Relic") >= 0;
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+    await waitForSharedStashItem([
+      { page: gmPage, label: "gm", role: "gm" },
+      { page: p1Page, label: "player1", role: "player" },
+      { page: p2Page, label: "player2", role: "player" }
+    ], "Scenario Relic", "Stash sync wait timed out for Scenario Relic");
   } catch (err) {
-    const snapshots = await Promise.all([
-      collectStashSnapshot(gmPage, "gm"),
-      collectStashSnapshot(p1Page, "player1"),
-      collectStashSnapshot(p2Page, "player2")
-    ]);
     throw new Error(
       "Stash sync wait timed out for Scenario Relic: "
       + JSON.stringify({
         timeoutMs: STEP_TIMEOUT_MS,
         shareAck,
-        snapshots,
         error: String(err && err.message ? err.message : err)
       })
     );
@@ -795,34 +928,22 @@ async function runScenario(browser) {
     throw new Error(`Snapshot export/import assertion failed: ${JSON.stringify(snapshotInfo)}`);
   }
 
-  const p1Faction = await p1Page.evaluate(() => {
-    var st = window.campaignSystem && window.campaignSystem.getState ? window.campaignSystem.getState() : null;
-    var shared = st && st.campaign && st.campaign.shared && st.campaign.shared.state ? st.campaign.shared.state : {};
-    var completed = Array.isArray(shared && shared.completedMissions) ? shared.completedMissions : [];
-    var heroicPoints = shared && shared.factionNarrative && shared.factionNarrative.pathPoints
-      ? Number(shared.factionNarrative.pathPoints.heroic || 0)
-      : 0;
-    var completedContracts = shared && shared.factionNarrative && Array.isArray(shared.factionNarrative.completedContracts)
-      ? shared.factionNarrative.completedContracts.length
-      : 0;
-    var finaleUnlocked = !!(shared && shared.factionNarrative && shared.factionNarrative.finale && shared.factionNarrative.finale.unlocked);
-    var hasCompletedFactionContract = completed.some(function (m) {
-      return !!(m && m.missionType === "faction_contract");
-    });
-    return {
-      completedFactionContract: hasCompletedFactionContract,
-      heroicPoints: heroicPoints,
-      completedContracts: completedContracts,
-      finaleUnlocked: finaleUnlocked
-    };
-  });
-  if (
-    !p1Faction.completedFactionContract ||
-    Number(p1Faction.heroicPoints || 0) < 5 ||
-    Number(p1Faction.completedContracts || 0) < 5 ||
-    !p1Faction.finaleUnlocked
-  ) {
-    throw new Error(`Faction contract sync assertion failed: ${JSON.stringify(p1Faction)}`);
+  let p1Faction = null;
+  try {
+    p1Faction = await waitForFactionContractSync(p1Page, "Faction contract sync wait timed out");
+  } catch (err) {
+    const factionSnapshots = await Promise.all([
+      collectFactionContractSnapshot(gmPage, "gm"),
+      collectFactionContractSnapshot(p1Page, "player1"),
+      collectFactionContractSnapshot(p2Page, "player2")
+    ]);
+    throw new Error(
+      String(err && err.message ? err.message : err)
+      + " :: "
+      + JSON.stringify({ factionMissionFlow })
+      + " :: "
+      + JSON.stringify(factionSnapshots)
+    );
   }
 
   process.stdout.write(`Campaign scenario passed: code=${code}, requestResyncMs=${resyncAck.tookMs}, factionMissions=${factionMissionFlow.completedRuns}, heroic=${factionMissionFlow.pointsAfter.heroic}, endingsUnlocked=${String(factionMissionFlow.finaleAfterUnlocked)}\n`);

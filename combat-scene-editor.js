@@ -15655,7 +15655,19 @@
 
   window.openCombatSceneEditor = function (seed) {
     syncCombatScenesTabNavigation();
-    openOverlay(prepareCampaignCombatSeed(seed || buildActiveSharedCampaignCombatSceneSeed() || buildSharedCampaignCombatSceneSeed() || null));
+    var preparedSeed = prepareCampaignCombatSeed(seed || buildActiveSharedCampaignCombatSceneSeed() || buildSharedCampaignCombatSceneSeed() || null);
+    var overlay = document.getElementById('combatModeOverlay');
+    var overlayOpen = !!(overlay && overlay.classList.contains('open'));
+    if (overlayOpen && preparedSeed && typeof applySharedCombatSceneEditorState === 'function') {
+      applySharedCombatSceneEditorState(preparedSeed, {
+        autoOpen: true,
+        forceHydrate: true,
+        refreshUi: true,
+        sceneName: String(preparedSeed.name || 'Campaign Shared Scene')
+      });
+    } else {
+      openOverlay(preparedSeed);
+    }
     syncCurrentCampaignCombatScene('campaign-combat-mode-open-immediate', { includeCombatSession: true });
   };
   

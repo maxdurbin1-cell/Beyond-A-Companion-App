@@ -16,6 +16,7 @@ const suites = {
     "smoke:bone-oracle",
     "smoke:gm-forge-chronicle",
     "smoke:combat-sync",
+    "smoke:campaign-enemy-prompt",
     "smoke:combat-turns",
     "smoke:campaign-tab-isolation",
     "smoke:token-target-damage",
@@ -42,6 +43,7 @@ const suites = {
   multiplayer: [
     "smoke:gm-forge-chronicle",
     "smoke:combat-sync",
+    "smoke:campaign-enemy-prompt",
     "smoke:combat-turns",
     "smoke:scenario",
     "smoke:authority-travel",
@@ -74,7 +76,7 @@ async function pickAvailablePort(preferredPort) {
 
 async function runSuite() {
   const suite = suites[suiteName];
-  const maxAttempts = 2;
+  const maxAttempts = 1;
   if (!suite) {
     throw new Error(`Unknown release suite "${suiteName}". Expected one of: ${Object.keys(suites).join(", ")}`);
   }

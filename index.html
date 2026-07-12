@@ -23130,7 +23130,7 @@ function resolveSiteMemoryEncounterOutcome(col,row,kind){
     +'</div>';
   }
 }
-function rollHexEncounter(col,row){
+async function rollHexEncounter(col,row){
   let el=document.getElementById(`hexEnc-${col}-${row}`);
   if(!el&&selectedHex&&selectedHex.col===col&&selectedHex.row===row){
     renderHexInfo(selectedHex);
@@ -23262,7 +23262,9 @@ function rollHexEncounter(col,row){
       if(window.campaignSystem&&typeof window.campaignSystem.getState==='function'&&typeof window.campaignSystem.syncProvinceEncounterResult==='function'){
         const cs=window.campaignSystem.getState();
         if(cs&&cs.code&&cs.role==='player'){
-          try{window.campaignSystem.syncProvinceEncounterResult(String(col)+','+String(row),html);}catch(_err){}
+          try{
+            await window.campaignSystem.syncProvinceEncounterResult(String(col)+','+String(row),html);
+          }catch(_err){}
         }
       }
       syncProvinceRuinStateSoon('province-encounter-roll');

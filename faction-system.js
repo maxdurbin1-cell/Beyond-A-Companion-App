@@ -3158,6 +3158,63 @@
     openFactionBaseHub(factionId);
   }
 
+  function cloneFactionCampaignValue(value, fallback) {
+    try {
+      const cloned = JSON.parse(JSON.stringify(value));
+      return cloned === null || typeof cloned === "undefined" ? fallback : cloned;
+    } catch (_err) {
+      return fallback;
+    }
+  }
+
+  function syncFactionCampaignState(reason) {
+    try {
+      if (typeof window === "undefined" || !window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== "function") {
+        return Promise.resolve({ ok: false, skipped: true, error: "Campaign sync unavailable." });
+      }
+      const campaignState = typeof window.campaignSystem.getState === "function"
+        ? window.campaignSystem.getState()
+        : null;
+      if (!campaignState || !campaignState.code || campaignState.role !== "gm") {
+        return Promise.resolve({ ok: false, skipped: true, error: "Faction sync requires an active GM campaign." });
+      }
+      if (typeof window.syncWindowStateAlias === "function") {
+        try { window.syncWindowStateAlias(); } catch (_err) {}
+      }
+      const patch = {
+        activeMissions: cloneFactionCampaignValue(S.activeMissions || [], []),
+        completedMissions: cloneFactionCampaignValue(S.completedMissions || [], []),
+        factionNarrative: cloneFactionCampaignValue(S.factionNarrative || {}, {}),
+        factionRenown: cloneFactionCampaignValue(S.factionRenown || {}, {}),
+        factionBases: cloneFactionCampaignValue(S.factionBases || {}, {}),
+        factionWayfarerTasks: cloneFactionCampaignValue(S.factionWayfarerTasks || [], [])
+      };
+      const syncFn = typeof window.campaignSystem.syncFactionProgressPatch === "function"
+        ? window.campaignSystem.syncFactionProgressPatch
+        : window.campaignSystem.syncSharedPatch;
+      const out = syncFn.call(window.campaignSystem, patch, reason || "faction-campaign-state");
+      if (out && typeof out.catch === "function") out.catch(function () {});
+      return out;
+    } catch (err) {
+      return Promise.resolve({ ok: false, error: String(err && err.message ? err.message : err) });
+    }
+  }
+
+  var _factionCampaignSyncTimer = null;
+  var _factionCampaignSyncReason = "";
+
+  function scheduleFactionCampaignSync(reason) {
+    if (typeof window === "undefined") return;
+    _factionCampaignSyncReason = String(reason || _factionCampaignSyncReason || "faction-campaign-state");
+    if (_factionCampaignSyncTimer) clearTimeout(_factionCampaignSyncTimer);
+    _factionCampaignSyncTimer = setTimeout(function () {
+      var why = _factionCampaignSyncReason || "faction-campaign-state";
+      _factionCampaignSyncTimer = null;
+      _factionCampaignSyncReason = "";
+      syncFactionCampaignState(why);
+    }, 0);
+  }
+
   function resolveFactionEvent(factionId, idx) {
     const base = ensureBaseActivity(factionId);
     const ev = base && Array.isArray(base.activeEvents) ? base.activeEvents[Number(idx)] : null;
@@ -3625,6 +3682,7 @@
       if (typeof renderMissionBoard === "function") renderMissionBoard();
       if (typeof renderMissionTracker === "function") renderMissionTracker();
       setupFactionTab();
+      scheduleFactionCampaignSync("faction-contract-accept");
     }
   }
 
@@ -3746,6 +3804,7 @@
       });
       setupFactionTab();
       renderEndingsPanel();
+      scheduleFactionCampaignSync("faction-contract-failed");
       return;
     }
 
@@ -3803,6 +3862,7 @@
     });
     setupFactionTab();
     renderEndingsPanel();
+    scheduleFactionCampaignSync("faction-contract-complete");
   }
 
   function visitFactionBase(factionId) {
@@ -3858,6 +3918,7 @@
     resolveAdaptiveChoice,
     expandFaction,
     acceptFactionMission: acceptFactionMissionFromTab,
+    syncCampaignState: syncFactionCampaignState,
     visitBase: visitFactionBase,
     syncBaseMarkers: syncFactionBaseMarkers,
     getProvinceMarker: getFactionBaseMarkerAtProvince,

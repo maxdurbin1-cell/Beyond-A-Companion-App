@@ -97,6 +97,101 @@ async function resetPage(page, baseUrl) {
   });
 }
 
+async function waitForPendingCheckSubmission(gmPage, playerPage, checkId) {
+  let lastGm = null;
+  let lastPlayer = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    lastGm = await gmPage.evaluate((id) => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const active = shared && shared.pendingChecks && shared.pendingChecks.active;
+      const check = active && active[id];
+      return {
+        sharedVersion: Number((window.campaignSystem.getState().campaign || {}).shared?.stateVersion || 0),
+        submissions: check && Array.isArray(check.submissions) ? check.submissions.length : 0
+      };
+    }, checkId);
+    if (lastGm && lastGm.submissions >= 1) return;
+    lastPlayer = await playerPage.evaluate((id) => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const active = shared && shared.pendingChecks && shared.pendingChecks.active;
+      const check = active && active[id];
+      return {
+        sharedVersion: Number((window.campaignSystem.getState().campaign || {}).shared?.stateVersion || 0),
+        submissions: check && Array.isArray(check.submissions) ? check.submissions.length : 0
+      };
+    }, checkId);
+    if (attempt === 2 || attempt === 5 || attempt === 7) {
+      await playerPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err) {}
+        }
+      });
+    }
+    await wait(300 + (attempt * 80));
+  }
+  throw new Error(`Pending check submission did not propagate: ${JSON.stringify({ checkId, gm: lastGm, player: lastPlayer })}`);
+}
+
+async function waitForSharedProvinceEncounter(gmPage, playerPage, encounterKey) {
+  let lastGm = null;
+  let lastPlayer = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    lastGm = await gmPage.evaluate((key) => {
+      const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+        ? window.campaignSystem.getSharedState()
+        : null;
+      const province = shared && shared.provinceMap;
+      const hex = province && Array.isArray(province.mapData)
+        ? province.mapData.find((entry) => entry && `${entry.col},${entry.row}` === key)
+        : null;
+      return {
+        sharedVersion: Number((window.campaignSystem.getState().campaign || {}).shared?.stateVersion || 0),
+        html: hex && hex.data ? String(hex.data.lastEncounterHtml || "") : ""
+      };
+    }, encounterKey);
+    if (lastGm && lastGm.html) return lastGm.html;
+
+    lastPlayer = await playerPage.evaluate((key) => {
+      const localProvince = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
+      const localHex = localProvince && Array.isArray(localProvince.mapData)
+        ? localProvince.mapData.find((entry) => entry && `${entry.col},${entry.row}` === key)
+        : null;
+      return {
+        sharedVersion: Number((window.campaignSystem.getState().campaign || {}).shared?.stateVersion || 0),
+        localHtml: localHex && localHex.data ? String(localHex.data.lastEncounterHtml || "") : ""
+      };
+    }, encounterKey);
+
+    if ((attempt === 2 || attempt === 5) && lastPlayer && lastPlayer.localHtml) {
+      await playerPage.evaluate(async (key) => {
+        const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
+        const hex = province && Array.isArray(province.mapData)
+          ? province.mapData.find((entry) => entry && `${entry.col},${entry.row}` === key)
+          : null;
+        const html = hex && hex.data ? String(hex.data.lastEncounterHtml || "") : "";
+        if (html && window.campaignSystem && typeof window.campaignSystem.syncProvinceEncounterResult === "function") {
+          try { await window.campaignSystem.syncProvinceEncounterResult(key, html); } catch (_err) {}
+        }
+      }, encounterKey);
+    }
+
+    if (attempt === 3 || attempt === 7) {
+      await gmPage.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_err) {}
+        }
+      });
+    }
+    await wait(260 + (attempt * 90));
+  }
+
+  throw new Error(`GM did not receive shared province encounter output: ${JSON.stringify({ encounterKey, gm: lastGm, player: lastPlayer })}`);
+}
+
 async function main() {
   const requestedUrl = String(process.env.SMOKE_URL || "").trim();
   const port = requestedUrl
@@ -296,7 +391,7 @@ async function main() {
         window.setProvinceSelectedKey(key);
       }
       for (let i = 0; i < 12; i += 1) {
-        window.rollHexEncounter(hex.col, hex.row);
+        await window.rollHexEncounter(hex.col, hex.row);
         await new Promise((resolve) => setTimeout(resolve, 120));
         const el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
         const text = el ? el.innerText : "";
@@ -325,20 +420,7 @@ async function main() {
       throw new Error(`Province encounter did not resolve correctly: ${JSON.stringify(encounter)}`);
     }
 
-    await wait(1600);
-
-    const gmEncounterHtml = await gmPage.evaluate((key) => {
-      const shared = window.campaignSystem.getSharedState();
-      const province = shared && shared.provinceMap;
-      const hex = province && Array.isArray(province.mapData)
-        ? province.mapData.find((entry) => entry && `${entry.col},${entry.row}` === key)
-        : null;
-      return hex && hex.data ? String(hex.data.lastEncounterHtml || "") : "";
-    }, encounter.key);
-
-    if (!gmEncounterHtml) {
-      throw new Error("GM did not receive shared province encounter output.");
-    }
+    await waitForSharedProvinceEncounter(gmPage, playerPage, encounter.key);
 
     const illegal = await playerPage.evaluate(async () => {
       return await window.campaignSystem.syncSharedPatch({ gmSettings: { mode: "active" } }, "smoke-illegal-gm-settings");
@@ -471,18 +553,7 @@ async function main() {
       }
     }, failureCheckId);
 
-    await gmPage.waitForFunction(
-      (checkId) => {
-        const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
-          ? window.campaignSystem.getSharedState()
-          : null;
-        const active = shared && shared.pendingChecks && shared.pendingChecks.active;
-        const check = active && active[checkId];
-        return !!(check && Array.isArray(check.submissions) && check.submissions.length >= 1);
-      },
-      failureCheckId,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+    await waitForPendingCheckSubmission(gmPage, playerPage, failureCheckId);
 
     const failureApplied = await gmPage.evaluate(async (checkId) => {
       const targets = window.campaignSystem.getRollPromptTargets();

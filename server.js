@@ -55,6 +55,7 @@ const GM_ONLY_EVENTS = {
   "campaign:rollRequest": true,
   "campaign:closeRoll": true,
   "campaign:gmApplyCheckOutcome": true,
+  "campaign:syncFactionProgress": true,
   "campaign:exportSnapshot": true,
   "campaign:importSnapshot": true
 };
@@ -88,9 +89,6 @@ const PLAYER_PATCH_ALLOWED_KEYS = {
   holding: true,
   caravan: true,
   factionWayfarerTasks: true,
-  factionNarrative: true,
-  factionRenown: true,
-  factionBases: true,
   provinceSelections: true,
   partyStash: true,
   characterInventories: true,
@@ -373,6 +371,80 @@ function mergeSharedMissionLists(existingList, incomingList) {
   (Array.isArray(existingList) ? existingList : []).forEach(addOrReplace);
   (Array.isArray(incomingList) ? incomingList : []).forEach(addOrReplace);
   return out;
+}
+
+function getFactionCompletedContractKey(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  return [
+    String(entry.factionId || ""),
+    String(entry.missionId || ""),
+    String(entry.pathway || ""),
+    String(entry.title || ""),
+    String(entry.completedAt || "")
+  ].join("|");
+}
+
+function mergeFactionCompletedContracts(existingList, incomingList) {
+  const out = [];
+  const seen = new Set();
+  const add = (entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const key = getFactionCompletedContractKey(entry);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(safeClone(entry));
+  };
+  (Array.isArray(existingList) ? existingList : []).forEach(add);
+  (Array.isArray(incomingList) ? incomingList : []).forEach(add);
+  return out;
+}
+
+function mergeFactionNarrativeProgress(existingNarrative, incomingNarrative) {
+  const existing = existingNarrative && typeof existingNarrative === "object"
+    ? safeClone(existingNarrative) || {}
+    : {};
+  const incoming = incomingNarrative && typeof incomingNarrative === "object"
+    ? safeClone(incomingNarrative) || {}
+    : {};
+  const merged = Object.assign({}, existing, incoming);
+  const existingPoints = existing.pathPoints && typeof existing.pathPoints === "object" ? existing.pathPoints : {};
+  const incomingPoints = incoming.pathPoints && typeof incoming.pathPoints === "object" ? incoming.pathPoints : {};
+  merged.pathPoints = {
+    heroic: Math.max(0, Number(existingPoints.heroic || 0), Number(incomingPoints.heroic || 0)),
+    tyrant: Math.max(0, Number(existingPoints.tyrant || 0), Number(incomingPoints.tyrant || 0)),
+    martyr: Math.max(0, Number(existingPoints.martyr || 0), Number(incomingPoints.martyr || 0))
+  };
+  merged.contracts = Object.assign(
+    {},
+    existing.contracts && typeof existing.contracts === "object" ? existing.contracts : {},
+    incoming.contracts && typeof incoming.contracts === "object" ? incoming.contracts : {}
+  );
+  merged.completedContracts = mergeFactionCompletedContracts(existing.completedContracts, incoming.completedContracts);
+  merged.choiceHistory = Array.isArray(incoming.choiceHistory)
+    ? (safeClone(incoming.choiceHistory) || [])
+    : (Array.isArray(existing.choiceHistory) ? (safeClone(existing.choiceHistory) || []) : []);
+  merged.currentAdaptiveChoices = Array.isArray(incoming.currentAdaptiveChoices)
+    ? (safeClone(incoming.currentAdaptiveChoices) || [])
+    : (Array.isArray(existing.currentAdaptiveChoices) ? (safeClone(existing.currentAdaptiveChoices) || []) : []);
+  merged.guildCampaigns = Object.assign(
+    {},
+    existing.guildCampaigns && typeof existing.guildCampaigns === "object" ? existing.guildCampaigns : {},
+    incoming.guildCampaigns && typeof incoming.guildCampaigns === "object" ? incoming.guildCampaigns : {}
+  );
+  merged.endingResult = Object.assign(
+    {},
+    existing.endingResult && typeof existing.endingResult === "object" ? existing.endingResult : {},
+    incoming.endingResult && typeof incoming.endingResult === "object" ? incoming.endingResult : {}
+  );
+  const existingFinale = existing.finale && typeof existing.finale === "object" ? existing.finale : {};
+  const incomingFinale = incoming.finale && typeof incoming.finale === "object" ? incoming.finale : {};
+  merged.finale = Object.assign({}, existingFinale, incomingFinale, {
+    unlocked: !!(existingFinale.unlocked || incomingFinale.unlocked),
+    key: String(incomingFinale.key || existingFinale.key || ""),
+    revealed: !!(incomingFinale.revealed || existingFinale.revealed),
+    unlockedAt: Math.max(0, Number(existingFinale.unlockedAt || 0), Number(incomingFinale.unlockedAt || 0))
+  });
+  return merged;
 }
 
 function normalizeSharedMissionCollections(sharedState) {
@@ -2818,6 +2890,9 @@ io.on("connection", (socket) => {
       if (Array.isArray(incoming.completedMissions)) {
         merged.completedMissions = mergeSharedMissionLists(existingState.completedMissions, incoming.completedMissions);
       }
+      if (incoming.factionNarrative && typeof incoming.factionNarrative === "object" && !Array.isArray(incoming.factionNarrative)) {
+        merged.factionNarrative = mergeFactionNarrativeProgress(existingState.factionNarrative, incoming.factionNarrative);
+      }
       if (incoming.missionTokens && typeof incoming.missionTokens === "object" && !Array.isArray(incoming.missionTokens)) {
         const existingTokens = existingState.missionTokens && typeof existingState.missionTokens === "object"
           ? safeClone(existingState.missionTokens) || {}
@@ -2844,10 +2919,10 @@ io.on("connection", (socket) => {
       deduped.sort((a, b) => Number(a && a.at || 0) - Number(b && b.at || 0));
       merged.economyLedger = deduped.slice(-220);
     }
-    if (Array.isArray(merged.partyStash)) {
-      merged.partyStash = merged.partyStash.slice();
-    } else if (Array.isArray(existingState.partyStash)) {
+    if (Array.isArray(existingState.partyStash)) {
       merged.partyStash = existingState.partyStash.slice();
+    } else if (Array.isArray(merged.partyStash)) {
+      merged.partyStash = merged.partyStash.slice();
     }
     if (typeof merged.mentalStress === "number") {
       merged.mentalStress = Math.max(0, Number(merged.mentalStress || 0));
@@ -2891,6 +2966,124 @@ io.on("connection", (socket) => {
     emitCampaignState(campaign.code);
     if (typeof ack === "function") {
       ack({ ok: true, stateVersion: campaign.shared.stateVersion, conflicts, authoritativeAt: campaign.updatedAt });
+    }
+  });
+
+  socket.on("campaign:syncFactionProgress", (payload, ack) => {
+    const campaign = getCampaignBySocket(socket);
+    if (!campaign) {
+      if (typeof ack === "function") ack({ ok: false, error: "Not connected to a campaign." });
+      return;
+    }
+
+    const token = socket.data.token || "";
+    if (!requireGmAction(campaign, token, "campaign:syncFactionProgress", ack)) return;
+
+    const incoming = payload && payload.state && typeof payload.state === "object"
+      ? payload.state
+      : null;
+    if (!incoming) {
+      if (typeof ack === "function") ack({ ok: false, error: "Invalid faction progress payload." });
+      return;
+    }
+
+    const sharedState = campaign.shared && campaign.shared.state && typeof campaign.shared.state === "object"
+      ? Object.assign({}, campaign.shared.state)
+      : {};
+
+    if (Array.isArray(incoming.activeMissions)) {
+      sharedState.activeMissions = mergeSharedMissionLists(sharedState.activeMissions, incoming.activeMissions);
+    }
+    if (Array.isArray(incoming.completedMissions)) {
+      sharedState.completedMissions = mergeSharedMissionLists(sharedState.completedMissions, incoming.completedMissions);
+    }
+    if (incoming.factionNarrative && typeof incoming.factionNarrative === "object" && !Array.isArray(incoming.factionNarrative)) {
+      sharedState.factionNarrative = mergeFactionNarrativeProgress(sharedState.factionNarrative, incoming.factionNarrative);
+    }
+    if (incoming.factionRenown && typeof incoming.factionRenown === "object" && !Array.isArray(incoming.factionRenown)) {
+      sharedState.factionRenown = safeClone(incoming.factionRenown) || {};
+    }
+    if (incoming.factionBases && typeof incoming.factionBases === "object" && !Array.isArray(incoming.factionBases)) {
+      sharedState.factionBases = safeClone(incoming.factionBases) || {};
+    }
+    if (Array.isArray(incoming.factionWayfarerTasks)) {
+      sharedState.factionWayfarerTasks = safeClone(incoming.factionWayfarerTasks) || [];
+    }
+
+    normalizeSharedMissionCollections(sharedState);
+    campaign.shared.state = sharedState;
+    campaign.shared.stateVersion = Math.max(0, Number(campaign.shared.stateVersion || 0)) + 1;
+    campaign.updatedAt = Date.now();
+    schedulePersist();
+
+    const member = campaign.participants.get(token) || null;
+    addLog(
+      campaign,
+      "system",
+      `${member ? member.name : "GM"} synced faction progress.`,
+      { token, action: "faction-progress-sync" }
+    );
+
+    emitCampaignState(campaign.code, { immediate: true });
+    if (typeof ack === "function") {
+      ack({ ok: true, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
+    }
+  });
+
+  socket.on("campaign:resolveEnemyAction", (payload, ack) => {
+    const campaign = getCampaignBySocket(socket);
+    if (!campaign) {
+      if (typeof ack === "function") ack({ ok: false, error: "Not connected to a campaign." });
+      return;
+    }
+
+    const token = String(socket.data.token || "");
+    const member = token ? campaign.participants.get(token) : null;
+    const sharedState = campaign.shared && campaign.shared.state && typeof campaign.shared.state === "object"
+      ? campaign.shared.state
+      : {};
+    const currentCombat = sharedState.campaignCombat && typeof sharedState.campaignCombat === "object"
+      ? safeClone(sharedState.campaignCombat) || {}
+      : {};
+    const nextCombat = mergePlayerCampaignCombat(
+      currentCombat,
+      {
+        enemyActionRequest: {
+          id: String(payload && payload.id || "").trim(),
+          resolutionSummary: String(payload && payload.resolutionSummary || "").trim().slice(0, 240)
+        }
+      },
+      token,
+      member && member.name
+    );
+
+    if (!nextCombat) {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Enemy action could not be resolved from this seat." });
+      }
+      return;
+    }
+
+    sharedState.campaignCombat = nextCombat;
+    campaign.shared.state = sharedState;
+    campaign.shared.stateVersion = Math.max(0, Number(campaign.shared.stateVersion || 0)) + 1;
+    campaign.updatedAt = Date.now();
+    schedulePersist();
+
+    addLog(
+      campaign,
+      "system",
+      `${member ? member.name : "Wayfarer"} resolved an enemy action prompt.`,
+      {
+        token,
+        action: "enemy-action-resolve",
+        enemyActionId: String(payload && payload.id || "").trim()
+      }
+    );
+
+    emitCampaignState(campaign.code, { immediate: true });
+    if (typeof ack === "function") {
+      ack({ ok: true, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
     }
   });
 
@@ -2955,7 +3148,7 @@ io.on("connection", (socket) => {
       action: "province-encounter-sync"
     });
 
-    emitCampaignState(campaign.code);
+    emitCampaignState(campaign.code, { immediate: true });
     if (typeof ack === "function") {
       ack({ ok: true, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
     }
