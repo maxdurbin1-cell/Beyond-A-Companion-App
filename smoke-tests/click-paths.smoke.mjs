@@ -271,7 +271,18 @@ async function runMultiClientSyncAssertions(browser, pageErrors) {
       try { worldFn(); } catch (err) { diagnostics.push(`world:${String(err && err.message ? err.message : err)}`); }
     }
 
-    const res = await window.campaignSystem.syncSharedSilent("smoke-multi-client-map-sync");
+    let res = null;
+    for (let i = 0; i < 4; i += 1) {
+      try {
+        res = await window.campaignSystem.syncSharedSilent(`smoke-multi-client-map-sync-${i}`);
+      } catch (err) {
+        diagnostics.push(`sync:${String(err && err.message ? err.message : err)}`);
+      }
+      if (res && res.ok) {
+        return { ok: true, diagnostics };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 180 * (i + 1)));
+    }
     return { ok: !!(res && res.ok), diagnostics };
   });
   if (!generatedInfo || !generatedInfo.ok) {

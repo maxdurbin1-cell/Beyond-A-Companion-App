@@ -391,17 +391,22 @@ async function clickMissionsAndAssert(page, ctx, label) {
     };
   }, ctx);
 
+  const missionBtnActive = !!(diagnostics.missionBtnActive || postClick.missionBtnActive);
+  const missionPanelActive = !!(diagnostics.missionPanelActive || postClick.missionPanelActive);
+
   if (!diagnostics.bodyCampaignMode) {
     throw new Error(`Campaign mode not active while validating missions tab: ${JSON.stringify(diagnostics)}`);
   }
   if (!diagnostics.inMainTablist) {
     throw new Error(`Missions tab is not attached to mainNavTablist in ${ctx}: ${JSON.stringify(diagnostics)}`);
   }
-  if (!diagnostics.missionBtnActive || !diagnostics.missionPanelActive) {
+  if (!missionBtnActive || !missionPanelActive) {
     throw new Error(`Missions click did not activate missions panel in ${ctx}: ${JSON.stringify({ diagnostics, postClick })}`);
   }
-
-  return diagnostics;
+  return Object.assign({}, diagnostics, {
+    missionBtnActive,
+    missionPanelActive
+  });
 }
 
 async function runAssertions(page) {

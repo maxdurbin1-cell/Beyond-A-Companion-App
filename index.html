@@ -2307,14 +2307,34 @@ const stepDown=n=>{const i=DICE.indexOf(n);return i>0?DICE[i-1]:n;};
 function explodingRoll(n,meta){
   let t=0,r,c=0;
   const baseMeta=meta&&typeof meta==='object'?meta:{};
+  const die=Math.max(1,parseInt(n,10)||1);
   const explodeAt=(typeof getActionRollExplosionThreshold==='function')
-    ? getActionRollExplosionThreshold(n,baseMeta)
-    : Math.max(1,parseInt(n,10)||1);
+    ? getActionRollExplosionThreshold(die,baseMeta)
+    : die;
+  const manualKind=resolveManualRollKind(baseMeta);
+  if(isManualRollModeEnabled()&&manualKind&&typeof window.consumeVisibleManualRollValue==='function'){
+    const manualTotal=window.consumeVisibleManualRollValue(manualKind,die,baseMeta||null);
+    const safeTotal=manualTotal===null?1:Math.max(1,Number(manualTotal)||1);
+    const manualOut={total:safeTotal,exploded:safeTotal>=explodeAt,threshold:explodeAt,manual:true};
+    queueDiceRollVisual(die,safeTotal,Object.assign({},baseMeta,{manual:true,exploded:manualOut.exploded}));
+    try{
+      if(!window.__btlExplodingRollLog||!Array.isArray(window.__btlExplodingRollLog))window.__btlExplodingRollLog=[];
+      window.__btlExplodingRollLog.push({
+        at:Date.now(),
+        die:die,
+        total:manualOut.total,
+        exploded:manualOut.exploded,
+        meta:baseMeta
+      });
+      if(window.__btlExplodingRollLog.length>48)window.__btlExplodingRollLog.splice(0,window.__btlExplodingRollLog.length-48);
+    }catch(_err){}
+    return manualOut;
+  }
   do{
     const m=Object.assign({},baseMeta);
     if(!m.label)m.label='Explode';
     m.exploded=c>0;
-    r=roll(n,m);
+    r=roll(die,m);
     t+=r;
     c++;
   }while(r>=explodeAt&&c<8);
@@ -3715,7 +3735,7 @@ function doHometownDowntimeRest(key,scope){
   const sk=String(scope||'province').toLowerCase();
   const stats=['lead','control','mind','body','spirit','defend','strike','shoot'];
   const html=''
-    +'<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">Choose your downtime approach (Action Die vs Dread d6):</div>'
+    +'<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">Choose which Soul Array stat you want to use for this downtime check (vs Dread d6).</div>'
     +'<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;">'
     +stats.map(function(stat){
       var label=stat.charAt(0).toUpperCase()+stat.slice(1);
@@ -3774,7 +3794,7 @@ function rollHometownRandomEvent(key,scope){
   const sk=String(scope||'province').toLowerCase();
   const stats=['lead','control','mind','body','spirit','defend','strike','shoot'];
   const html=''
-    +'<div style="font-size:.82rem;color:var(--text2);line-height:1.6;"><strong>'+escapeHtmlLite(ev.name)+'</strong><br>Choose your approach (Action Die vs Dread d6):</div>'
+    +'<div style="font-size:.82rem;color:var(--text2);line-height:1.6;"><strong>'+escapeHtmlLite(ev.name)+'</strong><br>Choose which Soul Array stat fits your approach (vs Dread d6).</div>'
     +'<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.35rem;">'
     +stats.map(function(stat){
       var label=stat.charAt(0).toUpperCase()+stat.slice(1);
@@ -16974,6 +16994,14 @@ function buildManualRollModifierLines(statKey,actionDie,cfg){
     var packItems=S.backpack.filter(function(item){return String(item||'').trim();}).slice(0,8);
     if(packItems.length)lines.push('Backpack items available: '+packItems.join(' | ')+'.');
   }
+  if(key&&typeof getInventoryRollBonusEntriesForStat==='function'){
+    var relevantEntries=getInventoryRollBonusEntriesForStat(key).slice(0,4);
+    relevantEntries.forEach(function(entry){
+      var summary=String(entry&&entry.summary||'').trim();
+      var itemText=String(entry&&entry.itemText||'').trim();
+      if(summary&&itemText)lines.push('Relevant item bonus: '+itemText+' -> '+summary+'.');
+    });
+  }
   var condFx=getManualRollConditionEffects(key);
   var baseDie=(S&&S.stats&&typeof S.stats==='object'&&Number(S.stats[key])>0)?Number(S.stats[key]):die;
   var effectiveDie=(typeof getEffectiveDie==='function')?Number(getEffectiveDie(key)||die):die;
@@ -22372,13 +22400,13 @@ function buildProvinceHoldingDowntimePanel(hex){
   const stats=['lead','mind','body','spirit','control','strike','shoot','defend'];
   return `<div class="npc-block" style="margin-top:.4rem;border-color:rgba(46,196,182,.35);background:rgba(46,196,182,.06);">
     <div class="nb-label" style="color:var(--teal);">🏘 Province Holding Downtime</div>
-    <div style="font-size:.78rem;color:var(--text2);line-height:1.5;">Run campaign downtime at this holding: talk, task, or explore, then resolve with a chosen Action Die.</div>
+    <div style="font-size:.78rem;color:var(--text2);line-height:1.5;">Run campaign downtime at this holding: talk, task, or explore, then resolve with a chosen Soul Array stat.</div>
     <div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;">
       <button class="btn btn-xs btn-teal" onclick="rollProvinceHoldingDowntime(${hex.col},${hex.row},'talk')">💬 Talk To People</button>
       <button class="btn btn-xs btn-primary" onclick="rollProvinceHoldingDowntime(${hex.col},${hex.row},'task')">🧾 Run A Task</button>
       <button class="btn btn-xs btn-warn" onclick="rollProvinceHoldingDowntime(${hex.col},${hex.row},'explore')">🧭 Explore Province</button>
     </div>
-    ${pending?`<div style="margin-top:.35rem;padding:.35rem .45rem;border:1px solid var(--border2);background:var(--surface);"><div style="font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.08em;color:var(--gold2);">${pending.name}</div><div style="font-size:.76rem;color:var(--muted2);margin-top:.15rem;">Choose Action Die vs DD${pending.dd}</div><div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.28rem;">${stats.map(function(key){return '<button class="btn btn-xs btn-teal" onclick="resolveProvinceHoldingDowntime('+hex.col+','+hex.row+',\''+key+'\')">'+key.charAt(0).toUpperCase()+key.slice(1)+'</button>';}).join('')}</div></div>`:''}
+    ${pending?`<div style="margin-top:.35rem;padding:.35rem .45rem;border:1px solid var(--border2);background:var(--surface);"><div style="font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.08em;color:var(--gold2);">${pending.name}</div><div style="font-size:.76rem;color:var(--muted2);margin-top:.15rem;">Choose the Soul Array stat to roll vs DD${pending.dd}</div><div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.28rem;">${stats.map(function(key){return '<button class="btn btn-xs btn-teal" onclick="resolveProvinceHoldingDowntime('+hex.col+','+hex.row+',\''+key+'\')">'+key.charAt(0).toUpperCase()+key.slice(1)+'</button>';}).join('')}</div></div>`:''}
     ${result?`<div style="margin-top:.35rem;padding:.35rem .45rem;border:1px solid ${result.success?'rgba(76,175,116,.35)':'rgba(201,64,64,.35)'};background:${result.success?'rgba(76,175,116,.08)':'rgba(201,64,64,.08)'};"><div style="font-size:.76rem;color:var(--text2);">${result.check}</div><div style="font-size:.76rem;color:var(--gold2);margin-top:.14rem;">${result.text}</div></div>`:''}
   </div>`;
 }
@@ -28905,7 +28933,7 @@ function runWhenIdle(fn, timeoutMs){
   function buildProvinceDepthsSegmentActions(col,row,idx,segment,floorState){
     if(!segment)return '';
     const dd=floorState&&floorState.die?floorState.die:4;
-    if(!segment.discovered)return '<div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="openProvinceDepthsActionPrompt('+col+','+row+','+idx+')">⚄ Choose Action Die (DD'+dd+')</button></div>';
+    if(!segment.discovered)return '<div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="openProvinceDepthsActionPrompt('+col+','+row+','+idx+')">⚄ Choose Roll Stat (DD'+dd+')</button></div>';
     if(segment.cleared)return '<div style="font-size:.72rem;color:var(--green2);margin-top:.25rem;">✓ Cleared</div>';
     if(segment.pendingCombat){
       return '<div style="margin-top:.3rem;display:flex;gap:.25rem;flex-wrap:wrap;">'
@@ -28915,7 +28943,7 @@ function runWhenIdle(fn, timeoutMs){
         +'</div>';
     }
     if(segment.kind==='Puzzle Door')return '<div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="resolveProvinceDepthsSegment('+col+','+row+','+idx+')">🧩 Solve Seal</button></div>';
-    return '<div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="openProvinceDepthsActionPrompt('+col+','+row+','+idx+')">⚄ Choose Action Die (DD'+dd+')</button></div>';
+    return '<div style="margin-top:.3rem;"><button class="btn btn-xs btn-teal" onclick="openProvinceDepthsActionPrompt('+col+','+row+','+idx+')">⚄ Choose Roll Stat (DD'+dd+')</button></div>';
   }
 
   window.openProvinceDepthsActionPrompt = function(col,row,idx){
@@ -28936,8 +28964,8 @@ function runWhenIdle(fn, timeoutMs){
       return '<button class="btn btn-xs btn-teal" onclick="resolveProvinceDepthsSegment('+col+','+row+','+idx+',\''+stat+'\')">'+label+'</button>';
     }).join('');
     const html=''
-      +'<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">Choose the Action Die from your Soul Array for this segment check.</div>'
-      +'<div style="font-size:.76rem;color:var(--muted2);margin-top:.18rem;">'+(segment.kind||'Segment')+' check: selected Action Die vs Dread d'+dd+'.</div>'
+      +'<div style="font-size:.82rem;color:var(--text2);line-height:1.6;">Choose which Soul Array stat fits this segment check.</div>'
+      +'<div style="font-size:.76rem;color:var(--muted2);margin-top:.18rem;">'+(segment.kind||'Segment')+' check: chosen stat vs Dread d'+dd+'.</div>'
       +'<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.34rem;">'+buttons+'</div>';
     if(typeof openModal==='function')openModal('Depths Check Approach',html);
   };
@@ -29732,7 +29760,6 @@ function runWhenIdle(fn, timeoutMs){
     const t=String(text||'');
     const key=String(statKey||'lead').toLowerCase();
     let m;
-    const low=t.toLowerCase();
     const shortLabel=t.split('(')[0].trim();
     const flatRx=/\+(\d+)\s*(?:to\s+|on\s+|for\s+)?([A-Za-z/]+)/ig;
     while((m=flatRx.exec(t))){
@@ -29767,18 +29794,6 @@ function runWhenIdle(fn, timeoutMs){
     if(Array.isArray(TOOLKIT_STATS[itemName])&&TOOLKIT_STATS[itemName].indexOf(key)>=0){
       bonus.addValor+=1;
       bonus.notes.push('+V.D. ('+itemName+')');
-    }
-    if(key==='lead'&&low.indexOf('compass')>=0){
-      bonus.addValor+=1;
-      bonus.notes.push('+V.D. ('+shortLabel+')');
-    }
-    if(key==='mind'&&low.indexOf('spyglass')>=0){
-      bonus.addValor+=1;
-      bonus.notes.push('+V.D. ('+shortLabel+')');
-    }
-    if(key==='control'&&(low.indexOf('lockpick')>=0||low.indexOf('e-picks')>=0||low.indexOf('scavenger\'s pouch')>=0)){
-      bonus.addValor+=1;
-      bonus.notes.push('+V.D. ('+shortLabel+')');
     }
     return bonus;
   }

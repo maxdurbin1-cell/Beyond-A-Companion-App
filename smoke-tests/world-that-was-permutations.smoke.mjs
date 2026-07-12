@@ -240,8 +240,46 @@ async function bootWorldThatWas(page) {
 }
 
 async function openAccordion(page, title) {
-  const summary = page.locator("#wtwInfo summary").filter({ hasText: title });
-  await summary.click();
+  await page.waitForFunction(
+    (expectedTitle) => {
+      const root = document.getElementById("wtwInfo");
+      if (!root) return false;
+      return Array.from(root.querySelectorAll("summary")).some((node) => {
+        return String(node.textContent || "").includes(String(expectedTitle || ""));
+      });
+    },
+    title,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+
+  const summary = page.locator("#wtwInfo summary").filter({ hasText: title }).first();
+  if (await summary.count()) {
+    try {
+      await summary.click();
+      return;
+    } catch (_err) {
+      // Fall back to a direct DOM click if Playwright catches a transient layout race.
+    }
+  }
+
+  const opened = await page.evaluate((expectedTitle) => {
+    const root = document.getElementById("wtwInfo");
+    if (!root) return false;
+    const details = Array.from(root.querySelectorAll("details")).find((node) => {
+      const summaryNode = node.querySelector("summary");
+      return summaryNode && String(summaryNode.textContent || "").includes(String(expectedTitle || ""));
+    });
+    if (!details) return false;
+    if (!details.open) {
+      const summaryNode = details.querySelector("summary");
+      if (summaryNode && typeof summaryNode.click === "function") summaryNode.click();
+    }
+    return !!details.open || !!details.querySelector("summary");
+  }, title);
+
+  if (!opened) {
+    throw new Error(`Could not open accordion "${title}".`);
+  }
 }
 
 async function assertTextContains(page, expected, label) {

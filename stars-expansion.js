@@ -11638,7 +11638,7 @@ function resolveGalaxyPerilTraversal() {
       failedBy: Math.max(1, Number(check.delta || 1)),
       actionDie: perilActionDie,
       dreadDie: Math.max(4, Number(peril.dd) || 6),
-      actionLabel: 'Traversal Die'
+      actionLabel: 'Traversal'
     });
   }
   if (out) {
@@ -12059,7 +12059,7 @@ function resolveSpaceEncounterOption(optionId) {
         failedBy,
         actionDie,
         dreadDie,
-        actionLabel: String(primary).charAt(0).toUpperCase() + String(primary).slice(1) + ' Die',
+        actionLabel: String(primary).charAt(0).toUpperCase() + String(primary).slice(1),
         onConvert: function () {
           let rewardText = '';
           try {
@@ -14221,7 +14221,7 @@ function resolvePlanetCelebrationEvent(statKey) {
       failedBy: failedBy,
       actionDie: Math.max(4, Number(die) || 4),
       dreadDie: Math.max(4, Number(evt.dd) || 6),
-      actionLabel: key.toUpperCase() + ' Die'
+      actionLabel: key.charAt(0).toUpperCase() + key.slice(1)
     });
   }
   const out = document.getElementById('planetCelebrationResult');
@@ -14241,7 +14241,7 @@ function rollPlanetCelebrationEvent() {
   if (!out) return;
   out.innerHTML = '<div style="padding:.3rem .4rem;border:1px solid var(--border2);background:var(--surface);">'
     + '<div style="font-family:Cinzel,serif;font-size:.62rem;letter-spacing:.08em;color:var(--gold2);">'+evt.name+'</div>'
-    + '<div style="font-size:.74rem;color:var(--muted2);margin-top:.15rem;">Choose Action Die vs DD'+evt.dd+'</div>'
+    + '<div style="font-size:.74rem;color:var(--muted2);margin-top:.15rem;">Choose which Soul Array stat to roll vs DD'+evt.dd+'</div>'
     + '<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.25rem;">'
     + stats.map(function(key){ return '<button class="btn btn-xs btn-teal" onclick="resolvePlanetCelebrationEvent(\''+key+'\')">'+key.charAt(0).toUpperCase()+key.slice(1)+'</button>'; }).join('')
     + '</div></div>';
@@ -14575,8 +14575,17 @@ function buildPlanetNarrativeLines(state, selected) {
 }
 
 function isGlobalManualRollMode() {
-  if (!window.settingsSystem || typeof window.settingsSystem.isManualRollMode !== 'function') return false;
-  return !!window.settingsSystem.isManualRollMode();
+  if (typeof window.isManualRollModeEnabled === 'function') {
+    try {
+      if (window.isManualRollModeEnabled()) return true;
+    } catch (_err) {}
+  }
+  if (window.settingsSystem && typeof window.settingsSystem.isManualRollMode === 'function') {
+    try {
+      if (window.settingsSystem.isManualRollMode()) return true;
+    } catch (_err) {}
+  }
+  return !!(window.Settings && window.Settings.manualRollMode);
 }
 
 function stepGlobalManualDreadDie(current) {
@@ -14644,6 +14653,7 @@ function openGlobalManualActionDreadPrompt(config) {
     statLabel,
     actionDie,
     dreadDie,
+    context,
     resolver: (typeof cfg.onResolve === 'function') ? cfg.onResolve : null,
     onCancel: (typeof cfg.onCancel === 'function') ? cfg.onCancel : null
   };
@@ -14702,7 +14712,7 @@ function resolveGlobalManualActionCheck(mode, pushLuck) {
   const actionValue = (window.BTLRules && typeof window.BTLRules.readManualTotal === 'function') ? window.BTLRules.readManualTotal(actionInput, 1) : parseInt(actionInput && actionInput.value, 10);
   const dreadValue = (window.BTLRules && typeof window.BTLRules.readManualTotal === 'function') ? window.BTLRules.readManualTotal(dreadInput, 1) : parseInt(dreadInput && dreadInput.value, 10);
   if (!Number.isFinite(actionValue) || actionValue < 1 || !Number.isFinite(dreadValue) || dreadValue < 1) {
-    if (typeof showNotif === 'function') showNotif('Enter valid manual Action and Dread totals first.', 'warn');
+    if (typeof showNotif === 'function') showNotif('Enter valid manual ' + String((pending && pending.statLabel) || 'Action') + ' and Dread totals first.', 'warn');
     return;
   }
   const wantsPush = !!pushLuck;
@@ -14981,7 +14991,7 @@ function observePlanetAdjacentDirection(directionKey) {
         failedBy: failedBy,
         actionDie: Math.max(4, Number(leadDie) || 4),
         dreadDie: 6,
-        actionLabel: 'Lead Die',
+        actionLabel: 'Lead',
         onConvert: function () {
           selected.note = `[Observe Adjacent] Lead vs DD6 (${dir.label}): teamwork converted success.`;
           if (typeof renderPlanetExplorationPanel === 'function') renderPlanetExplorationPanel();
@@ -16965,7 +16975,7 @@ function rollYessodObserveAdjacent() {
       failedBy: failedBy,
       actionDie: Math.max(4, Number(leadDie) || 4),
       dreadDie: 6,
-      actionLabel: 'Lead Die',
+      actionLabel: 'Lead',
       onConvert: function () {
         state.lastEncounter = 'Observation converted by Teamwork: adjacent routes and markers logged.';
         if (out) out.innerHTML = `<div class="venture-result"><div class="vr-type">Observation</div>${state.lastEncounter}</div>`;
@@ -19344,7 +19354,7 @@ function resolveGalaxyDowntimeAction(actionId) {
       failedBy: failedBy,
       actionDie: Math.max(4, Number(die) || 4),
       dreadDie: actionId === 'salvage' ? 8 : 6,
-      actionLabel: statKey.toUpperCase() + ' Die'
+      actionLabel: statKey.toUpperCase()
     });
     actionResult = `${action.check}: d${die}=${actionRoll.total} vs DD${actionId === 'salvage' ? 8 : 6}=${dreadRoll.total}. ${actionResult}`;
   }
@@ -19727,7 +19737,7 @@ function performGalaxyObservation(directionKey) {
         failedBy: Math.max(1, dreadTotal - actionTotal),
         actionDie: Math.max(4, Number(mindDie) || 4),
         dreadDie: 6,
-        actionLabel: 'Mind Die',
+        actionLabel: 'Mind',
         onConvert: function () {
           if (target) {
             if (typeof window.revealMapFogHex === 'function') window.revealMapFogHex('galaxy', String(target.hex.id));
@@ -20516,7 +20526,7 @@ function runSystemAnalysisCheck() {
         failedBy: failedBy,
         actionDie: Math.max(4, Number(die) || 4),
         dreadDie: 8,
-        actionLabel: 'Lead Die'
+        actionLabel: 'Lead'
       });
     }
     updateStarSystemReadouts();

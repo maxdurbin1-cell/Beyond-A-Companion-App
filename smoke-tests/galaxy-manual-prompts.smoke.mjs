@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import process from 'node:process';
+
 import { chromium } from 'playwright';
 
 const BASE_URL = process.env.SMOKE_URL || 'http://127.0.0.1:3000';
@@ -16,7 +18,11 @@ async function waitForServer(url, timeoutMs = 20000) {
 
 let server, browser;
 (async () => {
-  server = spawn('node', ['server.js'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PORT: '3000' } });
+  server = spawn('node', ['server.js'], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: process.env.PORT || '3000' }
+  });
   server.stdout.on('data', b => process.stdout.write(`[server] ${String(b)}`));
   server.stderr.on('data', b => process.stderr.write(`[server:err] ${String(b)}`));
   try {

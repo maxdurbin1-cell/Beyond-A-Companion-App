@@ -3899,6 +3899,41 @@ function rollCredits() {
 
 window.selectedDice = window.selectedDice || { action: 4, dread: 6 };
 
+function getManualActionLabelFromStatKey(statKey) {
+  var key = String(statKey || "").trim().toLowerCase();
+  if (!key || key === "custom") return "Action";
+  var labels = (typeof STAT_DIE_LABELS === "object" && STAT_DIE_LABELS) ? STAT_DIE_LABELS : {
+    body: "Body", strike: "Strike", shoot: "Shoot", mind: "Mind",
+    spirit: "Spirit", defend: "Defend", control: "Control", lead: "Lead", valor: "Valor"
+  };
+  return labels[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+}
+
+function getSelectedManualActionContext(meta) {
+  var payload = meta && typeof meta === "object" ? meta : {};
+  var selected = window.selectedDice && typeof window.selectedDice === "object" ? window.selectedDice : {};
+  var statKey = String(payload.statKey || payload.actionStatKey || selected.actionStatKey || "").trim().toLowerCase();
+  var label = String(payload.statLabel || payload.actionLabel || selected.actionLabel || "").trim();
+  if (!label) {
+    var sel = document.getElementById("actionStatSel");
+    var selValue = sel ? String(sel.value || "").trim().toLowerCase() : "";
+    if (selValue && selValue !== "custom") {
+      statKey = statKey || selValue;
+      label = getManualActionLabelFromStatKey(selValue);
+    }
+  }
+  if (!label && statKey) label = getManualActionLabelFromStatKey(statKey);
+  if (!label) label = "Action";
+  return { key: statKey, label: label };
+}
+
+function formatManualDieLabel(kind, die, meta) {
+  var safeDie = Math.max(1, Number(die || 1));
+  if (kind === "dread") return "Dread d" + safeDie;
+  var actionCtx = getSelectedManualActionContext(meta);
+  return actionCtx.label + " d" + safeDie;
+}
+
 function getManualPanelEquipmentSummary() {
   if (typeof S === 'undefined' || !S) return [];
   var equip = S.equipment && typeof S.equipment === 'object' ? S.equipment : {};
@@ -3934,8 +3969,9 @@ function syncManualCheckPanel() {
   var dreadInput = document.getElementById("manualDreadValue");
   var prompt = document.getElementById("manualCheckPrompt");
   var modifiersHost = document.getElementById("manualCheckModifiers");
+  var actionContext = getSelectedManualActionContext();
 
-  if (actionLabel) actionLabel.textContent = "Action d" + actionDie;
+  if (actionLabel) actionLabel.textContent = formatManualDieLabel("action", actionDie, actionContext);
   if (dreadLabel) dreadLabel.textContent = "Dread d" + dreadDie;
   if (actionInput) {
     actionInput.type = "text";
@@ -3955,8 +3991,8 @@ function syncManualCheckPanel() {
           + equipLines.map(function (line) { return '<div>• ' + String(line) + '</div>'; }).join('')
           + '</div>')
         : '';
-      prompt.innerHTML = 'Reminder: Dice explode when you roll max. Example: d6 -> 6, roll again and add.'
-        + '<div style="margin-top:.16rem;"><strong>Roll:</strong> Action d' + actionDie + ' vs Dread d' + dreadDie + '</div>'
+      prompt.innerHTML = 'Reminder: Dice explode when you roll max. Enter the final total, including any rerolls (example: 8+7).'
+        + '<div style="margin-top:.16rem;"><strong>Roll:</strong> ' + formatManualDieLabel("action", actionDie, actionContext) + ' vs Dread d' + dreadDie + '</div>'
         + '<div style="margin-top:.16rem;font-size:.7rem;color:var(--muted2);">Enter final totals, then use Compare for math or override with Success/Failure.</div>'
         + summaryHtml;
     } else {
@@ -3969,12 +4005,11 @@ function syncManualCheckPanel() {
       modifiersHost.style.display = "none";
       modifiersHost.innerHTML = "";
     } else {
-      var statHint = actionDie === Number((S && S.stats && S.stats.defend) || -1) ? 'defend' : 'valor';
-      var lines = (typeof window.buildManualRollModifierLines === 'function')
-        ? (window.buildManualRollModifierLines(statHint, actionDie, {
+      var lines = actionContext.key && typeof window.buildManualRollModifierLines === 'function'
+        ? (window.buildManualRollModifierLines(actionContext.key, actionDie, {
           extraLines: ['Include armor, flavor, affix, augmentation, spell, and item effects before entering totals.']
         }) || [])
-        : [];
+        : ['Select a Soul Array stat above to load stat-specific modifiers.'];
       if (lines.length) {
         modifiersHost.style.display = "block";
         modifiersHost.innerHTML = '<div style="font-size:.69rem;color:var(--teal);margin-bottom:.12rem;"><strong>Active Modifiers</strong></div>'
@@ -4005,19 +4040,20 @@ function parseManualTotalExpressionSafe(rawValue) {
 
 function readManualCheckValue(kind, consume) {
   var die = Math.max(1, Number(window.selectedDice[kind] || (kind === "action" ? 4 : 6)));
+  var dieLabel = formatManualDieLabel(kind, die);
   var input = document.getElementById(kind === "action" ? "manualActionValue" : "manualDreadValue");
   if (!input) {
     return null;
   }
   var raw = String(input.value || "").trim();
   if (!raw) {
-    showNotif("Enter a " + (kind === "action" ? "Action" : "Dread") + " d" + die + " result first.", "warn");
+    showNotif("Enter a " + dieLabel + " result first.", "warn");
     input.focus();
     return null;
   }
   var value = parseManualTotalExpressionSafe(raw);
   if (!Number.isFinite(value) || value < 1) {
-    showNotif((kind === "action" ? "Action" : "Dread") + " result must be a valid total (example: 7+3+1+1).", "warn");
+    showNotif(dieLabel + " result must be a valid total (example: 7+3+1+1).", "warn");
     input.focus();
     return null;
   }
@@ -4040,13 +4076,12 @@ function consumeVisibleManualRollValue(kind, sides, meta) {
   var raw = String(input.value || "").trim();
   if (!raw) {
     var promptLabel = "";
-    if (meta && typeof meta === "object") {
-      promptLabel = String(meta.label || "").trim();
-    }
+    if (meta && typeof meta === "object") promptLabel = String(meta.label || "").trim();
     var tmw = (typeof S !== "undefined" && S) ? Math.max(0, Number(S.tmw || 0)) : 0;
-    var dieLabel = (kind === "action" ? "Action" : "Dread") + " d" + die;
+    var dieLabel = formatManualDieLabel(kind, die, meta);
     var promptText = "Manual Roll Mode\n"
-      + "Roll " + dieLabel + " now and enter the result (1-" + die + ").";
+      + "Roll " + dieLabel + " now and enter the final total.";
+    promptText += "\nIf the die explodes, add each reroll to the same total (example: 8+7).";
     if (promptLabel) {
       promptText += "\nCheck: " + promptLabel;
     }
@@ -4067,7 +4102,7 @@ function consumeVisibleManualRollValue(kind, sides, meta) {
   var value = parseManualTotalExpressionSafe(raw);
   // Allow exploded physical totals in manual mode (example: 13 on d12).
   if (!Number.isFinite(value) || value < 1) {
-    showNotif((kind === "action" ? "Action" : "Dread") + " result must be a valid total (example: 8+7).", "warn");
+    showNotif(formatManualDieLabel(kind, die, meta) + " result must be a valid total (example: 8+7).", "warn");
     input.focus();
     return null;
   }
@@ -4308,6 +4343,9 @@ function selectDie(kind, value) {
   var safeKind = kind === "dread" ? "dread" : "action";
   var safeValue = Math.max(1, Number.parseInt(value, 10) || (safeKind === "action" ? 4 : 6));
   window.selectedDice[safeKind] = safeValue;
+  if (safeKind === "action" && !window.selectedDice.actionLabel) {
+    window.selectedDice.actionLabel = "Action";
+  }
   const containerId = safeKind === "action" ? "actionDiceOpts" : "dreadDiceOpts";
   const selectedClass = safeKind === "action" ? "sel" : "dread-sel";
   const container = document.getElementById(containerId);
@@ -4332,21 +4370,33 @@ var STAT_DIE_LABELS = {
 function selectStatDie(statKey) {
   var optsEl = document.getElementById('actionDiceOpts');
   var labelEl = document.getElementById('actionDieLabel');
+  if (!window.selectedDice || typeof window.selectedDice !== "object") {
+    window.selectedDice = { action: 4, dread: 6 };
+  }
   if (statKey === 'custom') {
+    window.selectedDice.actionStatKey = '';
+    window.selectedDice.actionLabel = 'Action';
     if (optsEl) optsEl.style.display = '';
     if (labelEl) labelEl.textContent = 'Choose a die below';
+    syncManualCheckPanel();
     return;
   }
   if (!statKey) {
+    window.selectedDice.actionStatKey = '';
+    window.selectedDice.actionLabel = 'Action';
     if (optsEl) optsEl.style.display = 'none';
     if (labelEl) labelEl.textContent = '';
+    syncManualCheckPanel();
     return;
   }
   var dieSize = (S && S.stats && S.stats[statKey]) ? Number(S.stats[statKey]) : 4;
   selectDie('action', dieSize);
   if (optsEl) optsEl.style.display = 'none';
   var statLabel = STAT_DIE_LABELS[statKey] || statKey;
+  window.selectedDice.actionStatKey = statKey;
+  window.selectedDice.actionLabel = statLabel;
   if (labelEl) labelEl.textContent = statLabel + ' \u2192 d' + dieSize;
+  syncManualCheckPanel();
 }
 
 function refreshActionStatDropdown() {
@@ -4372,11 +4422,12 @@ function renderCheckResult(actionDie, dreadDie, actionRoll, dreadRoll, success) 
   const outcome = document.getElementById("resOutcome");
   const stress = document.getElementById("resStress");
   const note = document.getElementById("resNote");
+  var actionDieLabel = formatManualDieLabel("action", actionDie);
 
   if (dice) {
     dice.innerHTML =
       '<div class="res-die"><span class="res-val" style="color:var(--teal);">' + actionRoll.total +
-      '</span><span class="res-lbl">Action d' + actionDie + '</span></div>' +
+      '</span><span class="res-lbl">' + actionDieLabel + '</span></div>' +
       '<div style="font-family:\'Rajdhani\',sans-serif;font-size:1.5rem;color:var(--border2);">vs</div>' +
       '<div class="res-die"><span class="res-val" style="color:var(--red);">' + dreadRoll.total +
       '</span><span class="res-lbl">Dread d' + dreadDie + "</span></div>";
