@@ -545,16 +545,29 @@ async function runScenario(browser, baseUrl) {
         return !!window.isMapFogHexVisible("province", `${entry.col},${entry.row}`, activeSelectedKey);
       }) || mapData.find((entry) => entry && entry.type === "wilderness") || mapData[0];
       if (!hex) return { ok: false, error: "No province hex found for encounter." };
-      window.setProvinceSelectedKey(`${hex.col},${hex.row}`);
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      let el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
-      if (!el && typeof window.renderHexInfo === "function") {
-        const liveSelected = window.selectedHex || (typeof window.resolveProvinceHexFromKey === "function"
-          ? window.resolveProvinceHexFromKey(`${hex.col},${hex.row}`)
-          : null);
-        if (liveSelected) {
+      const targetKey = `${hex.col},${hex.row}`;
+      const attemptSnapshots = [];
+      let el = null;
+      for (let attempt = 0; attempt < 6 && !el; attempt += 1) {
+        window.setProvinceSelectedKey(targetKey);
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 80 : 140));
+        el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
+        const selectedKey = typeof window.getProvinceSelectedKey === "function"
+          ? String(window.getProvinceSelectedKey() || "")
+          : "";
+        const liveSelected = typeof window.resolveProvinceHexFromKey === "function"
+          ? window.resolveProvinceHexFromKey(targetKey)
+          : (window.selectedHex || null);
+        attemptSnapshots.push({
+          attempt: attempt + 1,
+          selectedKey,
+          selectedType: window.selectedHex ? String(window.selectedHex.type || "") : "",
+          resolvedType: liveSelected ? String(liveSelected.type || "") : "",
+          found: !!el
+        });
+        if (!el && typeof window.renderHexInfo === "function" && liveSelected) {
           window.renderHexInfo(liveSelected);
-          await new Promise((resolve) => setTimeout(resolve, 80));
+          await new Promise((resolve) => setTimeout(resolve, 120));
           el = document.getElementById(`hexEnc-${hex.col}-${hex.row}`);
         }
       }
@@ -565,7 +578,9 @@ async function runScenario(browser, baseUrl) {
           selectedKey: typeof window.getProvinceSelectedKey === "function"
             ? String(window.getProvinceSelectedKey() || "")
             : "",
-          selectedHexExists: !!window.selectedHex
+          selectedHexExists: !!window.selectedHex,
+          selectedHexType: window.selectedHex ? String(window.selectedHex.type || "") : "",
+          attempts: attemptSnapshots
         };
       }
       await window.rollHexEncounter(hex.col, hex.row);

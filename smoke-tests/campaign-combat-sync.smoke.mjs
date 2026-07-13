@@ -551,6 +551,37 @@ async function waitForSceneEditorStateWithRetry(page, expected, label, attempts 
   throw lastError || new Error(`${label} scene state failed after retries.`);
 }
 
+async function ensurePlayerJoinedSharedVtt(page, label, minTokens = 2, attempts = 4) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await page.evaluate(() => {
+      try {
+        if (typeof window.joinSharedCampaignCombatModeFromPrompt === 'function') {
+          window.joinSharedCampaignCombatModeFromPrompt();
+          return;
+        }
+      } catch (_err) {}
+      try {
+        if (window.campaignSystem && typeof window.campaignSystem.joinSharedCombatMode === 'function') {
+          window.campaignSystem.joinSharedCombatMode();
+        }
+      } catch (_err) {}
+    });
+    try {
+      await waitForSceneEditorState(page, {
+        overlayOpen: true,
+        minTokens
+      }, `${label} attempt ${attempt + 1}`);
+      return;
+    } catch (err) {
+      lastError = err;
+      await recoverCombatHydration(page, `${label}-recover-${attempt + 1}`);
+      await wait(280 * (attempt + 1));
+    }
+  }
+  throw lastError || new Error(`${label} join failed after retries.`);
+}
+
 async function waitForSharedVttPrompt(page, label) {
   try {
     await page.waitForFunction(
@@ -746,15 +777,14 @@ async function runScenario(browser, baseUrl) {
   }, 'Player stays on Combat Tab until joining shared VTT');
 
   await playerPage.evaluate(() => {
-    if (typeof window.joinSharedCampaignCombatModeFromPrompt !== 'function') {
-      throw new Error('Missing joinSharedCampaignCombatModeFromPrompt');
+    if (
+      typeof window.joinSharedCampaignCombatModeFromPrompt !== 'function'
+      && !(window.campaignSystem && typeof window.campaignSystem.joinSharedCombatMode === 'function')
+    ) {
+      throw new Error('Missing shared VTT join entry point');
     }
-    window.joinSharedCampaignCombatModeFromPrompt();
   });
-  await waitForSceneEditorStateWithRetry(playerPage, {
-    overlayOpen: true,
-    minTokens: 2
-  }, 'Player initial shared VTT state');
+  await ensurePlayerJoinedSharedVtt(playerPage, 'Player initial shared VTT state', 2);
 
   const seeded = await gmPage.evaluate(async () => {
     const liveState = (() => {

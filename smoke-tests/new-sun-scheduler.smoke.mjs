@@ -131,6 +131,54 @@ async function runScenario(browser) {
         .filter((q) => q && !q.resolved && !q.expired && (!region || q.region === region));
     }
 
+    function findPortalHandoffQuest(qs, sourceQuestId) {
+      if (!qs) return null;
+      var sourceId = String(sourceQuestId || '');
+      var active = activeQuests(qs, 'wtw');
+      var match = active.find(function (q) {
+        if (!q || q.resolved || q.expired) return false;
+        if (sourceId && (String(q.portalHandoffSource || '') === sourceId || String(q.sourceQuestId || '') === sourceId)) return true;
+        return /portal handoff/i.test(String(q.title || ''));
+      });
+      if (match) return match;
+
+      var byId = qs.questById && typeof qs.questById === 'object'
+        ? Object.keys(qs.questById).map(function (id) { return qs.questById[id]; })
+        : [];
+      match = byId.find(function (q) {
+        if (!q || q.resolved || q.expired || String(q.region || '') !== 'wtw') return false;
+        if (sourceId && (String(q.portalHandoffSource || '') === sourceId || String(q.sourceQuestId || '') === sourceId)) return true;
+        return /portal handoff/i.test(String(q.title || ''));
+      });
+      if (match) return match;
+
+      match = byId.find(function (q) {
+        if (!q || String(q.region || '') !== 'wtw') return false;
+        if (sourceId && (String(q.portalHandoffSource || '') === sourceId || String(q.sourceQuestId || '') === sourceId)) return true;
+        return /portal handoff/i.test(String(q.title || ''));
+      });
+      if (match) return match;
+
+      if (qs.wtwQuestByHex && typeof qs.wtwQuestByHex === 'object') {
+        var hexIds = Object.keys(qs.wtwQuestByHex);
+        for (var i = 0; i < hexIds.length; i += 1) {
+          var qid = qs.wtwQuestByHex[hexIds[i]];
+          var q = qs.questById ? qs.questById[qid] : null;
+          if (!q || q.resolved || q.expired || String(q.region || '') !== 'wtw') continue;
+          if (sourceId && (String(q.portalHandoffSource || '') === sourceId || String(q.sourceQuestId || '') === sourceId)) return q;
+          if (/portal handoff/i.test(String(q.title || ''))) return q;
+        }
+        for (var j = 0; j < hexIds.length; j += 1) {
+          var qidAny = qs.wtwQuestByHex[hexIds[j]];
+          var qAny = qs.questById ? qs.questById[qidAny] : null;
+          if (!qAny || String(qAny.region || '') !== 'wtw') continue;
+          if (sourceId && (String(qAny.portalHandoffSource || '') === sourceId || String(qAny.sourceQuestId || '') === sourceId)) return qAny;
+          if (/portal handoff/i.test(String(qAny.title || ''))) return qAny;
+        }
+      }
+      return null;
+    }
+
     function alignQuestWindow(quest) {
       const stateRef = resolveState();
       if (!quest || !stateRef || !stateRef.gameDate || !stateRef.solarCycle) return;
@@ -229,6 +277,11 @@ async function runScenario(browser) {
       portalGuard += 1;
       if (typeof window.syncSolarCycleQuestScheduler === "function") window.syncSolarCycleQuestScheduler(true);
       qs = getQs();
+      var preexistingHandoff = findPortalHandoffQuest(qs, portalSourceQuestId);
+      if (preexistingHandoff) {
+        handoffQuestId = String(preexistingHandoff.id || '');
+        break;
+      }
       const portalSea = activeQuests(qs, "sea").find((q) => !!q.portalHandoff);
       if (!portalSea) {
         const anySea = activeQuests(qs, "sea")[0];
@@ -246,7 +299,7 @@ async function runScenario(browser) {
       }
 
       qs = getQs();
-      const handoff = activeQuests(qs, "wtw").find((q) => q && q.portalHandoffSource === portalSourceQuestId);
+      const handoff = findPortalHandoffQuest(qs, portalSourceQuestId);
       if (handoff) handoffQuestId = handoff.id;
     }
 

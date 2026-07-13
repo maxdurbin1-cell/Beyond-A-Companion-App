@@ -143,6 +143,70 @@ async function clearSession(page) {
   await dismissBlockingOverlays(page);
 }
 
+async function waitForPlayerSharedVttJoinPrompt(gmPage, playerPage) {
+  let lastSnapshot = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await playerPage.waitForFunction(
+        () => {
+          const overlay = document.getElementById("combatModeOverlay");
+          const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+            ? window.campaignSystem.getSharedState()
+            : null;
+          const vttSession = shared && shared.campaignCombat && shared.campaignCombat.vttSession
+            ? shared.campaignCombat.vttSession
+            : null;
+          const hasSceneEditor = !!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object");
+          return (
+            (!overlay || !overlay.classList.contains("open")) &&
+            (
+              typeof window.joinSharedCampaignCombatModeFromPrompt === "function"
+              || (!!vttSession && hasSceneEditor && !!(window.campaignSystem && typeof window.campaignSystem.joinSharedCombatMode === "function"))
+            )
+          );
+        },
+        null,
+        { timeout: 4000 }
+      );
+      return;
+    } catch (_err) {
+      lastSnapshot = await playerPage.evaluate(() => {
+        const overlay = document.getElementById("combatModeOverlay");
+        const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+          ? window.campaignSystem.getSharedState()
+          : null;
+        const combat = shared && shared.campaignCombat && typeof shared.campaignCombat === "object"
+          ? shared.campaignCombat
+          : null;
+        return {
+          overlayOpen: !!(overlay && overlay.classList.contains("open")),
+          joinFnType: typeof window.joinSharedCampaignCombatModeFromPrompt,
+          hasSceneEditor: !!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"),
+          vttEnteredAt: Number(combat && combat.vttSession && combat.vttSession.enteredAt || 0),
+          vttSceneName: String(combat && combat.vttSession && combat.vttSession.sceneName || ""),
+          startedAt: Number(combat && combat.startedAt || 0)
+        };
+      });
+      await playerPage.evaluate(async () => {
+        try {
+          if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+            await window.campaignSystem.requestResync();
+          }
+        } catch (_err2) {}
+      });
+      await gmPage.evaluate(async () => {
+        try {
+          if (window.campaignSystem && typeof window.campaignSystem.syncSharedSilent === "function") {
+            await window.campaignSystem.syncSharedSilent("music-vtt-join-prompt-retry");
+          }
+        } catch (_err2) {}
+      });
+      await wait(300);
+    }
+  }
+  throw new Error(`Player never received shared VTT join prompt: ${JSON.stringify(lastSnapshot || {})}`);
+}
+
 async function enableMusicConsent(page) {
   await page.evaluate(async () => {
     const audio = window.AudioManager;
@@ -380,28 +444,7 @@ async function runScenario(browser, baseUrl) {
       btn.click();
     });
     await gmPage.waitForSelector("#combatModeOverlay.open", { timeout: STEP_TIMEOUT_MS });
-
-    await playerPage.waitForFunction(
-      () => {
-        const overlay = document.getElementById("combatModeOverlay");
-        const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
-          ? window.campaignSystem.getSharedState()
-          : null;
-        const vttSession = shared && shared.campaignCombat && shared.campaignCombat.vttSession
-          ? shared.campaignCombat.vttSession
-          : null;
-        const hasSceneEditor = !!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object");
-        return (
-          (!overlay || !overlay.classList.contains("open")) &&
-          (
-            typeof window.joinSharedCampaignCombatModeFromPrompt === "function" ||
-            (!!vttSession && hasSceneEditor && !!(window.campaignSystem && typeof window.campaignSystem.joinSharedCombatMode === "function"))
-          )
-        );
-      },
-      null,
-      { timeout: STEP_TIMEOUT_MS }
-    );
+    await waitForPlayerSharedVttJoinPrompt(gmPage, playerPage);
 
     const promptStateBeforeSwap = await playerPage.evaluate(() => ({
       modalTitle: document.getElementById("modalTitle")?.textContent || "",

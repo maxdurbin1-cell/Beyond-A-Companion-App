@@ -4133,6 +4133,9 @@
       }
       if (sharedState.campaignCombat && typeof sharedState.campaignCombat === "object") {
         var current = getCampaignSharedState() || {};
+        var incomingCombatState = sharedState.campaignCombat && typeof sharedState.campaignCombat === "object"
+          ? (deepCloneJson(sharedState.campaignCombat) || {})
+          : {};
         var previousCombat = current && current.campaignCombat && typeof current.campaignCombat === "object"
           ? (deepCloneJson(current.campaignCombat) || {})
           : {};
@@ -4140,7 +4143,12 @@
           ? (deepCloneJson(previousCombat.vttSession) || previousCombat.vttSession)
           : null;
         if (!current.campaignCombat) current.campaignCombat = {};
-        Object.assign(current.campaignCombat, sharedState.campaignCombat);
+        Object.assign(
+          current.campaignCombat,
+          shouldPreferLocalCampaignCombat(previousCombat, incomingCombatState)
+            ? previousCombat
+            : incomingCombatState
+        );
         var mergedCombat = ensureCampaignCombatState(current);
         if (mergedCombat.active && !mergedCombat.vttSession && previousVttSession) {
           var hasSharedSceneEditor = !!(current.combatScene && current.combatScene.sceneEditor && typeof current.combatScene.sceneEditor === "object");
@@ -5092,7 +5100,8 @@
         pendingWayfarers: [],
         actedWayfarers: [],
         enemyActionRequest: null,
-        vttSession: null
+        vttSession: null,
+        updatedAt: 0
       };
     }
     if (!Array.isArray(sharedState.campaignCombat.turnOrder)) sharedState.campaignCombat.turnOrder = [];
@@ -5107,8 +5116,49 @@
     if (!Number.isFinite(Number(sharedState.campaignCombat.currentActorIndex))) {
       sharedState.campaignCombat.currentActorIndex = -1;
     }
+    if (!Number.isFinite(Number(sharedState.campaignCombat.updatedAt))) {
+      sharedState.campaignCombat.updatedAt = 0;
+    }
     sanitizeCampaignCombatTurnState(sharedState.campaignCombat);
     return sharedState.campaignCombat;
+  }
+
+  function hasCampaignCombatProgress(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : null;
+    if (!stateRef) return false;
+    return !!(
+      stateRef.active
+      || Number(stateRef.round || 0) > 0
+      || String(stateRef.activeToken || "")
+      || (Array.isArray(stateRef.turnOrder) && stateRef.turnOrder.length)
+      || (Array.isArray(stateRef.pendingWayfarers) && stateRef.pendingWayfarers.length)
+      || (Array.isArray(stateRef.actedWayfarers) && stateRef.actedWayfarers.length)
+    );
+  }
+
+  function stampCampaignCombatUpdatedAt(combatState) {
+    var stateRef = combatState && typeof combatState === "object" ? combatState : ensureCampaignCombatState();
+    stateRef.updatedAt = Date.now();
+    return stateRef;
+  }
+
+  function shouldPreferLocalCampaignCombat(previousCombat, incomingCombat) {
+    if (state.role !== "gm") return false;
+    var prev = previousCombat && typeof previousCombat === "object" ? previousCombat : null;
+    var incoming = incomingCombat && typeof incomingCombat === "object" ? incomingCombat : null;
+    if (!prev) return false;
+    var prevUpdatedAt = Math.max(0, Number(prev.updatedAt || 0));
+    var incomingUpdatedAt = Math.max(0, Number(incoming && incoming.updatedAt || 0));
+    if (prevUpdatedAt > 0 && incomingUpdatedAt > 0 && prevUpdatedAt > incomingUpdatedAt) return true;
+    if (prevUpdatedAt > 0 && incomingUpdatedAt === 0 && hasCampaignCombatProgress(prev) && !hasCampaignCombatProgress(incoming)) {
+      return true;
+    }
+    var prevStartedAt = Math.max(0, Number(prev.startedAt || 0));
+    var incomingStartedAt = Math.max(0, Number(incoming && incoming.startedAt || 0));
+    if (prev.active && prevStartedAt > 0 && (!incoming || !incoming.active) && incomingStartedAt < prevStartedAt) {
+      return true;
+    }
+    return false;
   }
 
   function createDefaultCampaignSoundtrackSettings() {
@@ -5939,6 +5989,7 @@
       sharedState.campaignCombat = deepCloneJson(combatState) || combatState;
       stateRef = sharedState.campaignCombat;
     }
+    stampCampaignCombatUpdatedAt(stateRef);
     syncCampaignCombatParticipantFlags(stateRef);
     syncCampaignCombatCurrentActorIndex(stateRef);
     if (state.code && state.connected) {
@@ -6002,6 +6053,7 @@
       combatState.enemyActionRequest = null;
       combatState.currentActorIndex = -1;
       combatState.vttSession = null;
+      stampCampaignCombatUpdatedAt(combatState);
 
       var wayfarers = roster.map(function(p) {
         return {
@@ -6299,6 +6351,7 @@
       combatState.actedWayfarers = [];
       combatState.enemyActionRequest = null;
       combatState.vttSession = null;
+      stampCampaignCombatUpdatedAt(combatState);
       appendSessionTimeline("combat", "Campaign combat ended.", {});
 
       if (state.code && state.connected) {
