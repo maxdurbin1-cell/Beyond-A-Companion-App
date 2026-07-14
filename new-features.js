@@ -12500,9 +12500,12 @@
     // Auto-add player as ally if not on the map yet
     var playerName = (typeof S !== 'undefined' && S.name && S.name.trim()) ? S.name : 'You';
     var hasPlayer = S.combatMap.units.some(function(u){ return u.side === 'ally' && u.name === playerName; });
+    var currentPlayerUnit = S.combatMap.units.filter(function(u){
+      return u && u.side === 'ally' && (u.isPlayer || u.name === playerName);
+    })[0] || null;
     var spacingEl = document.getElementById('spacingSelect');
     var relativeEnemyZone = spacingToZone(spacingEl ? spacingEl.value : 'Nearby (Shoot)');
-    var spacingChanged = S.combatMap.lastRelativeZone !== relativeEnemyZone;
+    var defaultEnemyZone = (typeof getCombatEnemyOpeningRange === 'function') ? getCombatEnemyOpeningRange() : relativeEnemyZone;
     S.combatMap.lastRelativeZone = relativeEnemyZone;
     var authoritativeZones = {};
     try {
@@ -12519,11 +12522,34 @@
         }
       }
     } catch (_err) {}
+    var playerZone = normalizeCombatMapZoneLabel(
+      S.combatMap.playerZone
+      || (currentPlayerUnit && currentPlayerUnit.zone)
+      || 'Engaged'
+    );
+    var playerBand = normalizeCampaignEnemyRangeBand(
+      (currentPlayerUnit && (currentPlayerUnit.relativeBand || currentPlayerUnit.lastRelativeBand))
+      || String(playerZone || '').toLowerCase()
+    ) || 'engaged';
+    S.combatMap.playerZone = playerZone;
     if (!hasPlayer) {
-      S.combatMap.units.push({ id: combatMapUnitId++, name: playerName, side: 'ally', zone: 'Engaged', isPlayer: true });
+      S.combatMap.units.push({
+        id: combatMapUnitId++,
+        name: playerName,
+        side: 'ally',
+        zone: playerZone,
+        isPlayer: true,
+        relativeBand: playerBand,
+        lastRelativeBand: playerBand
+      });
     } else if (hasPlayer) {
       S.combatMap.units.forEach(function(u) {
-        if (u.side === 'ally' && (u.name === playerName || u.isPlayer)) { u.zone = 'Engaged'; u.isPlayer = true; }
+        if (u.side === 'ally' && (u.name === playerName || u.isPlayer)) {
+          u.zone = playerZone;
+          u.isPlayer = true;
+          u.relativeBand = normalizeCampaignEnemyRangeBand(u.relativeBand || u.lastRelativeBand || playerBand) || playerBand;
+          u.lastRelativeBand = u.relativeBand;
+        }
       });
     }
 
@@ -12567,8 +12593,6 @@
       unit.side = data.side;
       if (authoritativeZones[unit.trackerKey]) {
         unit.zone = authoritativeZones[unit.trackerKey];
-      } else if (unit.side === 'enemy' && spacingChanged) {
-        unit.zone = relativeEnemyZone;
       }
     });
 
@@ -12587,8 +12611,8 @@
         existingMatch.name = desired[key].name;
         if (authoritativeZones[key]) {
           existingMatch.zone = authoritativeZones[key];
-        } else if (existingMatch.side === 'enemy' && spacingChanged) {
-          existingMatch.zone = relativeEnemyZone;
+        } else if (!existingMatch.zone) {
+          existingMatch.zone = existingMatch.side === 'enemy' ? defaultEnemyZone : playerZone;
         }
         return;
       }
@@ -12596,7 +12620,7 @@
         id: combatMapUnitId++,
         name: desired[key].name,
         side: desired[key].side,
-        zone: authoritativeZones[key] || (desired[key].side === 'enemy' ? relativeEnemyZone : 'Engaged'),
+        zone: authoritativeZones[key] || (desired[key].side === 'enemy' ? defaultEnemyZone : playerZone),
         fromTracker: true,
         trackerKey: key
       });
@@ -13133,6 +13157,14 @@
     if (unit) {
       var prevZone = unit.zone;
       unit.zone = zone;
+      if (unit.side === 'ally') {
+        var band = normalizeCampaignEnemyRangeBand(String(zone || '').toLowerCase()) || 'engaged';
+        unit.relativeBand = band;
+        unit.lastRelativeBand = band;
+        if (unit.isPlayer) {
+          S.combatMap.playerZone = normalizeCombatMapZoneLabel(zone);
+        }
+      }
       if (unit.side === 'enemy' && prevZone !== zone && typeof maybeResetActionsAfterDefend === 'function') {
         maybeResetActionsAfterDefend();
         if (typeof showNotif === 'function') {
@@ -13217,30 +13249,19 @@
     var el = document.getElementById("combatOptionsPanel");
     if (!el) { return; }
     ensureNewFeatureState();
-    // Determine player (first ally unit) zone
     var allies  = S.combatMap.units.filter(function(u){ return u.side === "ally"; });
     var enemies = S.combatMap.units.filter(function(u){ return u.side === "enemy"; });
     if (!allies.length && !enemies.length) { el.innerHTML = ""; return; }
-
     var playerZone = allies.length ? allies[0].zone : null;
-
-    // Closest enemy zone
-    var closestEnemyDist = 99;
-    enemies.forEach(function(u) {
-      var d = ZONE_DIST[u.zone];
-      if (d !== undefined && d < closestEnemyDist) { closestEnemyDist = d; }
-    });
-    var playerDist = playerZone !== null ? ZONE_DIST[playerZone] : 99;
+    var relativeBand = (typeof getPrimaryEnemyZoneRelative === 'function')
+      ? normalizeCampaignEnemyRangeBand(getPrimaryEnemyZoneRelative())
+      : '';
+    if (!relativeBand) relativeBand = normalizeCampaignEnemyRangeBand(String(playerZone || '').toLowerCase()) || 'engaged';
+    var relativeLabel = relativeBand ? getCombatSpacingLabelFromRange(relativeBand) : '';
+    var relativeZone = normalizeCombatMapZoneLabel(relativeLabel || playerZone || 'Engaged');
 
     var rows = ALL_COMBAT_OPTIONS.map(function(opt) {
-      var available = playerZone === null || opt.zones.indexOf(playerZone) >= 0;
-      // Ranged/melee logic: if no enemies within range, grey out attack options
-      var inRange = true;
-      if (["standard","heavy","fast","help"].indexOf(opt.id) >= 0) {
-        inRange = playerZone === null || (enemies.length === 0) || (closestEnemyDist <= playerDist + 1);
-        if (opt.id === "help") { inRange = true; } // help is always possible near ally
-      }
-      var avail = available && inRange;
+      var avail = relativeZone === null || opt.zones.indexOf(relativeZone) >= 0;
       return '<tr style="opacity:' + (avail ? "1" : ".38") + ';' + (avail ? "background:rgba(46,196,182,.04);" : "") + '">'
         + '<td style="padding:.22rem .4rem;font-size:.72rem;font-weight:600;color:' + (avail ? "var(--text)" : "var(--muted2)") + ';white-space:nowrap;">' + opt.label + '</td>'
         + '<td style="padding:.22rem .4rem;font-size:.7rem;color:var(--gold2);white-space:nowrap;">' + opt.cost + '</td>'
@@ -13249,8 +13270,8 @@
         + '</tr>';
     }).join("");
 
-    var zoneInfo = playerZone
-      ? '<span style="color:var(--teal);">' + playerZone + '</span>'
+    var zoneInfo = relativeLabel
+      ? '<span style="color:var(--teal);">' + relativeLabel + '</span>'
       : '<span style="color:var(--muted2);">unknown (add yourself to map)</span>';
     var enemyZoneInfo = enemies.length
       ? enemies.map(function(u){ return '<span style="color:var(--red2);">' + u.name + '</span> @ ' + u.zone; }).join(", ")

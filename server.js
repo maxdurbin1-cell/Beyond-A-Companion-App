@@ -1306,6 +1306,14 @@ function getOnlineTokenSet(campaign) {
   return tokens;
 }
 
+function getOnlinePlayerTokens(campaign) {
+  const onlineTokens = getOnlineTokenSet(campaign);
+  return Array.from(campaign.participants.values())
+    .filter((member) => member && member.role === "player" && member.token && onlineTokens.has(member.token))
+    .map((member) => String(member.token || "").trim())
+    .filter(Boolean);
+}
+
 function snapshotCampaign(campaign, requesterToken) {
   const onlineTokens = getOnlineTokenSet(campaign);
   const roster = Array.from(campaign.participants.values())
@@ -1330,6 +1338,9 @@ function snapshotCampaign(campaign, requesterToken) {
             look: String(member.character.look || "").slice(0, 180),
             stats: member.character.stats && typeof member.character.stats === "object" ? member.character.stats : {},
             loadout: member.character.loadout && typeof member.character.loadout === "object" ? member.character.loadout : {},
+            conditions: member.character.conditions && typeof member.character.conditions === "object"
+              ? member.character.conditions
+              : {},
             hacks: Array.isArray(member.character.hacks) ? member.character.hacks : [],
             backpack: Array.isArray(member.character.backpack)
               ? member.character.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
@@ -1614,6 +1625,17 @@ function normalizeCharacter(input, fallbackName) {
     armor: String(loadoutInput.armor || c.armor || "").trim().slice(0, 120),
     readied: String(loadoutInput.readied || c.readied || "").trim().slice(0, 120)
   };
+  const rawConditions = c.conditions && typeof c.conditions === "object" ? c.conditions : {};
+  const conditions = {
+    empowered: !!rawConditions.empowered,
+    protected: !!rawConditions.protected,
+    focused: !!rawConditions.focused,
+    bolstered: !!rawConditions.bolstered,
+    weakened: !!rawConditions.weakened,
+    vulnerable: !!rawConditions.vulnerable,
+    distracted: !!rawConditions.distracted,
+    shaken: !!rawConditions.shaken
+  };
   const hacksInput = Array.isArray(c.hacks) ? c.hacks : (Array.isArray(c.ownedHacks) ? c.ownedHacks : []);
   const hacks = hacksInput.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 40);
   return {
@@ -1630,6 +1652,7 @@ function normalizeCharacter(input, fallbackName) {
     look: String(c.look || "").slice(0, 180),
     stats,
     loadout,
+    conditions,
     hacks,
     backpack: Array.isArray(c.backpack)
       ? c.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
@@ -3078,6 +3101,89 @@ io.on("connection", (socket) => {
         token,
         action: "enemy-action-resolve",
         enemyActionId: String(payload && payload.id || "").trim()
+      }
+    );
+
+    emitCampaignState(campaign.code, { immediate: true });
+    if (typeof ack === "function") {
+      ack({ ok: true, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
+    }
+  });
+
+  socket.on("campaign:requestPartyRestBoon", (payload, ack) => {
+    const campaign = getCampaignBySocket(socket);
+    if (!campaign) {
+      if (typeof ack === "function") ack({ ok: false, error: "Not connected to a campaign." });
+      return;
+    }
+
+    const token = String(socket.data.token || "");
+    const member = token ? campaign.participants.get(token) : null;
+    if (!member) {
+      if (typeof ack === "function") ack({ ok: false, error: "Invalid participant session." });
+      return;
+    }
+
+    const label = String((payload && payload.label) || "Rest").trim().slice(0, 120) || "Rest";
+    const boonKey = String((payload && payload.boonKey) || "").trim().slice(0, 48);
+    const sourceKind = String((payload && payload.sourceKind) || "").trim().slice(0, 48);
+    const sourceRef = payload && payload.sourceRef && typeof payload.sourceRef === "object"
+      ? safeClone(payload.sourceRef) || {}
+      : {};
+
+    const targetTokens = getOnlinePlayerTokens(campaign);
+    if (!targetTokens.length) {
+      if (typeof ack === "function") ack({ ok: false, error: "No online players are available for a shared rest." });
+      return;
+    }
+
+    const sharedState = campaign.shared && campaign.shared.state && typeof campaign.shared.state === "object"
+      ? campaign.shared.state
+      : {};
+    sharedState.readyCheck = {
+      id: `ready-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+      status: "pending",
+      type: "rest-boon",
+      label,
+      requestedBy: String(member.name || "Wayfarer").slice(0, 48),
+      requestedAt: Date.now(),
+      requiredTokens: targetTokens.slice(),
+      responses: {},
+      actionPayload: {
+        kind: "party-rest-boon",
+        boonKey,
+        label,
+        sourceKind,
+        sourceRef,
+        targetTokens: targetTokens.slice(),
+        requestedBy: String(member.name || "Wayfarer").slice(0, 48),
+        requestedAt: Date.now()
+      },
+      resolvedAt: 0
+    };
+    if (targetTokens.includes(token)) {
+      sharedState.readyCheck.responses[token] = {
+        ready: true,
+        name: String(member.name || "Wayfarer").slice(0, 48),
+        at: Date.now()
+      };
+    }
+
+    campaign.shared.state = sharedState;
+    campaign.shared.stateVersion = Math.max(0, Number(campaign.shared.stateVersion || 0)) + 1;
+    campaign.updatedAt = Date.now();
+    schedulePersist();
+
+    addLog(
+      campaign,
+      "system",
+      `${member.name || "Wayfarer"} requested a shared rest: ${label}.`,
+      {
+        token,
+        action: "party-rest-request",
+        boonKey,
+        label,
+        sourceKind
       }
     );
 

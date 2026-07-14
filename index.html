@@ -1341,12 +1341,18 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
         </div>
         <div style="font-family:'Rajdhani',sans-serif;font-size:.9rem;color:var(--red);margin-top:.3rem;">Enemy Dread: <span id="enemyDreadDisplay" style="font-weight:700;">d8</span></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.4rem;">
         <div><span class="sub-label">Spacing / Zone</span>
           <select id="spacingSelect" onchange="setCombatSpacing(this.value,true)">
             <option>Engaged (Strike)</option><option>Close (Scrolls)</option><option>Nearby (Shoot)</option><option>Far (Out of Range)</option>
           </select>
           <div style="font-size:.62rem;color:var(--muted2);margin-top:.18rem;">Derived from focused enemy distance.</div>
+        </div>
+        <div><span class="sub-label">Enemy Opening Range</span>
+          <select id="enemyOpeningRangeSelect" onchange="setCombatEnemyOpeningRange(this.value)">
+            <option>Engaged</option><option>Close</option><option>Nearby</option><option>Far</option>
+          </select>
+          <div style="font-size:.62rem;color:var(--muted2);margin-top:.18rem;">GM sets how far hostiles begin from the party.</div>
         </div>
         <div><span class="sub-label">Actions Remaining</span>
           <div class="counter-row">
@@ -7774,6 +7780,13 @@ function getCampaignEnemyRangeInfo(enemyId, targetToken, byToken){
   var targetZone=targetUnit&&targetUnit.zone?String(targetUnit.zone):'';
   info.enemyZone=enemyZone;
   info.targetZone=targetZone;
+  if(targetUnit){
+    var storedBand=normalizeCampaignEnemyRangeBand(targetUnit.relativeBand||targetUnit.lastRelativeBand||'');
+    if(storedBand){
+      info.band=storedBand;
+      return info;
+    }
+  }
   info.band=normalizeCampaignEnemyRangeBand(getCombatRangeBandFromZoneLabels(enemyZone,targetZone));
   return info;
 }
@@ -7933,6 +7946,8 @@ function startCombat(){
   S.combat.active=true;
   S.combat.round=1;
   S.combat.encounterSerial=Math.max(0,Number(S.combat.encounterSerial||0))+1;
+  if(typeof resetCombatVictoryRewardState==='function')resetCombatVictoryRewardState();
+  if(typeof setCombatEnemyOpeningRange==='function')setCombatEnemyOpeningRange(getCombatEnemyOpeningRange(),{silent:true});
   if(typeof clearCombatScopedRollMods==='function')clearCombatScopedRollMods();
   S.combat.fastAttackUsedEncounter=false;
   S.combat.enemySkillLocks={};
@@ -7984,21 +7999,193 @@ function startCombat(){
 function nextRound(){S.combat.round++;prepareCombatTurnStart();S.combat.enemyDefendsThisTurn=0;S.combat.enemyActionPenaltyThisRound=0;resetEnemyBudgetLedger('next round');applyRegeneratorRecovery(1,'combat round');applyRoundStartAffixBonuses();updateCombatUI();}
 
 // ── FLEE, MORALE & REWARDS ────────────────────────────────────────────────────
+function resetCombatVictoryRewardState(){
+  if(!S||!S.combat)return;
+  S.combat.defeatedHostiles=[];
+  S.combat.defeatedHostileIds={};
+  S.combat.pendingVictoryReward=null;
+}
+
+function recordDefeatedCombatHostile(enemy,options){
+  if(!S||!S.combat||!enemy||enemy.ally)return false;
+  if(!Array.isArray(S.combat.defeatedHostiles))S.combat.defeatedHostiles=[];
+  if(!S.combat.defeatedHostileIds||typeof S.combat.defeatedHostileIds!=='object')S.combat.defeatedHostileIds={};
+  var key=String(enemy.id!=null?enemy.id:(enemy.name||('enemy-'+S.combat.defeatedHostiles.length)));
+  if(S.combat.defeatedHostileIds[key])return false;
+  var opts=options&&typeof options==='object'?options:{};
+  S.combat.defeatedHostileIds[key]=true;
+  S.combat.defeatedHostiles.push({
+    id:key,
+    name:String(enemy.name||'Enemy'),
+    dread:Math.max(4,Number(enemy.dread||S.combat.enemyDread||4)),
+    maxStress:Math.max(1,Number(enemy.maxStress||enemy.health||1)),
+    faction:String(enemy.faction||''),
+    deathByThreshold:!!opts.deathByThreshold
+  });
+  S.combat.pendingVictoryReward=null;
+  return true;
+}
+
+function normalizeCombatVictoryDreadTier(dread){
+  var dd=Math.max(4,Number(dread||4));
+  if(dd<=4)return 4;
+  if(dd<=6)return 6;
+  if(dd<=8)return 8;
+  if(dd<=10)return 10;
+  if(dd<=12)return 12;
+  return 20;
+}
+
+function getCombatVictoryTierProfile(dread){
+  var dd=normalizeCombatVictoryDreadTier(dread);
+  if(dd===4)return{creditsMin:40,creditsMax:100,itemChance:0.4,itemCountMin:1,itemCountMax:1,categories:['weapons','items','essentials']};
+  if(dd===6)return{creditsMin:70,creditsMax:130,itemChance:0.55,itemCountMin:1,itemCountMax:1,categories:['weapons','remedies','toolkits','armor']};
+  if(dd===8)return{creditsMin:100,creditsMax:180,itemChance:0.7,itemCountMin:1,itemCountMax:2,categories:['melee_exp','ranged_exp','toolkits','weapon_mods','armor_exp']};
+  if(dd===10)return{creditsMin:130,creditsMax:230,itemChance:0.82,itemCountMin:1,itemCountMax:2,categories:['melee_exp','ranged_exp','weapon_mods','scrolls','armor_exp','toolkits']};
+  if(dd===12)return{creditsMin:170,creditsMax:300,itemChance:0.92,itemCountMin:2,itemCountMax:2,categories:['augmentations','weapon_mods','scrolls','melee_exp','ranged_exp','armor_exp']};
+  return{creditsMin:260,creditsMax:480,itemChance:1,itemCountMin:2,itemCountMax:3,categories:['augmentations','weapon_mods','scrolls','os_hacks','melee_exp','ranged_exp'],affixedWeapon:true};
+}
+
+function rollCombatVictoryCredits(min,max){
+  var low=Math.max(0,Math.floor(Number(min||0)));
+  var high=Math.max(low,Math.floor(Number(max||low)));
+  return low+Math.floor(Math.random()*(high-low+1));
+}
+
+function pickCombatVictoryItems(categories,count){
+  var cats=Array.isArray(categories)?categories:[];
+  var pool=[];
+  var seen={};
+  cats.forEach(function(cat){
+    var entries=SHOP_DATA&&Array.isArray(SHOP_DATA[cat])?SHOP_DATA[cat]:[];
+    entries.forEach(function(entry){
+      var name=String((entry&&entry.name)||entry||'').trim();
+      if(!name||seen[name])return;
+      seen[name]=true;
+      pool.push(name);
+    });
+  });
+  var total=Math.max(0,Number(count||0));
+  var chosen=[];
+  while(total>0&&pool.length){
+    var idx=Math.floor(Math.random()*pool.length);
+    chosen.push(pool.splice(idx,1)[0]);
+    total-=1;
+  }
+  return chosen;
+}
+
+function buildCombatVictoryAffixedWeapon(){
+  var basePool=pickCombatVictoryItems(['melee_exp','ranged_exp','weapons'],1);
+  var base=String(basePool[0]||'Sword');
+  var affixes=(typeof getAllCodexAffixNames==='function')?getAllCodexAffixNames():[];
+  var filtered=Array.isArray(affixes)?affixes.filter(function(name){return !!String(name||'').trim();}):[];
+  if(!filtered.length)return base;
+  var affix=String(filtered[Math.floor(Math.random()*filtered.length)]||'Keen').trim()||'Keen';
+  if(typeof setItemAffixList==='function')return setItemAffixList(base,[affix]);
+  return base+' · Affixes: '+affix;
+}
+
+function ensureCombatVictoryReward(){
+  if(!S||!S.combat)return{credits:40,items:[],enemyCount:0,summary:'Fallback reward'};
+  if(S.combat.pendingVictoryReward&&typeof S.combat.pendingVictoryReward==='object'&&!S.combat.pendingVictoryReward.claimed){
+    return S.combat.pendingVictoryReward;
+  }
+  var defeated=Array.isArray(S.combat.defeatedHostiles)?S.combat.defeatedHostiles.slice():[];
+  if(!defeated.length){
+    defeated=[{name:'Enemy',dread:Math.max(4,Number(S.combat.enemyDread||4)),maxStress:Math.max(1,Number(S.combat.enemyDread||4)*2),faction:'',deathByThreshold:false}];
+  }
+  var credits=0;
+  var items=[];
+  defeated.forEach(function(enemy){
+    var profile=getCombatVictoryTierProfile(enemy&&enemy.dread);
+    credits+=rollCombatVictoryCredits(profile.creditsMin,profile.creditsMax);
+    if(enemy&&enemy.deathByThreshold)credits+=20;
+    if(profile.affixedWeapon)items.push(buildCombatVictoryAffixedWeapon());
+    if(Math.random()<=Number(profile.itemChance||0)){
+      var itemCount=profile.itemCountMin;
+      if(profile.itemCountMax>profile.itemCountMin){
+        itemCount+=Math.floor(Math.random()*(profile.itemCountMax-profile.itemCountMin+1));
+      }
+      items=items.concat(pickCombatVictoryItems(profile.categories,itemCount));
+    }
+  });
+  if(defeated.length>1)credits+=Math.max(0,(defeated.length-1))*25;
+  items=items.filter(function(item,idx,arr){
+    return !!String(item||'').trim()&&arr.indexOf(item)===idx;
+  }).slice(0,6);
+  var reward={
+    credits:Math.max(0,credits),
+    items:items,
+    enemyCount:defeated.length,
+    summary:defeated.map(function(enemy){
+      return String(enemy&&enemy.name||'Enemy')+' d'+normalizeCombatVictoryDreadTier(enemy&&enemy.dread);
+    }).join(' · '),
+    claimed:false
+  };
+  S.combat.pendingVictoryReward=reward;
+  return reward;
+}
+
 function promptCombatRewards(){
   if(!S||!S.combat||Array.isArray(S.enemies)&&S.enemies.length>0)return;
+  var reward=ensureCombatVictoryReward();
+  var rewardItems=Array.isArray(reward.items)?reward.items:[];
+  var lootHtml=rewardItems.length
+    ? ('<div style="margin:.48rem 0 .32rem;"><div style="font-size:.72rem;color:var(--gold2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.18rem;">Salvage</div><div style="display:flex;gap:.25rem;flex-wrap:wrap;">'+rewardItems.map(function(item){
+      return '<span style="padding:.18rem .42rem;border:1px solid rgba(46,196,182,.35);background:rgba(46,196,182,.08);color:var(--teal);font-size:.72rem;">'+String(item||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</span>';
+    }).join('')+'</div></div>')
+    : '<div style="margin:.48rem 0 .32rem;font-size:.76rem;color:var(--muted2);">No item salvage rolled this time.</div>';
   var html='<div style="font-size:.9rem;color:var(--gold2);font-family:Cinzel,serif;margin-bottom:.5rem;">Combat Victory</div>'
     +'<div style="font-size:.83rem;color:var(--text2);line-height:1.65;margin-bottom:.55rem;">All enemies defeated!</div>'
+    +'<div style="font-size:.76rem;color:var(--muted2);margin-bottom:.26rem;">Defeated: '+String(reward.summary||('d'+Math.max(4,Number(S.combat.enemyDread||4))+' hostile'))+'</div>'
+    +'<div style="font-size:1rem;color:var(--gold2);font-weight:700;">+'+Math.max(0,Number(reward.credits||0))+' Credits</div>'
+    +lootHtml
     +'<div style="text-align:right;margin-top:.6rem;">'
-    +'<button class="btn btn-sm btn-primary" onclick="grantCombatRewards();closeModal()">+ 40 Credits</button>'
+    +'<button class="btn btn-sm btn-primary" onclick="grantCombatRewards();closeModal()">Claim Victory Rewards</button>'
     +'<button class="btn btn-sm" onclick="closeModal()">Dismiss</button>'
     +'</div>';
   openModal('Combat Victory',html);
 }
 function grantCombatRewards(){
   if(!S)return;
-  var creditsReward=Math.floor(30+Math.random()*20);
-  setCredits((S.credits||0)+creditsReward);
-  showNotif('+'+creditsReward+' Credits','good');
+  var reward=ensureCombatVictoryReward();
+  if(reward.claimed){
+    showNotif('These victory rewards were already claimed.','info');
+    return false;
+  }
+  var creditsReward=Math.max(0,Number(reward.credits||0));
+  if(creditsReward>0){
+    if(typeof changeCredits==='function')changeCredits(creditsReward);
+    else{
+      S.credits=Math.max(0,Number(S.credits||0)+creditsReward);
+      if(typeof updateCreditsUI==='function')updateCreditsUI();
+    }
+  }
+  var movedToBackpack=0;
+  var movedToInventory=0;
+  (Array.isArray(reward.items)?reward.items:[]).forEach(function(item){
+    var label=String(item||'').trim();
+    if(!label)return;
+    if(typeof addToBackpack==='function'){
+      try{
+        if(addToBackpack(label)){movedToBackpack+=1;return;}
+      }catch(_bpErr){}
+    }
+    if(typeof addToInventory==='function'){
+      try{
+        if(addToInventory({name:label,type:'Victory Loot',effect:'Recovered after combat'})){movedToInventory+=1;return;}
+      }catch(_invErr){}
+    }
+  });
+  reward.claimed=true;
+  S.combat.pendingVictoryReward=reward;
+  if(typeof updateAllStatDisplays==='function')updateAllStatDisplays();
+  var summary=['+'+creditsReward+' Credits'];
+  if(movedToBackpack>0)summary.push(movedToBackpack+' item'+(movedToBackpack===1?'':'s')+' to Backpack');
+  if(movedToInventory>0)summary.push(movedToInventory+' item'+(movedToInventory===1?'':'s')+' to Inventory');
+  showNotif(summary.join(' · '),'good');
+  return true;
 }
 function attemptFlee(){
   if(!S||!S.combat||!S.combat.active){showNotif('Not in combat','warn');return;}
@@ -8949,6 +9136,7 @@ function renderCampaignInitiativePanel(){
 }
 function updateCombatUI(){
   if(typeof syncCombatSpacingToPrimaryEnemy==='function')syncCombatSpacingToPrimaryEnemy();
+  if(typeof syncCombatEnemyOpeningRangeUI==='function')syncCombatEnemyOpeningRangeUI();
   const el=document.getElementById('combatStatus');
   if(el){
     const enemyTotal=Math.max(1,(typeof getEnemyActionsPerCycle==='function'?getEnemyActionsPerCycle():0));
@@ -9039,6 +9227,51 @@ function setEnemyDread(n){
   }
 }
 
+function normalizeCombatMapZoneLabel(value){
+  var raw=String(value||'').trim().toLowerCase();
+  if(raw.indexOf('engaged')===0)return'Engaged';
+  if(raw.indexOf('close')===0)return'Close';
+  if(raw.indexOf('nearby')===0)return'Nearby';
+  if(raw.indexOf('far')===0)return'Far';
+  return'Engaged';
+}
+
+function getCombatEnemyOpeningRange(){
+  if(!S||!S.combat)S.combat={};
+  S.combat.openingEnemyZone=normalizeCombatMapZoneLabel(S.combat.openingEnemyZone||'Engaged');
+  return S.combat.openingEnemyZone;
+}
+
+function syncCombatEnemyOpeningRangeUI(){
+  var sel=document.getElementById('enemyOpeningRangeSelect');
+  var zone=getCombatEnemyOpeningRange();
+  if(sel&&sel.value!==zone)sel.value=zone;
+}
+
+function setCombatEnemyOpeningRange(value,options){
+  if(!S||!S.combat)S.combat={};
+  var opts=options&&typeof options==='object'?options:{};
+  var zone=normalizeCombatMapZoneLabel(value||S.combat.openingEnemyZone||'Engaged');
+  S.combat.openingEnemyZone=zone;
+  syncCombatEnemyOpeningRangeUI();
+  if(S.combatMap&&Array.isArray(S.combatMap.units)){
+    S.combatMap.units.forEach(function(unit){
+      if(!unit||unit.side!=='enemy')return;
+      unit.zone=zone;
+    });
+  }
+  if(typeof renderCombatMap==='function')renderCombatMap();
+  if(typeof renderCombatOptions==='function')renderCombatOptions();
+  if(typeof updateCombatUI==='function')updateCombatUI();
+  if(typeof renderQP==='function'){
+    try{renderQP('combat');}catch(_err){}
+  }
+  if(!opts.silent&&typeof showNotif==='function'){
+    showNotif('Enemy opening range set to '+zone+'.','good');
+  }
+  return zone;
+}
+
 function combatIdsMatch(a,b){
   if(a===b)return true;
   var as=String(a===undefined||a===null?'':a);
@@ -9117,28 +9350,16 @@ function getCombatMapUnitForEnemy(enemy){
 }
 
 function moveRelativeToFocusedEnemy(direction){
-  if(!S||!S.combatMap||!Array.isArray(S.combatMap.units))return null;
-  var enemy=getPrimaryCombatEnemy();
-  if(!enemy){showNotif('No hostile enemy selected.','warn');return null;}
-  var enemyUnit=getCombatMapUnitForEnemy(enemy);
-  if(!enemyUnit&&typeof renderCombatMap==='function'){
-    renderCombatMap();
-    enemyUnit=getCombatMapUnitForEnemy(enemy);
-  }
-  if(!enemyUnit){showNotif('Focused enemy is not on the combat map.','warn');return null;}
   var order=['Engaged','Close','Nearby','Far'];
-  var currentIdx=order.indexOf(enemyUnit.zone);
+  var currentBand=getPrimaryEnemyZoneRelative();
+  var currentIdx=order.indexOf(normalizeCombatMapZoneLabel(currentBand||'Engaged'));
   if(currentIdx<0)currentIdx=0;
   var nextIdx=Math.max(0,Math.min(order.length-1,currentIdx+(direction==='out'?1:-1)));
-  if(nextIdx===currentIdx)return enemyUnit.zone;
-  enemyUnit.zone=order[nextIdx];
-  var nextLabel=getCombatSpacingLabelFromRange(String(order[nextIdx]).toLowerCase());
-  if(nextLabel)S.combat.spacing=nextLabel;
-  if(typeof renderCombatMap==='function')renderCombatMap();
-  if(typeof renderCombatOptions==='function')renderCombatOptions();
-  if(typeof syncStarsUnitsFromCombatMap==='function')syncStarsUnitsFromCombatMap();
-  if(typeof updateCombatUI==='function')updateCombatUI();
-  return enemyUnit.zone;
+  if(nextIdx===currentIdx)return normalizeCombatMapZoneLabel(currentBand||'Engaged');
+  var nextZone=order[nextIdx];
+  var nextLabel=getCombatSpacingLabelFromRange(String(nextZone).toLowerCase());
+  if(nextLabel&&typeof setCombatSpacing==='function')setCombatSpacing(nextLabel,false);
+  return nextZone;
 }
 
 function swapEquippedWeapons(){
@@ -9431,10 +9652,15 @@ function getEnemyActionsRemaining(){
 }
 
 function getPrimaryEnemyZoneRelative(){
+  var player=getPlayerCombatMapUnit();
+  if(player){
+    var stored=normalizeCampaignEnemyRangeBand(player.relativeBand||player.lastRelativeBand||'');
+    if(stored)return stored;
+  }
   var defaultRange=getCombatRange();
   if(!S||!S.combatMap||!Array.isArray(S.combatMap.units))return defaultRange;
   var units=S.combatMap.units;
-  var player=getPlayerCombatMapUnit();
+  player=player||getPlayerCombatMapUnit();
   var enemies=units.filter(function(u){return u&&u.side==='enemy';});
   if(!player||!enemies.length)return defaultRange;
   var distMap={Engaged:0,Close:1,Nearby:2,Far:3};
@@ -9576,6 +9802,7 @@ function finalizeCombatEnemyDefeat(enemy,options){
     else S.renown=Math.max(0,Number(S.renown||0))+1;
     showNotif('Mercy Hand: '+defeated+' spared. +1 Renown.'+nextText,'good');
   }else{
+    recordDefeatedCombatHostile(enemy,{deathByThreshold:deathByThreshold});
     var ghoulPrimed=!enemy.ally&&typeof primeGhoulHiddenAttackAdvantage==='function'?primeGhoulHiddenAttackAdvantage('killing blow'):null;
     var onKillAffix=getEquippedAffixCombatBonuses();
     if(Number(onKillAffix.soulEaterOnKillHeal||0)>0){
@@ -10761,6 +10988,17 @@ function setCombatSpacing(newSpacing,consume){
     showNotif('Moved to '+newSpacing+' (−1 Action).','good');
   }
   S.combat.spacing=newSpacing;
+  var band=normalizeCampaignEnemyRangeBand(getCombatRange());
+  if(S.combatMap&&Array.isArray(S.combatMap.units)){
+    var playerUnit=getPlayerCombatMapUnit();
+    var zoneLabel=normalizeCombatMapZoneLabel(newSpacing);
+    if(playerUnit){
+      playerUnit.zone=zoneLabel;
+      playerUnit.relativeBand=band||normalizeCampaignEnemyRangeBand(zoneLabel.toLowerCase())||'engaged';
+      playerUnit.lastRelativeBand=playerUnit.relativeBand;
+    }
+    S.combatMap.playerZone=zoneLabel;
+  }
   var sel2=document.getElementById('spacingSelect');if(sel2)sel2.value=newSpacing;
   updateCombatUI();
   if(typeof renderQP==='function')renderQP('combat');
@@ -12430,15 +12668,16 @@ function addEnemy(nameArg,dreadArg){
   const dd=parseInt(dreadArg,10)||S.combat.enemyDread;
   const maxStress=dd*2;
   const deathNumber=Math.max(1,Math.ceil(maxStress/2));
+  const openingZone=(typeof getCombatEnemyOpeningRange==='function')?getCombatEnemyOpeningRange():'Engaged';
   const factionSel=document.getElementById('enemyFactionStandingSel');
   const standing=(factionSel&&factionSel.value)?String(factionSel.value):pickRandomFactionStanding();
   S.enemies.push({id:enemyIdCounter++,name:resolvedName,dread:dd,stress:0,maxStress,health:0,deathNumber:deathNumber,conditions:[],faction:standing});
-  // Auto-place in zone map as Engaged by default
+  // Auto-place in zone map at the GM-selected opening range.
   if(typeof S.combatMap==='object'&&Array.isArray(S.combatMap.units)){
     const label=standing?resolvedName+' ['+standing+']':resolvedName;
     if(!S.combatMap.units.some(function(u){return u.side==='enemy'&&u.name===label;})){
       if(typeof window.combatMapUnitId!=='undefined'){window.combatMapUnitId=window.combatMapUnitId||200;}
-      S.combatMap.units.push({id:(Date.now()+Math.random())|0,name:label,side:'enemy',zone:'Engaged'});
+      S.combatMap.units.push({id:(Date.now()+Math.random())|0,name:label,side:'enemy',zone:openingZone});
       if(typeof renderCombatMap==='function')renderCombatMap();
     }
   }
@@ -12701,6 +12940,7 @@ function removeEnemy(id){
   const dying=S.enemies.find(e=>combatIdsMatch(e&&e.id,id));
   const wasHostile=dying&&!dying.ally;
   const dyingName=dying?dying.name:'Enemy';
+  if(wasHostile&&S.combat&&S.combat.active)recordDefeatedCombatHostile(dying,{removedDirectly:true});
   S.enemies=S.enemies.filter(e=>!combatIdsMatch(e&&e.id,id));
   renderEnemies();
   if(typeof renderQP==='function')renderQP('combat');
@@ -28526,9 +28766,23 @@ function runWhenIdle(fn, timeoutMs){
   window.acceptProvinceRestBoon = function(col,row,boonKey,label){
     const hex=mapData.find(function(h){ return h.col===col&&h.row===row; });
     if(!hex)return;
+    if(window.campaignSystem&&typeof window.campaignSystem.requestPartyRestBoon==='function'){
+      window.campaignSystem.requestPartyRestBoon({
+        boonKey: String(boonKey||''),
+        label: String(label||'Rest'),
+        sourceKind: 'province',
+        sourceRef: { col:Number(col), row:Number(row) }
+      }).then(function(out){
+        if(out&&out.handled)return;
+      }).catch(function(){});
+      if(window.campaignSystem&&window.campaignSystem.getState&&window.campaignSystem.getState().connected){
+        return;
+      }
+    }
 
     if(typeof clearStress==='function')clearStress();
     else if(typeof changeStress==='function')changeStress(-999);
+    if(typeof clearMentalStress==='function')clearMentalStress();
 
     if(typeof clearAllConditions==='function'){
       clearAllConditions();

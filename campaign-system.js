@@ -119,6 +119,7 @@
     lastAppliedCampaignSoundtrackHash: "",
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
+    lastAppliedPartyRestEventId: "",
     lastProvinceMapHash: "",
     lastProvinceSelectionsHash: "",
     lastProvinceFocusSyncAt: 0,
@@ -2261,6 +2262,27 @@
     return sharedState.readyCheck;
   }
 
+  function ensurePartyRestEventState(sharedState) {
+    if (!sharedState) sharedState = getMutableCampaignSharedState();
+    if (!sharedState.partyRestEvent || typeof sharedState.partyRestEvent !== "object") {
+      sharedState.partyRestEvent = {
+        id: "",
+        boonKey: "",
+        label: "",
+        requestedBy: "",
+        requestedAt: 0,
+        appliedAt: 0,
+        sourceKind: "",
+        sourceRef: null,
+        targetTokens: []
+      };
+    }
+    if (!Array.isArray(sharedState.partyRestEvent.targetTokens)) {
+      sharedState.partyRestEvent.targetTokens = [];
+    }
+    return sharedState.partyRestEvent;
+  }
+
   function ensurePendingChecksState(sharedState) {
     if (!sharedState) sharedState = getMutableCampaignSharedState();
     if (!sharedState.pendingChecks || typeof sharedState.pendingChecks !== "object") {
@@ -2975,6 +2997,203 @@
     }
   }
 
+  function findOnlinePlayerParticipantTokens() {
+    var out = [];
+    var seen = {};
+    var participants = getCampaignParticipantRecords();
+    var now = Date.now();
+
+    participants.forEach(function (member) {
+      if (!member || String(member.role || "player") === "gm") return;
+      var token = String(member.token || "").trim();
+      if (!token || seen[token]) return;
+      var online = member.online !== false;
+      var lastSeenAt = Number(member.lastSeenAt || 0);
+      if (!online && (!lastSeenAt || (now - lastSeenAt) > 120000)) return;
+      seen[token] = true;
+      out.push(token);
+    });
+
+    if (!out.length && state.token) {
+      out.push(String(state.token));
+    }
+    return out;
+  }
+
+  function getRosterCharacterUpdatedAt(token) {
+    var wanted = String(token || "").trim();
+    if (!wanted || !state.campaign || !Array.isArray(state.campaign.roster)) return 0;
+    for (var i = 0; i < state.campaign.roster.length; i += 1) {
+      var member = state.campaign.roster[i];
+      if (!member || String(member.token || "") !== wanted || !member.character || typeof member.character !== "object") continue;
+      return Math.max(0, Number(member.character.updatedAt || 0));
+    }
+    return 0;
+  }
+
+  function applyLocalRestBoonEffects(boonKey, label, options) {
+    var opts = options && typeof options === "object" ? options : {};
+    if (typeof window.S === "undefined" || !window.S) return false;
+
+    if (typeof window.clearStress === "function") {
+      window.clearStress();
+    } else if (typeof window.changeStress === "function") {
+      window.changeStress(-999);
+    } else if (typeof window.clearHealth === "function") {
+      window.clearHealth();
+    }
+
+    if (typeof window.clearMentalStress === "function") {
+      window.clearMentalStress();
+    } else if (typeof window.changeMentalStress === "function") {
+      window.changeMentalStress(-999);
+    } else {
+      window.S.mentalStress = 0;
+    }
+
+    if (typeof window.clearAllConditions === "function") {
+      window.clearAllConditions();
+    } else if (window.S.conditions && typeof window.S.conditions === "object") {
+      Object.keys(window.S.conditions).forEach(function (key) {
+        window.S.conditions[key] = false;
+      });
+      if (typeof window.updateConditionButtons === "function") window.updateConditionButtons();
+      if (typeof window.updateAllStatDisplays === "function") window.updateAllStatDisplays();
+    }
+
+    if (boonKey && window.S.conditions && Object.prototype.hasOwnProperty.call(window.S.conditions, boonKey)) {
+      window.S.conditions[boonKey] = true;
+      if (typeof window.updateConditionButtons === "function") window.updateConditionButtons();
+      if (typeof window.updateAllStatDisplays === "function") window.updateAllStatDisplays();
+    }
+
+    if (Math.max(0, Number(opts.advanceDay || 0)) > 0 && typeof window.advanceDay === "function") {
+      window.advanceDay(Math.max(1, Number(opts.advanceDay || 1)));
+    }
+
+    if (typeof window.updateStressUI === "function") window.updateStressUI();
+    if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
+    if (typeof window.renderQP === "function") {
+      try { window.renderQP("char"); } catch (_err) {}
+    }
+
+    if (opts.preventStaleAuthoritativeOverwrite) {
+      state.lastAppliedSelfCharacterAt = Math.max(
+        Number(state.lastAppliedSelfCharacterAt || 0),
+        Number(opts.authoritativeAt || 0),
+        Date.now()
+      );
+    }
+    state.lastCharacterHash = JSON.stringify(collectCharacterSummary());
+
+    if (!opts.skipNotif) {
+      safeNotif((label || "Rest") + ": Long Rest complete, boon gained, +1 day.", "good");
+    }
+    return true;
+  }
+
+  function applyCampaignPartyRestWorldState(actionPayload) {
+    var payload = actionPayload && typeof actionPayload === "object" ? actionPayload : {};
+    var sourceKind = String(payload.sourceKind || "").trim();
+    var sourceRef = payload.sourceRef && typeof payload.sourceRef === "object" ? payload.sourceRef : {};
+    var boonKey = String(payload.boonKey || "").trim();
+
+    if (sourceKind === "province") {
+      if (typeof renderHexInfo === "function" && typeof selectedHex !== "undefined" && selectedHex) {
+        try { renderHexInfo(selectedHex); } catch (_err) {}
+      }
+      return;
+    }
+
+    if (sourceKind === "planet") {
+      if (typeof getActivePlanetHex === "function" && typeof ensurePlanetSurfaceState === "function") {
+        var activeHex = getActivePlanetHex();
+        var planetState = ensurePlanetSurfaceState(activeHex);
+        if (planetState && Array.isArray(planetState.cells)) {
+          var cellId = Number(sourceRef.cellId);
+          var cell = planetState.cells.find(function (entry) { return Number(entry && entry.id) === cellId; });
+          if (cell) cell.boonUsed = boonKey || cell.boonUsed || "";
+        }
+      }
+      if (typeof renderPlanetExplorationPanel === "function") {
+        try { renderPlanetExplorationPanel(); } catch (_err) {}
+      }
+      return;
+    }
+
+    if (sourceKind === "sea-landmark" || sourceKind === "sea-dungeon") {
+      var resultTitle = sourceKind === "sea-landmark"
+        ? "Landmark - Protected Resting Place"
+        : "Sea Ruins - Rest Boon";
+      var resultBody = sourceKind === "sea-landmark"
+        ? "You find respite at this sacred place. Long Rest complete, day advanced by 1, and Protected gained."
+        : "You make camp among the ruins. Long Rest complete, day advanced by 1, and Empowered gained.";
+      if (typeof seaHexByCoord === "function") {
+        var seaHex = seaHexByCoord(Number(sourceRef.col), Number(sourceRef.row));
+        if (seaHex) {
+          seaHex.resultHtml = '<div class="sea-result-title">' + escapeHtml(resultTitle) + '</div><div style="font-size:.82rem;color:var(--muted3);line-height:1.55;">' + escapeHtml(resultBody) + '</div>';
+          if (typeof renderLastSeaInfo === "function") {
+            try { renderLastSeaInfo(seaHex); } catch (_err) {}
+          }
+        }
+      }
+      return;
+    }
+
+    if (typeof renderLastSeaInfo === "function") {
+      try { renderLastSeaInfo(); } catch (_err) {}
+    }
+    if (typeof renderPlanetExplorationPanel === "function") {
+      try { renderPlanetExplorationPanel(); } catch (_err) {}
+    }
+    if (typeof renderHexInfo === "function" && typeof selectedHex !== "undefined" && selectedHex) {
+      try { renderHexInfo(selectedHex); } catch (_err) {}
+    }
+  }
+
+  function applyApprovedPartyRestBoonReadyCheck(ready, shared) {
+    var action = ready && ready.actionPayload && typeof ready.actionPayload === "object"
+      ? ready.actionPayload
+      : null;
+    if (!action || String(action.kind || "") !== "party-rest-boon") return false;
+
+    var targetTokens = Array.isArray(action.targetTokens)
+      ? action.targetTokens.map(function (token) { return String(token || "").trim(); }).filter(Boolean)
+      : [];
+    if (!targetTokens.length) {
+      targetTokens = findOnlinePlayerParticipantTokens();
+    }
+
+    if (typeof window.advanceDay === "function") {
+      window.advanceDay(1);
+    } else {
+      advanceSharedGameDate(1);
+    }
+
+    applyCampaignPartyRestWorldState(action);
+
+    var restEvent = ensurePartyRestEventState(shared);
+    restEvent.id = "party-rest-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
+    restEvent.boonKey = String(action.boonKey || "").trim();
+    restEvent.label = String(action.label || "Rest").trim() || "Rest";
+    restEvent.requestedBy = String(action.requestedBy || ready.requestedBy || "GM");
+    restEvent.requestedAt = Math.max(0, Number(action.requestedAt || ready.requestedAt || Date.now()));
+    restEvent.appliedAt = Date.now();
+    restEvent.sourceKind = String(action.sourceKind || "").trim();
+    restEvent.sourceRef = action.sourceRef && typeof action.sourceRef === "object"
+      ? (deepCloneJson(action.sourceRef) || action.sourceRef)
+      : null;
+    restEvent.targetTokens = targetTokens.slice();
+
+    appendSessionTimeline("rest", "Party rest completed: " + restEvent.label + ".", {
+      restId: restEvent.id,
+      boonKey: restEvent.boonKey,
+      targets: targetTokens.length
+    });
+    safeNotif(restEvent.label + ": party rest approved.", "good");
+    return true;
+  }
+
   function getReadyCheckResponseCount(readyCheck) {
     if (!readyCheck || !readyCheck.responses || typeof readyCheck.responses !== "object") return 0;
     return Object.keys(readyCheck.responses).filter(function (token) {
@@ -3444,6 +3663,8 @@
     });
     if (typeof cb === "function") {
       try { cb(); } catch (_err) {}
+    } else {
+      applyApprovedPartyRestBoonReadyCheck(ready, shared);
     }
     delete readyCheckCallbacks[ready.id];
     syncSharedState("ready-check-approved");
@@ -3531,12 +3752,23 @@
 
     state.lastReadyCheckPromptId = readyCheck.id;
     var label = String(readyCheck.label || "Shared action");
+    var requester = String(readyCheck.requestedBy || "GM");
+    var isPartyRest = String(readyCheck.type || "") === "rest-boon"
+      || !!(readyCheck.actionPayload && String(readyCheck.actionPayload.kind || "") === "party-rest-boon");
+    var introText = isPartyRest
+      ? (escapeHtml(requester) + " wants the party to take <strong style=\"color:var(--gold2);\">" + escapeHtml(label) + "</strong> together.")
+      : ("Party consent required before: <strong style=\"color:var(--gold2);\">" + escapeHtml(label) + "</strong>.");
+    var helpText = isPartyRest
+      ? "Accept Rest to stay on the same day phase and take the shared long rest boon."
+      : "Choose ready or not ready. GM can proceed after all are ready.";
+    var acceptLabel = isPartyRest ? "Accept Rest" : "Ready";
+    var declineLabel = isPartyRest ? "Not Yet" : "Not Ready";
     var html = ''
-      + '<div style="font-size:.84rem;color:var(--text2);line-height:1.6;margin-bottom:.5rem;">Party consent required before: <strong style="color:var(--gold2);">' + escapeHtml(label) + '</strong>.</div>'
-      + '<div style="font-size:.76rem;color:var(--muted2);margin-bottom:.55rem;">Choose ready or not ready. GM can proceed after all are ready.</div>'
+      + '<div style="font-size:.84rem;color:var(--text2);line-height:1.6;margin-bottom:.5rem;">' + introText + '</div>'
+      + '<div style="font-size:.76rem;color:var(--muted2);margin-bottom:.55rem;">' + helpText + '</div>'
       + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
-      + '<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.respondReadyCheck(true);closeModal();">Ready</button>'
-      + '<button class="btn btn-sm btn-warn" onclick="window.campaignSystem.respondReadyCheck(false);closeModal();">Not Ready</button>'
+      + '<button class="btn btn-sm btn-teal" onclick="window.campaignSystem.respondReadyCheck(true);closeModal();">' + acceptLabel + '</button>'
+      + '<button class="btn btn-sm btn-warn" onclick="window.campaignSystem.respondReadyCheck(false);closeModal();">' + declineLabel + '</button>'
       + '</div>';
     window.openModal('Ready Check', html);
   }
@@ -3608,6 +3840,63 @@
       label: String(label || "Enter area"),
       actionPayload: { kind: "area-entry", label: String(label || "Enter area") }
     }, runApproved, callback);
+  }
+
+  async function requestPartyRestBoon(spec) {
+    var details = spec && typeof spec === "object" ? spec : {};
+    var label = String(details.label || "Rest").trim() || "Rest";
+    var boonKey = String(details.boonKey || "").trim();
+    var sourceKind = String(details.sourceKind || "").trim();
+    var sourceRef = details.sourceRef && typeof details.sourceRef === "object"
+      ? (deepCloneJson(details.sourceRef) || details.sourceRef)
+      : {};
+
+    if (!state.code || !state.connected || !state.socket) {
+      return { ok: false, handled: false, local: true };
+    }
+
+    var targetTokens = findOnlinePlayerParticipantTokens();
+    if (!targetTokens.length) {
+      return { ok: false, handled: false, local: true };
+    }
+
+    if (state.role === "gm") {
+      startReadyCheck({
+        type: "rest-boon",
+        label: label,
+        requiredTokens: targetTokens,
+        actionPayload: {
+          kind: "party-rest-boon",
+          boonKey: boonKey,
+          label: label,
+          sourceKind: sourceKind,
+          sourceRef: sourceRef,
+          targetTokens: targetTokens.slice(),
+          requestedBy: String(state.playerName || ensureName() || "GM"),
+          requestedAt: Date.now()
+        }
+      }, null, function (res) {
+        if (!res || !res.ok) {
+          safeNotif((res && res.error) || "Could not start shared rest.", "warn");
+          return;
+        }
+        safeNotif(label + ": waiting for party acceptance.", "info");
+      });
+      return { ok: true, handled: true, campaign: true };
+    }
+
+    var res = await emitWithAck("campaign:requestPartyRestBoon", {
+      boonKey: boonKey,
+      label: label,
+      sourceKind: sourceKind,
+      sourceRef: sourceRef
+    });
+    if (!res || !res.ok) {
+      safeNotif((res && res.error) || "Could not request shared rest.", "warn");
+      return res || { ok: false, handled: true };
+    }
+    safeNotif(label + ": rest request sent to the table.", "info");
+    return { ok: true, handled: true, campaign: true };
   }
 
   function advanceSharedGameDate(intervals) {
@@ -3824,6 +4113,7 @@
       economyLedger: mergeEconomyLedger(current.economyLedger),
       provinceSelections: existingSelections,
       readyCheck: deepCloneJson(current.readyCheck || ensureReadyCheckState(current)),
+      partyRestEvent: deepCloneJson(current.partyRestEvent || ensurePartyRestEventState(current)),
       pendingChecks: deepCloneJson(current.pendingChecks || ensurePendingChecksState(current)),
       sessionTimeline: deepCloneJson(current.sessionTimeline || ensureSessionTimelineState(current)),
       gmForge: deepCloneJson(current.gmForge || ensureGmForgeState(current)),
@@ -4261,6 +4551,35 @@
           : incomingReadyCheck;
         if (String(current.readyCheck.status || "") !== "pending") {
           state.lastReadyCheckPromptId = "";
+        }
+      }
+      if (sharedState.partyRestEvent && typeof sharedState.partyRestEvent === "object") {
+        var current = getCampaignSharedState() || {};
+        current.partyRestEvent = deepCloneJson(sharedState.partyRestEvent) || ensurePartyRestEventState(current);
+        var restEvent = current.partyRestEvent;
+        var targetTokens = Array.isArray(restEvent.targetTokens) ? restEvent.targetTokens : [];
+        var appliesToMe = !!(state.token && targetTokens.indexOf(String(state.token)) >= 0);
+        var restEventId = String(restEvent.id || "");
+        var restAppliedAt = Math.max(0, Number(restEvent.appliedAt || 0));
+        var rosterUpdatedAt = getRosterCharacterUpdatedAt(state.token);
+        if (
+          restEventId
+          && appliesToMe
+          && restEventId !== String(state.lastAppliedPartyRestEventId || "")
+          && (!rosterUpdatedAt || restAppliedAt > rosterUpdatedAt)
+        ) {
+          var applied = applyLocalRestBoonEffects(restEvent.boonKey, restEvent.label, {
+            skipNotif: true,
+            preventStaleAuthoritativeOverwrite: true,
+            authoritativeAt: restAppliedAt
+          });
+          if (applied) {
+            state.lastAppliedPartyRestEventId = restEventId;
+            safeNotif((restEvent.label || "Rest") + ": party rest applied to your sheet.", "good");
+            syncCharacterToCampaign(true);
+          }
+        } else if (restEventId && rosterUpdatedAt && restAppliedAt && rosterUpdatedAt >= restAppliedAt) {
+          state.lastAppliedPartyRestEventId = restEventId;
         }
       }
       if (sharedState.pendingChecks && typeof sharedState.pendingChecks === "object") {
@@ -7399,6 +7718,8 @@
     var backpack = Array.isArray(c.backpack) ? c.backpack.filter(Boolean) : [];
     var loadout = c && c.loadout && typeof c.loadout === "object" ? c.loadout : {};
     var hacks = Array.isArray(c.hacks) ? c.hacks.filter(Boolean) : [];
+    var conditions = c && c.conditions && typeof c.conditions === "object" ? c.conditions : {};
+    var activeConditions = Object.keys(conditions).filter(function (key) { return !!conditions[key]; });
     var updatedAt = c && c.updatedAt ? Number(c.updatedAt) : Number(member && member.lastSeenAt || 0);
     var stress = Math.max(0, Number(c.stress != null ? c.stress : c.mentalStress || 0));
     var maxStress = Math.max(1, Number(c.maxMentalStress || c.mentalStressCap || c.stressCap || 20));
@@ -7435,6 +7756,9 @@
       + '</div>'
       + '<div class="info-cell"><span class="ic-label">OS Hacks</span>'
       + (hacks.length ? hacks.map(function (hack) { return '<span class="campaign-look-tag" style="margin:0 .2rem .2rem 0;display:inline-block;">' + escapeHtml(String(hack)) + '</span>'; }).join('') : '<span class="campaign-muted">No hacks synced.</span>')
+      + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Conditions</span>'
+      + (activeConditions.length ? escapeHtml(activeConditions.join(", ")) : '<span class="campaign-muted">No active conditions.</span>')
       + '</div>'
       + '<div class="info-cell"><span class="ic-label">Look / Flavor</span>' + escapeHtml(c.look || 'No look shared') + '</div>'
       + '<div class="info-cell"><span class="ic-label">Backpack</span>'
@@ -7494,6 +7818,9 @@
     var ownedHacks = (typeof window.S !== "undefined" && window.S && Array.isArray(window.S.ownedHacks))
       ? window.S.ownedHacks
       : [];
+    var conditions = (typeof window.S !== "undefined" && window.S && window.S.conditions && typeof window.S.conditions === "object")
+      ? window.S.conditions
+      : {};
     return {
       name: ensureName(),
       health: Math.max(0, Number(hp || 0)),
@@ -7522,6 +7849,16 @@
         weapon2: String(equipment.weapon2 || "").trim(),
         armor: String(equipment.armor || "").trim(),
         readied: String(equipment.readied || "").trim()
+      },
+      conditions: {
+        empowered: !!conditions.empowered,
+        protected: !!conditions.protected,
+        focused: !!conditions.focused,
+        bolstered: !!conditions.bolstered,
+        weakened: !!conditions.weakened,
+        vulnerable: !!conditions.vulnerable,
+        distracted: !!conditions.distracted,
+        shaken: !!conditions.shaken
       },
       hacks: ownedHacks.map(function (name) { return String(name || "").trim(); }).filter(Boolean),
       backpack: normalizeBackpackItems(window.S && window.S.backpack)
@@ -7553,6 +7890,9 @@
     var nextRads = Math.max(0, Number(character.rads || character.radiation || 0));
     var nextPathTokens = Math.max(0, Number(character.pathTokens || 0));
     var nextSuccessRolls = Math.max(0, Number(character.successRolls || character.successRollCount || 0));
+    var nextConditions = character.conditions && typeof character.conditions === "object"
+      ? character.conditions
+      : null;
     var changed = false;
 
     if (Number(window.S.health || 0) !== nextHealth) {
@@ -7577,6 +7917,39 @@
       window.S.successRollCount = nextSuccessRolls;
       changed = true;
     }
+    if (nextConditions && window.S.conditions && typeof window.S.conditions === "object") {
+      var nextConditionHash = JSON.stringify({
+        empowered: !!nextConditions.empowered,
+        protected: !!nextConditions.protected,
+        focused: !!nextConditions.focused,
+        bolstered: !!nextConditions.bolstered,
+        weakened: !!nextConditions.weakened,
+        vulnerable: !!nextConditions.vulnerable,
+        distracted: !!nextConditions.distracted,
+        shaken: !!nextConditions.shaken
+      });
+      var currentConditionHash = JSON.stringify({
+        empowered: !!window.S.conditions.empowered,
+        protected: !!window.S.conditions.protected,
+        focused: !!window.S.conditions.focused,
+        bolstered: !!window.S.conditions.bolstered,
+        weakened: !!window.S.conditions.weakened,
+        vulnerable: !!window.S.conditions.vulnerable,
+        distracted: !!window.S.conditions.distracted,
+        shaken: !!window.S.conditions.shaken
+      });
+      if (nextConditionHash !== currentConditionHash) {
+        window.S.conditions.empowered = !!nextConditions.empowered;
+        window.S.conditions.protected = !!nextConditions.protected;
+        window.S.conditions.focused = !!nextConditions.focused;
+        window.S.conditions.bolstered = !!nextConditions.bolstered;
+        window.S.conditions.weakened = !!nextConditions.weakened;
+        window.S.conditions.vulnerable = !!nextConditions.vulnerable;
+        window.S.conditions.distracted = !!nextConditions.distracted;
+        window.S.conditions.shaken = !!nextConditions.shaken;
+        changed = true;
+      }
+    }
 
     state.lastAppliedSelfCharacterAt = updatedAt || Date.now();
     state.lastCharacterHash = JSON.stringify(collectCharacterSummary());
@@ -7585,6 +7958,7 @@
     if (typeof window.updateStressUI === "function") window.updateStressUI();
     if (typeof window.updateMentalStressUI === "function") window.updateMentalStressUI();
     if (typeof window.updateRadsUI === "function") window.updateRadsUI();
+    if (typeof window.updateConditionButtons === "function") window.updateConditionButtons();
     var pathTokenEl = document.getElementById("pathTokensVal");
     if (pathTokenEl) pathTokenEl.textContent = String(window.S.pathTokens || 0);
     var successRollEl = document.getElementById("successRollsVal");
@@ -10112,6 +10486,7 @@
       state.token = "";
       state.campaign = null;
       state.activePromptId = "";
+      state.lastAppliedPartyRestEventId = "";
       state.uiDraft.code = "";
       state.uiDraft.joinPassword = "";
       state.lastPlayerDockSeed = "";
@@ -10838,6 +11213,7 @@
     state.activePromptId = "";
     state.sessionPersistenceSuppressed = false;
     state.lastAppliedSelfCharacterAt = 0;
+    state.lastAppliedPartyRestEventId = "";
     state.lastCharacterHash = "";
     state.lastAppliedCampaignSoundtrackHash = "";
     state.uiDraft.joinPassword = "";
@@ -12151,6 +12527,7 @@
     refreshSceneFocusState: refreshSceneFocusState,
     requestSharedConsent: requestSharedConsent,
     requestSharedWorldAction: requestSharedWorldAction,
+    requestPartyRestBoon: requestPartyRestBoon,
     syncProvinceEncounterResult: syncProvinceEncounterResult,
     respondReadyCheck: respondReadyCheck,
     forceApproveReadyCheck: forceApproveReadyCheck,

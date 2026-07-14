@@ -255,7 +255,7 @@
     if(!isConnectedCampaignGm()||typeof openModal!=='function'||typeof window==='undefined'||!window.campaignSystem)return false;
     var cfg=spec&&typeof spec==='object'?spec:{};
     var targets=getCampaignSceneTargets();
-    var defaultRollTarget=String(cfg.defaultRollTarget||((targets[0]&&targets[0].token)||'party')).trim()||'party';
+    var defaultRollTarget=String(cfg.defaultRollTarget||'party').trim()||'party';
     var defaultOutcomeTarget=String(cfg.defaultOutcomeTarget||'acting').trim()||'acting';
     var defaultStat=String(cfg.stat||'valor').toLowerCase();
     window._pendingCampaignSceneCheck={

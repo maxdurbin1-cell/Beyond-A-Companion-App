@@ -14480,9 +14480,23 @@ function acceptPlanetRestBoon(cellId, boonKey, label) {
   if (!state) return;
   const cell = state.cells.find((entry) => entry.id === Number(cellId));
   if (!cell) return;
+  if (window.campaignSystem && typeof window.campaignSystem.requestPartyRestBoon === 'function') {
+    window.campaignSystem.requestPartyRestBoon({
+      boonKey: String(boonKey || ''),
+      label: String(label || 'Rest'),
+      sourceKind: 'planet',
+      sourceRef: { cellId: Number(cellId) }
+    }).then(function(out) {
+      if (out && out.handled) return;
+    }).catch(function() {});
+    if (window.campaignSystem && window.campaignSystem.getState && window.campaignSystem.getState().connected) {
+      return;
+    }
+  }
 
   if (typeof clearStress === 'function') clearStress();
   else if (typeof changeStress === 'function') changeStress(-999);
+  if (typeof clearMentalStress === 'function') clearMentalStress();
 
   if (typeof clearAllConditions === 'function') {
     clearAllConditions();
