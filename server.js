@@ -47,6 +47,37 @@ const CAMPAIGN_SNAPSHOT_MIN_INTERVAL_MS = Math.max(50, Number(process.env.CAMPAI
 const CAMPAIGN_PERSIST_DEBOUNCE_MS = Math.max(50, Number(process.env.CAMPAIGN_PERSIST_DEBOUNCE_MS) || 250);
 const CAMPAIGN_BACKUP_INTERVAL_MS = Math.max(60 * 1000, Number(process.env.CAMPAIGN_BACKUP_INTERVAL_MS) || (5 * 60 * 1000));
 const CAMPAIGN_MAX_SNAPSHOT_BACKUPS = Math.max(3, Number(process.env.CAMPAIGN_MAX_SNAPSHOT_BACKUPS) || 18);
+const CAMPAIGN_ROLL_STATS = new Set(["body", "strike", "shoot", "mind", "spirit", "defend", "control", "lead", "valor"]);
+const CAMPAIGN_DREAD_DICE = new Set([4, 6, 8, 10, 12, 20]);
+const CAMPAIGN_ROLL_STAT_ALIASES = {
+  agility: "control",
+  sneak: "control",
+  stealth: "control",
+  notice: "mind",
+  observe: "mind",
+  lore: "mind",
+  power: "strike",
+  melee: "strike",
+  ranged: "shoot",
+  defense: "defend",
+  defence: "defend",
+  endurance: "body",
+  soul: "spirit",
+  command: "lead"
+};
+
+function normalizeCampaignRollStat(value) {
+  let key = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (!key) return "";
+  if (CAMPAIGN_ROLL_STAT_ALIASES[key]) key = CAMPAIGN_ROLL_STAT_ALIASES[key];
+  return CAMPAIGN_ROLL_STATS.has(key) ? key : "";
+}
+
+function normalizeCampaignDreadDie(value) {
+  const raw = String(value == null ? "" : value).trim().toLowerCase().replace(/^dd?/, "");
+  const die = Number(raw);
+  return CAMPAIGN_DREAD_DICE.has(die) ? die : 0;
+}
 const GM_ONLY_EVENTS = {
   "campaign:archive": true,
   "campaign:unarchive": true,
@@ -997,23 +1028,7 @@ function ensureCampaignShape(raw) {
       role: p.role === "gm" ? "gm" : "player",
       lastSeenAt: Number(p.lastSeenAt) || Date.now(),
       character: p && p.character && typeof p.character === "object"
-        ? {
-            name: String(p.character.name || p.name || "Wayfarer").slice(0, 48),
-            health: Math.max(0, Number(p.character.health || 0)),
-            maxHealth: Math.max(1, Number(p.character.maxHealth || p.character.maxStress || 1)),
-            mentalStress: Math.max(0, Number((typeof p.character.mentalStress === "number" ? p.character.mentalStress : p.character.stress) || 0)),
-            maxMentalStress: Math.max(1, Number(p.character.maxMentalStress || p.character.mentalStressCap || p.character.stressCap || 20)),
-            stress: Math.max(0, Number((typeof p.character.mentalStress === "number" ? p.character.mentalStress : p.character.stress) || 0)),
-            pathTokens: Math.max(0, Number(p.character.pathTokens || 0)),
-            look: String(p.character.look || "").slice(0, 180),
-            stats: p.character.stats && typeof p.character.stats === "object" ? p.character.stats : {},
-            loadout: p.character.loadout && typeof p.character.loadout === "object" ? p.character.loadout : {},
-            hacks: Array.isArray(p.character.hacks) ? p.character.hacks : [],
-            backpack: Array.isArray(p.character.backpack)
-              ? p.character.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
-              : [],
-            updatedAt: Number(p.character.updatedAt) || Date.now()
-          }
+        ? normalizeCharacter(p.character, p.name || "Wayfarer")
         : null
     });
   }
@@ -1082,12 +1097,19 @@ function serializeCampaign(campaign) {
             name: String(p.character.name || p.name || "Wayfarer").slice(0, 48),
             health: Math.max(0, Number(p.character.health || 0)),
             maxHealth: Math.max(1, Number(p.character.maxHealth || p.character.maxStress || 1)),
+            damageTaken: Math.max(0, Number(p.character.damageTaken || 0)),
+            healthModel: String(p.character.healthModel || "remaining"),
             mentalStress: Math.max(0, Number((typeof p.character.mentalStress === "number" ? p.character.mentalStress : p.character.stress) || 0)),
             maxMentalStress: Math.max(1, Number(p.character.maxMentalStress || p.character.mentalStressCap || p.character.stressCap || 20)),
             stress: Math.max(0, Number((typeof p.character.mentalStress === "number" ? p.character.mentalStress : p.character.stress) || 0)),
+            rads: Math.max(0, Number(p.character.rads || p.character.radiation || 0)),
+            pathTokens: Math.max(0, Number(p.character.pathTokens || 0)),
+            successRolls: Math.max(0, Number(p.character.successRolls || p.character.successRollCount || 0)),
+            successRollCount: Math.max(0, Number(p.character.successRolls || p.character.successRollCount || 0)),
             look: String(p.character.look || "").slice(0, 180),
             stats: p.character.stats && typeof p.character.stats === "object" ? p.character.stats : {},
             loadout: p.character.loadout && typeof p.character.loadout === "object" ? p.character.loadout : {},
+            conditions: p.character.conditions && typeof p.character.conditions === "object" ? p.character.conditions : {},
             hacks: Array.isArray(p.character.hacks) ? p.character.hacks : [],
             backpack: Array.isArray(p.character.backpack)
               ? p.character.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
@@ -1125,7 +1147,7 @@ function serializeCampaign(campaign) {
         }
       : null,
     log: Array.isArray(campaign.log) ? campaign.log.slice(-250) : [],
-    updatedAt: Date.now()
+    updatedAt: Number(campaign.updatedAt || 0) || Date.now()
   };
 }
 
@@ -1328,6 +1350,8 @@ function snapshotCampaign(campaign, requesterToken) {
             name: String(member.character.name || member.name || "Wayfarer").slice(0, 48),
             health: Math.max(0, Number(member.character.health || 0)),
             maxHealth: Math.max(1, Number(member.character.maxHealth || member.character.maxStress || 1)),
+            damageTaken: Math.max(0, Number(member.character.damageTaken || 0)),
+            healthModel: String(member.character.healthModel || "remaining"),
             mentalStress: Math.max(0, Number((typeof member.character.mentalStress === "number" ? member.character.mentalStress : member.character.stress) || 0)),
             maxMentalStress: Math.max(1, Number(member.character.maxMentalStress || member.character.mentalStressCap || member.character.stressCap || 20)),
             stress: Math.max(0, Number((typeof member.character.mentalStress === "number" ? member.character.mentalStress : member.character.stress) || 0)),
@@ -1618,6 +1642,15 @@ function normalizeCharacter(input, fallbackName) {
   const maxHealthFromStats = Math.max(1, Number((stats.defend || stats.body || stats.valor || 4)) * 2);
   const maxHealth = Math.max(1, Number(c.maxHealth || c.maxStress || maxHealthFromStats));
   const maxMentalStress = Math.max(1, Number(c.maxMentalStress || c.mentalStressCap || c.stressCap || 20));
+  const hasRemainingHealthModel = String(c.healthModel || "").toLowerCase() === "remaining"
+    || Number.isFinite(Number(c.damageTaken));
+  const rawDamageTaken = hasRemainingHealthModel
+    ? (Number.isFinite(Number(c.damageTaken))
+        ? Number(c.damageTaken)
+        : maxHealth - Math.max(0, Number(c.health || 0)))
+    : Math.max(0, Number(c.health || 0));
+  const damageTaken = Math.max(0, Math.min(maxHealth, rawDamageTaken));
+  const remainingHealth = Math.max(0, maxHealth - damageTaken);
   const loadoutInput = c.loadout && typeof c.loadout === "object" ? c.loadout : {};
   const loadout = {
     weapon1: String(loadoutInput.weapon1 || c.weapon1 || "").trim().slice(0, 120),
@@ -1640,8 +1673,10 @@ function normalizeCharacter(input, fallbackName) {
   const hacks = hacksInput.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 40);
   return {
     name: String(c.name || fallbackName || "Wayfarer").slice(0, 48),
-    health: Math.max(0, Number(c.health || 0)),
+    health: remainingHealth,
     maxHealth,
+    damageTaken,
+    healthModel: "remaining",
     mentalStress,
     maxMentalStress,
     stress: mentalStress,
@@ -1657,7 +1692,7 @@ function normalizeCharacter(input, fallbackName) {
     backpack: Array.isArray(c.backpack)
       ? c.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
       : [],
-    updatedAt: Date.now()
+    updatedAt: Number(c.updatedAt || 0) || Date.now()
   };
 }
 
@@ -1833,6 +1868,8 @@ function applyAutoResolvedRollRequestOutcome(campaign, request, response) {
     if (characterDelta.health !== 0) {
       const maxHealth = Math.max(1, Number(participant.character.maxHealth || participant.character.maxStress || 1));
       participant.character.health = Math.max(0, Math.min(maxHealth, Number(participant.character.health || 0) + characterDelta.health));
+      participant.character.damageTaken = Math.max(0, maxHealth - participant.character.health);
+      participant.character.healthModel = "remaining";
     }
     if (characterDelta.mentalStress !== 0) {
       const maxMentalStress = Math.max(1, Number(participant.character.maxMentalStress || participant.character.mentalStressCap || participant.character.stressCap || 20));
@@ -3479,6 +3516,8 @@ io.on("connection", (socket) => {
       if (healthDelta !== 0) {
         const maxHealth = Math.max(1, Number(participant.character.maxHealth || participant.character.maxStress || 1));
         participant.character.health = Math.max(0, Math.min(maxHealth, Number(participant.character.health || 0) + healthDelta));
+        participant.character.damageTaken = Math.max(0, maxHealth - participant.character.health);
+        participant.character.healthModel = "remaining";
       }
       if (mentalStressDelta !== 0) {
         const maxMentalStress = Math.max(1, Number(participant.character.maxMentalStress || participant.character.mentalStressCap || participant.character.stressCap || 20));
@@ -3675,8 +3714,16 @@ io.on("connection", (socket) => {
     const token = socket.data.token;
     if (!requireGmAction(campaign, token, "campaign:rollRequest", ack)) return;
 
-    const dread = Math.max(1, Number((payload && payload.dread) || 8));
-    const stat = String((payload && payload.stat) || "valor").trim().slice(0, 32) || "valor";
+    const dread = normalizeCampaignDreadDie(payload && payload.dread);
+    const stat = normalizeCampaignRollStat(payload && payload.stat);
+    if (!stat) {
+      if (typeof ack === "function") ack({ ok: false, error: "Roll requests must use a character-sheet stat." });
+      return;
+    }
+    if (!dread) {
+      if (typeof ack === "function") ack({ ok: false, error: "Dread must use d4, d6, d8, d10, d12, or d20." });
+      return;
+    }
     const label = String((payload && payload.label) || "GM Check").trim().slice(0, 80) || "GM Check";
     const pendingCheckId = String((payload && payload.pendingCheckId) || "").trim();
     const autoResolveOnSubmit = !!(payload && payload.autoResolveOnSubmit);

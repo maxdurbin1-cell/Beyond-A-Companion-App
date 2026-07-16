@@ -2,6 +2,56 @@
 (function () {
   var SESSION_KEY = "beyond-light-campaign-session";
   var STALE_SYNC_MS = 12000;
+  var CAMPAIGN_ROLL_STATS = ["body", "strike", "shoot", "mind", "spirit", "defend", "control", "lead", "valor"];
+  var CAMPAIGN_DREAD_DICE = [4, 6, 8, 10, 12, 20];
+  var CAMPAIGN_ROLL_STAT_ALIASES = {
+    agility: "control",
+    sneak: "control",
+    stealth: "control",
+    notice: "mind",
+    observe: "mind",
+    lore: "mind",
+    power: "strike",
+    melee: "strike",
+    ranged: "shoot",
+    defense: "defend",
+    defence: "defend",
+    endurance: "body",
+    soul: "spirit",
+    command: "lead"
+  };
+
+  function normalizeCampaignRollStat(value) {
+    var key = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+    if (!key) return "";
+    if (CAMPAIGN_ROLL_STAT_ALIASES[key]) key = CAMPAIGN_ROLL_STAT_ALIASES[key];
+    return CAMPAIGN_ROLL_STATS.indexOf(key) >= 0 ? key : "";
+  }
+
+  function normalizeCampaignDreadDie(value) {
+    var raw = String(value == null ? "" : value).trim().toLowerCase().replace(/^dd?/, "");
+    var die = Number(raw);
+    return CAMPAIGN_DREAD_DICE.indexOf(die) >= 0 ? die : 0;
+  }
+
+  function campaignRollStatLabel(value) {
+    var key = normalizeCampaignRollStat(value) || "lead";
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  }
+
+  function buildCampaignRollStatOptionsHtml(selectedStat) {
+    var selected = normalizeCampaignRollStat(selectedStat) || "lead";
+    return CAMPAIGN_ROLL_STATS.map(function (stat) {
+      return '<option value="' + stat + '"' + (stat === selected ? ' selected' : '') + '>' + campaignRollStatLabel(stat) + '</option>';
+    }).join("");
+  }
+
+  function buildCampaignDreadOptionsHtml(selectedDread) {
+    var selected = normalizeCampaignDreadDie(selectedDread) || 8;
+    return CAMPAIGN_DREAD_DICE.map(function (die) {
+      return '<option value="' + die + '"' + (die === selected ? ' selected' : '') + '>Dread d' + die + '</option>';
+    }).join("");
+  }
 
   function getSessionStorageSafe() {
     try {
@@ -2660,8 +2710,8 @@
   function buildPendingCheckRecord(spec) {
     var details = spec && typeof spec === "object" ? spec : {};
     var id = "check-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
-    var stat = String(details.stat || details.statKey || "").toLowerCase();
-    var dread = Number(details.dread || details.dreadDie || details.dd || 0) || 0;
+    var stat = normalizeCampaignRollStat(details.stat || details.statKey || "");
+    var dread = normalizeCampaignDreadDie(details.dread || details.dreadDie || details.dd || 0);
     var initialSubmissions = Array.isArray(details.submissions) ? details.submissions.map(buildPendingCheckSubmission).filter(function (row) {
       return !!String(row && row.token || "");
     }) : [];
@@ -2673,7 +2723,7 @@
       label: String(details.label || details.context || "Shared Check").slice(0, 100),
       stat: stat,
       statOptions: Array.isArray(details.statOptions) ? details.statOptions.map(function (row) {
-        return String(row || "").trim().toLowerCase();
+        return normalizeCampaignRollStat(row);
       }).filter(Boolean).slice(0, 8) : (stat ? [stat] : []),
       dread: dread,
       stake: String(details.stake || details.stakes || "").slice(0, 180),
@@ -2763,17 +2813,28 @@
     }
   }
 
+  function getLocalSheetMaxHealth() {
+    if (!window.S) return 1;
+    var stats = window.S.stats && typeof window.S.stats === "object" ? window.S.stats : {};
+    var defendDie = typeof window.getEffectiveDie === "function"
+      ? Number(window.getEffectiveDie("defend") || 4)
+      : Number(stats.defend || stats.body || 4);
+    var tempBonus = Math.max(0, Number(window.S.tempStressCapacityBonus || 0));
+    return Math.max(1, Number(window.S.maxHealth || window.S.maxStress || ((Math.max(4, defendDie) * 2) + tempBonus)) || 1);
+  }
+
   function applyLocalCharacterDeltaIfTargeted(targetTokens, rawDelta) {
     if (!window.S || !state.token || !Array.isArray(targetTokens) || targetTokens.indexOf(String(state.token || "")) < 0) return false;
     var characterDelta = normalizeSceneCharacterDelta(rawDelta);
     var changed = false;
 
     if (characterDelta.health !== 0) {
-      var maxHealth = Math.max(1, Number(window.S.maxHealth || window.S.maxStress || 1) || 1);
-      var nextHealth = Math.max(0, Math.min(maxHealth, Number(window.S.health || 0) + characterDelta.health));
-      if (Number(window.S.health || 0) !== nextHealth) {
-        window.S.health = nextHealth;
-        window.S.stress = nextHealth;
+      var maxHealth = getLocalSheetMaxHealth();
+      // Campaign deltas use remaining HP; the local sheet stores damage taken.
+      var nextDamageTaken = Math.max(0, Math.min(maxHealth, Number(window.S.health || 0) - characterDelta.health));
+      if (Number(window.S.health || 0) !== nextDamageTaken) {
+        window.S.health = nextDamageTaken;
+        window.S.stress = nextDamageTaken;
         changed = true;
       }
     }
@@ -2840,8 +2901,12 @@
     if (!state.code || !state.connected) return { ok: false, handled: false, error: "Not connected." };
     var details = spec && typeof spec === "object" ? spec : {};
     var label = String(details.label || details.context || "Scene Check").trim() || "Scene Check";
-    var stat = String(details.stat || "valor").trim().toLowerCase() || "valor";
-    var dread = Math.max(4, Number(details.dread || 6) || 6);
+    var stat = normalizeCampaignRollStat(details.stat || "lead");
+    var dread = normalizeCampaignDreadDie(details.dread || 6);
+    if (!stat || !dread) {
+      safeNotif("Scene checks must use a character-sheet stat and a standard Dread die.", "warn");
+      return { ok: false, handled: true, error: "Invalid campaign roll contract." };
+    }
 
     if (state.role === "gm") {
       if (typeof window.openCampaignSceneCheckPrompt !== "function") {
@@ -2913,6 +2978,15 @@
     if (state.role !== "gm") {
       guardGmCheckResolution(spec);
       return { ok: false, blocked: true, error: "Only the GM can resolve shared campaign checks." };
+    }
+    var details = spec && typeof spec === "object" ? spec : {};
+    var rawStat = details.stat || details.statKey || "";
+    var rawDread = details.dread || details.dreadDie || details.dd || 0;
+    if (rawStat && !normalizeCampaignRollStat(rawStat)) {
+      return { ok: false, error: "Shared checks must use a character-sheet stat." };
+    }
+    if (rawDread && !normalizeCampaignDreadDie(rawDread)) {
+      return { ok: false, error: "Shared checks must use a standard Dread die." };
     }
     var shared = getMutableCampaignSharedState();
     var pending = ensurePendingChecksState(shared);
@@ -3356,6 +3430,33 @@
     return out;
   }
 
+  function buildGmRollTargetOptionsHtml(selectedToken) {
+    var selected = String(selectedToken || "").trim();
+    var options = ['<option value=""' + (!selected ? ' selected' : '') + '>Entire Party</option>'];
+    getRollPromptTargets().forEach(function (row) {
+      var token = String(row && row.token || "").trim();
+      if (!token) return;
+      var label = String(row && row.name || "Wayfarer") + (row && row.online === false ? " (Offline)" : "");
+      options.push('<option value="' + escapeHtml(token) + '"' + (token === selected ? ' selected' : '') + '>' + escapeHtml(label) + '</option>');
+    });
+    return options.join("");
+  }
+
+  function updateGmRollCallPreview() {
+    var preview = document.getElementById("campaignRollSheetPreview");
+    if (!preview) return;
+    var target = readUiValue("campaignRollTarget").trim();
+    var stat = normalizeCampaignRollStat(readUiValue("campaignRollStat")) || "lead";
+    var dread = normalizeCampaignDreadDie(readUiValue("campaignRollDread")) || 8;
+    if (!target) {
+      preview.innerHTML = 'Entire Party · each Wayfarer rolls <strong>' + escapeHtml(campaignRollStatLabel(stat)) + '</strong> from their own sheet vs <strong>Dread d' + dread + '</strong>. The GM resolves the shared outcome after submissions.';
+      return;
+    }
+    var targetName = getCampaignCharacterName(target, "Wayfarer");
+    var actionDie = getCampaignCharacterDie(target, stat, 4);
+    preview.innerHTML = '<strong>' + escapeHtml(targetName) + '</strong> rolls <strong>' + escapeHtml(campaignRollStatLabel(stat)) + ' d' + actionDie + '</strong> vs <strong>Dread d' + dread + '</strong>. The result applies to that character automatically.';
+  }
+
   function getCampaignRosterMember(token) {
     return getCampaignParticipantRecord(token);
   }
@@ -3374,7 +3475,7 @@
   }
 
   function getCampaignCharacterDie(token, statKey, fallback) {
-    var key = String(statKey || "valor").trim().toLowerCase();
+    var key = normalizeCampaignRollStat(statKey) || "valor";
     var minDie = Math.max(4, Number(fallback || 4) || 4);
     var snapshot = getCampaignCharacterSnapshot(token);
     if (!snapshot || !snapshot.stats || typeof snapshot.stats !== "object") return minDie;
@@ -7812,6 +7913,8 @@
     var maxMentalStress = (typeof window.S !== "undefined" && window.S && Number(window.S.maxMentalStress) > 0)
       ? Math.max(1, Number(window.S.maxMentalStress))
       : 20;
+    var damageTaken = Math.max(0, Math.min(maxHealth, Number(hp || 0)));
+    var remainingHealth = Math.max(0, maxHealth - damageTaken);
     var equipment = (typeof window.S !== "undefined" && window.S && window.S.equipment && typeof window.S.equipment === "object")
       ? window.S.equipment
       : {};
@@ -7823,8 +7926,10 @@
       : {};
     return {
       name: ensureName(),
-      health: Math.max(0, Number(hp || 0)),
+      health: remainingHealth,
       maxHealth: maxHealth,
+      damageTaken: damageTaken,
+      healthModel: "remaining",
       mentalStress: Math.max(0, Number(mentalStress || 0)),
       maxMentalStress: maxMentalStress,
       stress: Math.max(0, Number(mentalStress || 0)),
@@ -7885,7 +7990,14 @@
     var updatedAt = Number(character.updatedAt || 0) || 0;
     if (updatedAt && updatedAt <= Number(state.lastAppliedSelfCharacterAt || 0)) return false;
 
-    var nextHealth = Math.max(0, Number(character.health || 0));
+    var snapshotMaxHealth = Math.max(1, Number(character.maxHealth || resolveCharacterMaxHealth(character)) || 1);
+    var hasRemainingHealthModel = String(character.healthModel || "").toLowerCase() === "remaining"
+      || Number.isFinite(Number(character.damageTaken));
+    var nextDamageTaken = hasRemainingHealthModel
+      ? Math.max(0, Math.min(snapshotMaxHealth, Number.isFinite(Number(character.damageTaken))
+          ? Number(character.damageTaken)
+          : snapshotMaxHealth - Math.max(0, Number(character.health || 0))))
+      : Math.max(0, Math.min(snapshotMaxHealth, Number(character.health || 0)));
     var nextMentalStress = Math.max(0, Number((typeof character.mentalStress === "number" ? character.mentalStress : character.stress) || 0));
     var nextRads = Math.max(0, Number(character.rads || character.radiation || 0));
     var nextPathTokens = Math.max(0, Number(character.pathTokens || 0));
@@ -7895,9 +8007,9 @@
       : null;
     var changed = false;
 
-    if (Number(window.S.health || 0) !== nextHealth) {
-      window.S.health = nextHealth;
-      window.S.stress = nextHealth;
+    if (Number(window.S.health || 0) !== nextDamageTaken) {
+      window.S.health = nextDamageTaken;
+      window.S.stress = nextDamageTaken;
       changed = true;
     }
     if (Number(window.S.mentalStress || 0) !== nextMentalStress) {
@@ -8896,16 +9008,19 @@
         ? (""
           + '<div class="campaign-card">'
           + '<div class="campaign-card-title">GM Roll Call</div>'
-          + '<div class="campaign-roll-grid">'
-          + '<input id="campaignRollLabel" class="campaign-input" type="text" maxlength="80" placeholder="Dread Check" value="Dread Check">'
-          + '<input id="campaignRollStat" class="campaign-input" type="text" maxlength="32" placeholder="valor" value="valor">'
-          + '<input id="campaignRollDread" class="campaign-input" type="number" min="1" max="20" value="8">'
+          + '<div class="campaign-muted" style="margin-bottom:.35rem;">Assign the acting Wayfarer, choose the exact sheet stat, and call a standard Dread die.</div>'
+          + '<input id="campaignRollLabel" class="campaign-input" style="width:100%;" type="text" maxlength="80" placeholder="Roll context, obstacle, or stakes" value="Dread Check">'
+          + '<div class="campaign-roll-grid" style="margin-top:.3rem;">'
+          + '<select id="campaignRollTarget" class="campaign-input" onchange="window.campaignSystem.updateGmRollCallPreview()">' + buildGmRollTargetOptionsHtml("") + '</select>'
+          + '<select id="campaignRollStat" class="campaign-input" onchange="window.campaignSystem.updateGmRollCallPreview()">' + buildCampaignRollStatOptionsHtml("lead") + '</select>'
+          + '<select id="campaignRollDread" class="campaign-input" onchange="window.campaignSystem.updateGmRollCallPreview()">' + buildCampaignDreadOptionsHtml(8) + '</select>'
           + "</div>"
+          + '<div id="campaignRollSheetPreview" class="campaign-muted" style="margin-top:.35rem;padding:.35rem .45rem;border:1px solid var(--border2);background:rgba(255,255,255,.025);"></div>'
           + '<div class="campaign-actions" style="margin-top:.35rem;">'
           + '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.callRollRequest()"' + riskyDisabledAttr + '>Call Roll</button>'
           + '<button class="btn btn-xs" onclick="window.campaignSystem.closeActiveRoll()"' + riskyDisabledAttr + '>Close Active</button>'
           + "</div>"
-          + (active ? ('<div class="campaign-muted" style="margin-top:.35rem;">Active: ' + escapeHtml(active.label) + ' · ' + escapeHtml(active.stat) + ' vs d' + Number(active.dread || 8) + '</div>') : '<div class="campaign-muted" style="margin-top:.35rem;">No active roll request.</div>')
+          + (active ? ('<div class="campaign-muted" style="margin-top:.35rem;">Active: ' + escapeHtml(active.label) + ' · ' + escapeHtml(campaignRollStatLabel(active.stat)) + ' vs d' + Number(active.dread || 8) + ' · ' + escapeHtml(active.targetName || 'Entire Party') + '</div>') : '<div class="campaign-muted" style="margin-top:.35rem;">No active roll request.</div>')
           + "</div>")
         : "")
       + (isGm
@@ -9246,6 +9361,7 @@
       + "</div>";
 
     bindDraftInputs();
+    updateGmRollCallPreview();
     applyGmCompactLayout();
     applyPlayerCompactLayout();
     applyPlayerLiteMode();
@@ -11078,11 +11194,13 @@
   }
 
   function resolveActionDie(stat) {
+    var key = normalizeCampaignRollStat(stat);
+    if (!key) return 4;
     if (typeof window.getEffectiveDie === "function") {
-      return Number(window.getEffectiveDie(stat) || 4);
+      return Number(window.getEffectiveDie(key) || 4);
     }
     if (typeof window.S !== "undefined" && window.S && window.S.stats) {
-      return Number(window.S.stats[stat] || 4);
+      return Number(window.S.stats[key] || 4);
     }
     return 4;
   }
@@ -11235,10 +11353,15 @@
 
   async function callRollRequest() {
     var label = readUiValue("campaignRollLabel").trim() || "Dread Check";
-    var stat = readUiValue("campaignRollStat").trim().toLowerCase() || "valor";
-    var dread = Math.max(1, Number(readUiValue("campaignRollDread") || 8));
+    var stat = normalizeCampaignRollStat(readUiValue("campaignRollStat"));
+    var dread = normalizeCampaignDreadDie(readUiValue("campaignRollDread"));
+    var target = readUiValue("campaignRollTarget").trim();
+    if (!stat || !dread) {
+      safeNotif("Choose a character-sheet stat and a standard Dread die.", "warn");
+      return { ok: false, error: "Invalid campaign roll contract." };
+    }
 
-    return requestRollPrompt(label, stat, dread, "");
+    return requestRollPrompt(label, stat, dread, target);
   }
 
   async function requestRollPrompt(label, stat, dread, targetToken, options) {
@@ -11251,8 +11374,16 @@
 
     var opts = options && typeof options === "object" ? options : {};
     var nextLabel = String(label || "Dread Check").trim() || "Dread Check";
-    var nextStat = String(stat || "valor").trim().toLowerCase() || "valor";
-    var nextDread = Math.max(1, Number(dread || 8));
+    var nextStat = normalizeCampaignRollStat(stat);
+    var nextDread = normalizeCampaignDreadDie(dread);
+    if (!nextStat) {
+      safeNotif("Roll requests must use Body, Strike, Shoot, Mind, Spirit, Defend, Control, Lead, or Valor.", "warn");
+      return { ok: false, error: "Unsupported campaign roll stat." };
+    }
+    if (!nextDread) {
+      safeNotif("Dread must use d4, d6, d8, d10, d12, or d20.", "warn");
+      return { ok: false, error: "Unsupported campaign Dread die." };
+    }
     var payload = { label: nextLabel, stat: nextStat, dread: nextDread };
     var target = String(targetToken || "").trim();
     var providedPendingCheckId = "";
@@ -12543,6 +12674,9 @@
     showOnboarding: showOnboarding,
     requestResync: requestResync,
     requestRollPrompt: requestRollPrompt,
+    normalizeRollStat: normalizeCampaignRollStat,
+    normalizeDreadDie: normalizeCampaignDreadDie,
+    updateGmRollCallPreview: updateGmRollCallPreview,
     getRollPromptTargets: getRollPromptTargets,
     getCampaignCharacterSnapshot: getCampaignCharacterSnapshot,
     getCampaignCharacterName: getCampaignCharacterName,

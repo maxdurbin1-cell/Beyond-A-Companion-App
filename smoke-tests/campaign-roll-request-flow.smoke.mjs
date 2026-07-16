@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 import { chromium } from "playwright";
@@ -37,11 +39,17 @@ async function pickAvailablePort(preferredPort = 3000) {
   throw new Error("Unable to find a free local port for campaign roll request smoke test.");
 }
 
-function startServer(port) {
+function startServer(port, tempRoot) {
   const child = spawn("node", ["server.js"], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT: String(port) }
+    env: {
+      ...process.env,
+      PORT: String(port),
+      CAMPAIGN_STORE_PATH: process.env.CAMPAIGN_STORE_PATH || path.join(tempRoot, "campaign-data.json"),
+      CAMPAIGN_SNAPSHOT_DIR: process.env.CAMPAIGN_SNAPSHOT_DIR || path.join(tempRoot, "snapshots"),
+      LICENSE_STORE_PATH: process.env.LICENSE_STORE_PATH || path.join(tempRoot, "license-data.json")
+    }
   });
 
   child.stdout.on("data", (buf) => {
@@ -126,14 +134,14 @@ async function prepareClient(page, baseUrl) {
   await dismissBlockingOverlays(page);
 }
 
-async function requestTargetedPrompt(gmPage, label, stat, dread) {
+async function requestTargetedPrompt(gmPage, label, stat, dread, options = {}) {
   const result = await gmPage.evaluate(async (payload) => {
     const st = window.campaignSystem.getState();
     const roster = st && st.campaign && (st.campaign.roster || st.campaign.members) || [];
     const player = roster.find((entry) => entry && entry.role !== "gm");
     if (!player || !player.token) return { ok: false, error: "Could not find player token." };
-    return window.campaignSystem.requestRollPrompt(payload.label, payload.stat, payload.dread, player.token);
-  }, { label, stat, dread });
+    return window.campaignSystem.requestRollPrompt(payload.label, payload.stat, payload.dread, player.token, payload.options);
+  }, { label, stat, dread, options });
   if (!result || !result.ok) {
     throw new Error(`Targeted prompt failed: ${JSON.stringify(result)}`);
   }
@@ -144,7 +152,8 @@ async function main() {
   const preferredPort = process.env.PORT ? Number(process.env.PORT) : 4100;
   const port = await pickAvailablePort(preferredPort);
   const baseUrl = process.env.SMOKE_URL || `http://127.0.0.1:${port}`;
-  const server = process.env.SMOKE_URL ? null : startServer(port);
+  const tempRoot = path.join(os.tmpdir(), `btl-campaign-roll-request-${process.pid}-${Date.now()}`);
+  const server = startServer(port, tempRoot);
   let browser;
 
   try {
@@ -195,6 +204,9 @@ async function main() {
     await playerPage.evaluate(async () => {
       window.S.stats.lead = 8;
       window.S.stats.control = 8;
+      window.S.stats.defend = 8;
+      window.S.health = 0;
+      window.S.stress = 0;
       window.S.pathTokens = 0;
       window.S.successRolls = 0;
       window.S.successRollCount = 0;
@@ -211,6 +223,63 @@ async function main() {
       }
     });
     await wait(1000);
+
+    const gmRollCallUi = await gmPage.evaluate(() => {
+      window.campaignSystem.refreshUI();
+      const target = document.getElementById("campaignRollTarget");
+      const stat = document.getElementById("campaignRollStat");
+      const dread = document.getElementById("campaignRollDread");
+      return {
+        targetTag: target && target.tagName,
+        targetOptions: target ? target.options.length : 0,
+        statTag: stat && stat.tagName,
+        statValues: stat ? Array.from(stat.options).map((option) => option.value) : [],
+        dreadTag: dread && dread.tagName,
+        dreadValues: dread ? Array.from(dread.options).map((option) => Number(option.value)) : [],
+        hasPreview: !!document.getElementById("campaignRollSheetPreview")
+      };
+    });
+    if (gmRollCallUi.targetTag !== "SELECT" || gmRollCallUi.targetOptions < 2 || gmRollCallUi.statTag !== "SELECT" || gmRollCallUi.dreadTag !== "SELECT" || !gmRollCallUi.hasPreview) {
+      throw new Error(`GM Roll Call is not using controlled target/stat/dread inputs: ${JSON.stringify(gmRollCallUi)}`);
+    }
+    if (!gmRollCallUi.statValues.includes("lead") || gmRollCallUi.statValues.includes("action")) {
+      throw new Error(`GM Roll Call exposed an invalid stat contract: ${JSON.stringify(gmRollCallUi)}`);
+    }
+    if (JSON.stringify(gmRollCallUi.dreadValues) !== JSON.stringify([4, 6, 8, 10, 12, 20])) {
+      throw new Error(`GM Roll Call exposed non-standard Dread dice: ${JSON.stringify(gmRollCallUi)}`);
+    }
+
+    const rejectedContracts = await gmPage.evaluate(async () => {
+      const st = window.campaignSystem.getState();
+      const roster = st && st.campaign && (st.campaign.roster || st.campaign.members) || [];
+      const player = roster.find((entry) => entry && entry.role !== "gm");
+      return {
+        invalidStat: await window.campaignSystem.requestRollPrompt("Invalid Stat", "Action Die", 8, player.token),
+        invalidDread: await window.campaignSystem.requestRollPrompt("Invalid Dread", "lead", 7, player.token)
+      };
+    });
+    if ((rejectedContracts.invalidStat && rejectedContracts.invalidStat.ok) || (rejectedContracts.invalidDread && rejectedContracts.invalidDread.ok)) {
+      throw new Error(`Invalid campaign roll contracts were accepted: ${JSON.stringify(rejectedContracts)}`);
+    }
+
+    await requestTargetedPrompt(gmPage, "Alias Smoke Prompt", "notice", 6);
+    await playerPage.waitForFunction(
+      () => {
+        const req = window.campaignSystem.getState().campaign && window.campaignSystem.getState().campaign.activeRollRequest;
+        return !!(req && req.stat === "mind" && req.dread === 6);
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await gmPage.evaluate(() => window.campaignSystem.closeActiveRoll());
+    await gmPage.waitForFunction(
+      () => !((window.campaignSystem.getState().campaign && window.campaignSystem.getState().campaign.activeRollRequest) || null),
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await playerPage.evaluate(() => {
+      if (typeof window.closeModal === "function") window.closeModal();
+    });
 
     await requestTargetedPrompt(gmPage, "Control Smoke Prompt", "control", 6);
     await playerPage.waitForFunction(
@@ -325,6 +394,71 @@ async function main() {
       null,
       { timeout: STEP_TIMEOUT_MS }
     );
+
+    const damagePrompt = await requestTargetedPrompt(gmPage, "Damage Margin Smoke Prompt", "defend", 6, {
+      failurePenaltyType: "health",
+      failTmw: 1
+    });
+    if (!damagePrompt.pendingCheckId) {
+      throw new Error(`Damage prompt did not create pending check metadata: ${JSON.stringify(damagePrompt)}`);
+    }
+    await playerPage.waitForFunction(
+      () => {
+        const req = window.campaignSystem.getState().campaign && window.campaignSystem.getState().campaign.activeRollRequest;
+        return !!(req && req.stat === "defend" && req.failurePenaltyType === "health");
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await playerPage.evaluate(() => {
+      window.openProvinceManualCheckPrompt = (cfg) => {
+        if (cfg && typeof cfg.onResolve === "function") {
+          cfg.onResolve({ success: false, actionTotal: 2, dreadTotal: 6, manual: true });
+        }
+        return true;
+      };
+    });
+    await playerPage.evaluate(() => window.campaignSystem.submitActiveRollManual());
+    await playerPage.waitForFunction(
+      () => {
+        const st = window.campaignSystem.getState();
+        return !((st && st.campaign && st.campaign.activeRollRequest) || null);
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await wait(500);
+    const playerHealth = await playerPage.evaluate(() => {
+      const st = window.campaignSystem.getState();
+      const roster = st && st.campaign && (st.campaign.roster || st.campaign.members) || [];
+      const self = roster.find((entry) => entry && String(entry.token || "") === String(st.token || ""));
+      return {
+        localDamageTaken: Number(window.S.health || 0),
+        localDefend: Number(window.S.stats && window.S.stats.defend || 0),
+        character: self && self.character || null
+      };
+    });
+    if (playerHealth.localDamageTaken !== 4) {
+      throw new Error(`Player sheet did not receive failed-margin damage: ${JSON.stringify(playerHealth)}`);
+    }
+    const campaignHealth = await gmPage.evaluate(() => {
+      const st = window.campaignSystem.getState();
+      const roster = st && st.campaign && (st.campaign.roster || st.campaign.members) || [];
+      const player = roster.find((entry) => entry && entry.role !== "gm");
+      const character = player && player.character || {};
+      const party = window.campaignSystem.buildPartyRoster();
+      const partyCharacter = party[0] && party[0].character || {};
+      return {
+        health: Number(character.health || 0),
+        maxHealth: Number(character.maxHealth || 0),
+        damageTaken: Number(character.damageTaken || 0),
+        healthModel: String(character.healthModel || ""),
+        partyHealth: Number(partyCharacter.health || 0)
+      };
+    });
+    if (campaignHealth.health !== 12 || campaignHealth.maxHealth !== 16 || campaignHealth.damageTaken !== 4 || campaignHealth.healthModel !== "remaining" || campaignHealth.partyHealth !== 12) {
+      throw new Error(`Campaign HP did not mirror the sheet damage track correctly: ${JSON.stringify(campaignHealth)}`);
+    }
 
     await playerPage.evaluate(() => window.settingsSystem.setGameMode("solo"));
     await playerPage.waitForFunction(

@@ -171,25 +171,17 @@ async function run() {
     });
 
     await page.evaluate(() => {
-      // Force deterministic item-branch only during rollEnemyMerchantLoot calls.
-      // Sequence usage inside loot roll:
-      // 0.95 => not credits, 0.80 => 2 item picks, then deterministic pool indexes.
-      window.__smokeOriginalMathRandom = Math.random;
-      const seq = [0.95, 0.80, 0.12, 0.34, 0.56];
-      let idx = 0;
-      Math.random = function () {
-        const stack = String((new Error()).stack || "");
-        if (stack.indexOf("rollEnemyMerchantLoot") >= 0) {
-          const val = idx < seq.length ? seq[idx] : seq[seq.length - 1];
-          idx += 1;
-          return val;
-        }
-        return window.__smokeOriginalMathRandom();
-      };
-
-      const btn = document.getElementById("combatTokenExecuteActionBtn");
-      if (btn && typeof btn.onclick === "function") btn.onclick();
-      else if (btn) btn.click();
+      // The attack and loot drop resolve synchronously. Keep the deterministic
+      // override scoped to that one action so render-time randomness is untouched.
+      const originalRandom = Math.random;
+      Math.random = function () { return 0.95; };
+      try {
+        const btn = document.getElementById("combatTokenExecuteActionBtn");
+        if (btn && typeof btn.onclick === "function") btn.onclick();
+        else if (btn) btn.click();
+      } finally {
+        Math.random = originalRandom;
+      }
     });
     await wait(1000);
 
@@ -282,9 +274,6 @@ async function run() {
   } finally {
     try {
       await page.evaluate(() => {
-        if (typeof window.__smokeOriginalMathRandom === "function") {
-          Math.random = window.__smokeOriginalMathRandom;
-        }
         if (typeof window.__smokeOriginalRollWithAdvantage === "function") {
           window.rollWithAdvantage = window.__smokeOriginalRollWithAdvantage;
         }

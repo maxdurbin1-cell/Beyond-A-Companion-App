@@ -27,6 +27,7 @@ const suites = {
     "smoke:campaign-missions-context",
     "smoke:guild-multiplayer-sync",
     "smoke:campaign-shared-origin-and-sheets",
+    "smoke:campaign-roll-request-flow",
     "smoke:authority-travel",
     "smoke:campaign-exploration-sweep",
     "smoke:campaign-music-vtt-join",
@@ -53,7 +54,8 @@ const suites = {
     "smoke:campaign-exploration-sweep",
     "smoke:campaign-music-vtt-join",
     "smoke:guild-multiplayer-sync",
-    "smoke:campaign-shared-origin-and-sheets"
+    "smoke:campaign-shared-origin-and-sheets",
+    "smoke:campaign-roll-request-flow"
   ]
 };
 
@@ -97,6 +99,7 @@ async function runSuite() {
         HOST: "127.0.0.1",
         PORT: String(port),
         SMOKE_URL: `http://127.0.0.1:${port}`,
+        CAMPAIGN_STORE_PATH: path.join(tempRoot, "campaign-data.json"),
         CAMPAIGN_SNAPSHOT_DIR: path.join(tempRoot, "snapshots"),
         LICENSE_STORE_PATH: path.join(tempRoot, "license-data.json")
       };

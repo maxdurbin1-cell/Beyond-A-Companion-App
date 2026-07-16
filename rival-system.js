@@ -244,8 +244,11 @@
   }
 
   function buildCampaignSceneStatOptionsHtml(selectedStat){
-    var selected=String(selectedStat||'valor').trim().toLowerCase()||'valor';
-    var stats=['body','mind','spirit','lead','control','defend','strike','shoot','valor'];
+    var selected=(window.campaignSystem&&typeof window.campaignSystem.normalizeRollStat==='function')
+      ? window.campaignSystem.normalizeRollStat(selectedStat||'lead')
+      : String(selectedStat||'lead').trim().toLowerCase();
+    if(!selected)selected='lead';
+    var stats=['body','strike','shoot','mind','spirit','defend','control','lead','valor'];
     return stats.map(function(stat){
       return '<option value="'+rivalEsc(stat)+'"'+(stat===selected?' selected':'')+'>'+rivalEsc(stat.toUpperCase())+'</option>';
     }).join('');
@@ -257,7 +260,10 @@
     var targets=getCampaignSceneTargets();
     var defaultRollTarget=String(cfg.defaultRollTarget||'party').trim()||'party';
     var defaultOutcomeTarget=String(cfg.defaultOutcomeTarget||'acting').trim()||'acting';
-    var defaultStat=String(cfg.stat||'valor').toLowerCase();
+    var defaultStat=(window.campaignSystem&&typeof window.campaignSystem.normalizeRollStat==='function')
+      ? window.campaignSystem.normalizeRollStat(cfg.stat||'lead')
+      : String(cfg.stat||'lead').toLowerCase();
+    if(!defaultStat)defaultStat='lead';
     window._pendingCampaignSceneCheck={
       title:String(cfg.title||'GM Scene Check'),
       label:String(cfg.label||'Scene Check'),
