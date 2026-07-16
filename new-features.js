@@ -1076,19 +1076,27 @@
     var itemLc = String(item).toLowerCase();
     var isWeapon = (cat === 'weapons' || cat === 'melee_exp' || cat === 'ranged_exp');
     var isArmor = (cat === 'armor' || cat === 'armor_exp' || cat === 'space_armor');
+    var itemMeta = [item, found && found.item && found.item.stat, found && found.item && found.item.desc].join(' ');
+    var isShield = /\bshield\b/i.test(itemMeta);
     // Fallback when shop lookup is unavailable: still allow recognizable armor names.
     if (!isArmor) {
       isArmor = /armor|armour|suit|radsuit|vaccsuit|hydrosuit|coolant layer/.test(itemLc);
     }
-    if ((slot === 'weapon1' || slot === 'weapon2') && !isWeapon) {
-      showNotif('Only weapons can be equipped in weapon slots!', 'warn'); return;
+    if (slot === 'weapon1' && (!isWeapon || isShield)) {
+      showNotif('Weapon Slot 1 requires a weapon. Equip shields in Weapon Slot 2.', 'warn'); return;
+    }
+    if (slot === 'weapon2' && !(isWeapon || isShield)) {
+      showNotif('Weapon Slot 2 accepts a second weapon or a shield.', 'warn'); return;
+    }
+    if (slot === 'armor' && isShield) {
+      showNotif('Shields belong in Weapon Slot 2 so their Defend bonus is tracked as off-hand gear.', 'warn'); return;
     }
     if (slot === 'armor' && !isArmor) {
       showNotif('Only armor can be equipped in the armor slot!', 'warn'); return;
     }
 
     var equipStr = item;
-    if (found && found.item && found.item.stat && (isWeapon || isArmor) && String(item).indexOf(found.item.stat) === -1) {
+    if (found && found.item && found.item.stat && (isWeapon || isArmor || isShield) && String(item).indexOf(found.item.stat) === -1) {
       equipStr = item + ' (' + found.item.stat + ')';
     }
 
@@ -1111,7 +1119,7 @@
     if (typeof updateAllStatDisplays === 'function') { updateAllStatDisplays(); }
     if (typeof renderWeaponModsPanel === 'function') { renderWeaponModsPanel(); }
     renderCaravanUI();
-    showNotif('Equipped from Caravan: ' + equipStr, 'good');
+    showNotif((isShield && slot === 'weapon2' ? 'Off-hand shield equipped: ' : 'Equipped from Caravan: ') + equipStr, 'good');
   }
 
   function useCaravanCargoItem(i) {
@@ -13206,8 +13214,9 @@
 
   var ALL_COMBAT_OPTIONS = [
     { id: "standard",  label: "Standard Attack",  cost: "1 Action",  zones: ["Engaged","Close","Nearby"],  desc: "Roll Strike or Shoot vs Dread. Hit = difference in Health (min 1).", tags: ["Engaged","Close","Nearby"] },
-    { id: "heavy",     label: "Heavy Attack",      cost: "2 Actions", zones: ["Engaged","Close","Nearby"],  desc: "Deal +2 Health on hit.", tags: ["Engaged","Close","Nearby"] },
-    { id: "fast",      label: "Fast Attack",       cost: "1 Action",  zones: ["Engaged","Close","Nearby"],  desc: "Die steps down by one. Quick but weaker.", tags: ["Engaged","Close","Nearby"] },
+    { id: "dual",      label: "Dual Wield",        cost: "3 Actions", zones: ["Engaged","Close","Nearby"],  desc: "Use matching bonuses from both weapon slots. Penalty: become Vulnerable after resolving.", tags: ["Engaged","Close","Nearby"] },
+    { id: "heavy",     label: "Heavy Attack",      cost: "2 Actions", zones: ["Engaged","Close","Nearby"],  desc: "Add Valor Die and +2 Health on hit. Penalty: become Vulnerable after resolving.", tags: ["Engaged","Close","Nearby"] },
+    { id: "fast",      label: "Fast Attack",       cost: "Free",      zones: ["Engaged","Close","Nearby"],  desc: "Subtract Valor Die; once per encounter. Penalty: become Vulnerable after resolving.", tags: ["Engaged","Close","Nearby"] },
     { id: "stance",    label: "Stance",            cost: "1 Action",  zones: ["Engaged","Close","Nearby","Far"], desc: "Aggressive (+1 Strike, −1 Defend) or Defensive (vice versa).", tags: [] },
     { id: "switch",    label: "Switch",            cost: "1 Action",  zones: ["Engaged","Close","Nearby","Far"], desc: "Change weapons or adjust spacing.", tags: [] },
     { id: "item",      label: "Use Item",          cost: "1 Action",  zones: ["Engaged","Close","Nearby","Far"], desc: "Use a readied item from your gear.", tags: [] },
@@ -13691,9 +13700,15 @@
     var mods = Array.isArray(S.weaponMods) ? S.weaponMods : [];
 
     var weaponEntries = [
-      { label: 'Slot 1', name: S.equipment.weapon1 || '' },
-      { label: 'Slot 2', name: S.equipment.weapon2 || '' }
-    ].filter(function(w) { return w.name.trim(); });
+      { label: 'Primary Weapon', slot: 'weapon1', name: S.equipment.weapon1 || '' },
+      { label: 'Off-Hand', slot: 'weapon2', name: S.equipment.weapon2 || '' }
+    ].filter(function(w) { return w.name.trim(); }).map(function(w) {
+      if (w.slot === 'weapon2' && typeof isShieldLikeWeaponText === 'function' && isShieldLikeWeaponText(w.name)) {
+        w.label = 'Off-Hand Shield';
+        w.shield = true;
+      }
+      return w;
+    });
 
     if (!weaponEntries.length) {
       if (!mods.length) {
@@ -13716,6 +13731,20 @@
     var modIdx = 0;
 
     weaponEntries.forEach(function(w) {
+      if (w.shield) {
+        var shieldBonus = typeof parseWeaponBonuses === 'function'
+          ? parseWeaponBonuses('defend', { slots: ['weapon2'], includeAffixes: false })
+          : { flat: 0, advDie: 0, addAdvDie: false };
+        var shieldEffect = Number(shieldBonus.advDie || 0) > 0
+          ? 'Advantage d' + Number(shieldBonus.advDie) + ' on Defend'
+          : (Number(shieldBonus.flat || 0) ? ((Number(shieldBonus.flat) > 0 ? '+' : '') + Number(shieldBonus.flat) + ' Defend') : (shieldBonus.addAdvDie ? '+Valor Die to Defend' : 'Defend bonus from item text'));
+        html += '<div style="background:rgba(46,196,182,.06);border:1px solid rgba(46,196,182,.35);padding:.4rem .6rem;margin-bottom:.3rem;">'
+          + '<div style="font-size:.75rem;font-family:\'Cinzel\',serif;color:var(--teal);margin-bottom:.16rem;">' + w.label + ': ' + w.name + '</div>'
+          + '<div style="font-size:.7rem;color:var(--text2);"><strong>Defend:</strong> ' + shieldEffect + '</div>'
+          + '<div style="font-size:.66rem;color:var(--muted2);margin-top:.12rem;">Weapon Slot 1 remains your attack source. Shields do not unlock Dual Wield.</div>'
+          + '</div>';
+        return;
+      }
       var m = w.name.match(/\+(\d)/);
       var bonus = m ? parseInt(m[1], 10) : 0;
       if (bonus < 1 || bonus > 4) {
@@ -14787,8 +14816,8 @@
     else if (mode === 'dual' && window.dualAttackData && window.dualAttackData.weaponBonusOptions) weaponBonusOptions = window.dualAttackData.weaponBonusOptions;
     else if (!weaponBonusOptions && typeof window.getPreferredWeaponBonusOptionsForStat === 'function') weaponBonusOptions = window.getPreferredWeaponBonusOptionsForStat(statForModifiers);
     var extraLines = [];
-    if (mode === 'heavy') extraLines.push('Heavy attack mode: add +2 damage on hit.');
-    if (mode === 'fast') extraLines.push('Fast attack mode: on success, target becomes Vulnerable for 1 round.');
+    if (mode === 'heavy') extraLines.push('Heavy attack mode: add +2 damage on hit, then become Vulnerable whether the attack hits or misses.');
+    if (mode === 'fast') extraLines.push('Fast attack mode: subtract the Valor Die, then become Vulnerable whether the attack hits or misses.');
     if (mode === 'dual') extraLines.push('Dual Wield mode: apply matching Weapon 1 and Weapon 2 bonuses, then become Vulnerable after the attack resolves.');
     if (mode === 'enemy_reaction') extraLines.push('This is a reaction defense check against an enemy action.');
     if (mode === 'surprise_check') extraLines.push('Surprise check success grants +2 to attacks this round.');
@@ -14810,6 +14839,9 @@
         + modifierLines.map(function(line){ return '<div style="font-size:.69rem;color:var(--text2);line-height:1.45;">- ' + String(line) + '</div>'; }).join('')
         + '</div>')
       : '<div style="font-size:.69rem;color:var(--muted2);margin-top:.28rem;">No active modifiers detected.</div>';
+    var riskHtml = (mode === 'heavy' || mode === 'fast' || mode === 'dual')
+      ? '<div style="background:rgba(201,64,64,.09);border:1px solid rgba(201,64,64,.5);padding:.38rem .46rem;margin-bottom:.4rem;border-radius:3px;color:var(--red2);"><strong>Penalty:</strong> You become Vulnerable after this action resolves, whether it succeeds or fails. Vulnerable steps down your next Defend roll.</div>'
+      : '';
 
     var html = '<div style="font-size:.85rem;color:var(--text2);line-height:1.7;">'
       + '<div style="font-family:\'Cinzel\',serif;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--gold2);margin-bottom:.4rem;">'
@@ -14819,6 +14851,7 @@
       + '<div style="font-size:.75rem;color:var(--teal);margin-bottom:.15rem;"><strong>Roll Against:</strong></div>'
       + '<div><strong style="color:var(--text2);">' + displayLabel + ' d' + actionDie + '</strong> <span style="color:var(--muted2);">vs</span> <strong style="color:var(--red);">Dread d' + dreadDie + '</strong></div>'
       + '</div>'
+      + riskHtml
       + modifierHtml
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-bottom:.4rem;">'
       + '<div><label style="font-size:.7rem;color:var(--muted2);display:block;margin-bottom:.15rem;">' + displayLabel + ' d' + actionDie + '</label><input type="text" inputmode="text" id="combatManualActionValue" placeholder="e.g. 8+7" style="width:100%;background:var(--surface);border:1px solid var(--border2);color:var(--text2);padding:.3rem .4rem;font-size:.85rem;border-radius:3px;"></div>'
@@ -15097,9 +15130,18 @@
     if (mode === 'fast' && S && S.combat) {
       S.combat.fastAttackVulnerable = 1;
       S.combat.fastAttackUsedEncounter = true;
+      if (typeof applyFastAttackSelfVulnerable === 'function') applyFastAttackSelfVulnerable();
     }
     if (mode === 'dual' && typeof applyDualWieldSelfVulnerable === 'function') {
       applyDualWieldSelfVulnerable();
+    } else if (mode === 'heavy' && typeof applyCombatSelfVulnerable === 'function') {
+      applyCombatSelfVulnerable('Heavy Attack');
+    }
+
+    if (mode === 'heavy' || mode === 'fast' || mode === 'dual') {
+      resultEls.filter(Boolean).forEach(function (el) {
+        el.innerHTML += '<div style="margin-top:.28rem;padding:.26rem .36rem;border:1px solid rgba(201,64,64,.45);background:rgba(201,64,64,.08);font-size:.7rem;color:var(--red2);"><strong>Condition applied:</strong> Vulnerable until your next Defend roll.</div>';
+      });
     }
 
     if (typeof clearConditionOnUse === 'function') clearConditionOnUse(type);

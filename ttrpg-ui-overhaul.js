@@ -110,7 +110,17 @@
     return /weapon|sword|axe|mace|spear|bow|rifle|pistol|gun|strike|shoot/.test(text);
   }
 
+  function isShieldLike(itemName) {
+    var text = String(itemName || '');
+    var found = (typeof window.findShopItem === 'function') ? window.findShopItem(itemName) : null;
+    var metadata = found && found.item
+      ? [found.item.name, found.item.stat, found.item.desc].join(' ')
+      : '';
+    return /\bshield\b/i.test(text + ' ' + metadata);
+  }
+
   function isArmorLike(itemName) {
+    if (isShieldLike(itemName)) return false;
     var text = String(itemName || '').toLowerCase();
     var found = (typeof window.findShopItem === 'function') ? window.findShopItem(itemName) : null;
     if (found && ['armor', 'armor_exp', 'space_armor'].indexOf(String(found.cat || '')) >= 0) return true;
@@ -849,7 +859,8 @@
     if (target.kind === 'backpack') return true;
     if (target.kind !== 'equip') return false;
     var slot = target.slot;
-    if (slot === 'weapon1' || slot === 'weapon2') return isWeaponLike(raw);
+    if (slot === 'weapon1') return isWeaponLike(raw) && !isShieldLike(raw);
+    if (slot === 'weapon2') return isWeaponLike(raw) || isShieldLike(raw);
     if (slot === 'armor') return isArmorLike(raw);
     if (slot === 'under' || slot === 'over' || slot === 'suit') {
       return getCosmeticSlotForItem(raw) === slot;

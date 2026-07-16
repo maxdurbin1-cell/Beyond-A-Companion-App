@@ -21,6 +21,7 @@
     "smoke:enemy-loot-drop": "node smoke-tests/enemy-loot-drop-format.smoke.mjs",
     "smoke:enemy-loot-drop-items": "node smoke-tests/enemy-loot-drop-items-only.smoke.mjs",
     "smoke:enemy-loot": "npm run smoke:enemy-loot-drop && npm run smoke:enemy-loot-drop-items",
+    "smoke:offhand-shield-actions": "node smoke-tests/offhand-shield-actions.smoke.mjs",
     "smoke:vtt-ui": "node smoke-tests/vtt-combat-ui.smoke.mjs",
     "smoke:vtt-controls-audit": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=gm",
     "smoke:vtt-controls-audit:gm": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=gm",

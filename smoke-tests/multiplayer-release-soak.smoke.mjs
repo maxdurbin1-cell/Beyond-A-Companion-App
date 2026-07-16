@@ -23,6 +23,7 @@ const suites = {
     "smoke:token-target-damage",
     "smoke:enemy-loot-drop",
     "smoke:enemy-loot-drop-items",
+    "smoke:offhand-shield-actions",
     "smoke:scenario",
     "smoke:campaign-missions-context",
     "smoke:guild-multiplayer-sync",
