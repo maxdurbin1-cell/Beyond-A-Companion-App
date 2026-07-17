@@ -1415,12 +1415,8 @@
         if (this.scenarioProfiles[key]) this.scenarioProfiles[key].music = scenarioSuiteOverrides[key];
       });
 
-      // MUSIC TRACKS
-      this.audioCache['music-character'] = this.generateProceduralMusic(this.musicProfiles['music-character']);
-      this.audioCache['music-map'] = this.generateProceduralMusic(this.musicProfiles['music-map']);
-      this.audioCache['music-combat'] = this.generateProceduralMusic(this.musicProfiles['music-combat']);
-      this.audioCache['music-caravan'] = this.generateProceduralMusic(this.musicProfiles['music-caravan']);
-      this.audioCache['music-missions'] = this.generateProceduralMusic(this.musicProfiles['music-missions']);
+      // Music buffers are intentionally generated on first playback. Eagerly
+      // synthesizing several minute-long tracks here blocks the whole app.
 
       // SOUND EFFECTS
       // Combat engagement

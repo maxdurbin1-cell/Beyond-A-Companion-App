@@ -24,6 +24,7 @@ const suites = {
     "smoke:enemy-loot-drop",
     "smoke:enemy-loot-drop-items",
     "smoke:offhand-shield-actions",
+    "smoke:vtt-stability",
     "smoke:scenario",
     "smoke:campaign-missions-context",
     "smoke:guild-multiplayer-sync",

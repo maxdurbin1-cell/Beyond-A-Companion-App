@@ -23,6 +23,7 @@
     "smoke:enemy-loot": "npm run smoke:enemy-loot-drop && npm run smoke:enemy-loot-drop-items",
     "smoke:offhand-shield-actions": "node smoke-tests/offhand-shield-actions.smoke.mjs",
     "smoke:vtt-ui": "node smoke-tests/vtt-combat-ui.smoke.mjs",
+    "smoke:vtt-stability": "node smoke-tests/vtt-stability.smoke.mjs",
     "smoke:vtt-controls-audit": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=gm",
     "smoke:vtt-controls-audit:gm": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=gm",
     "smoke:vtt-controls-audit:player": "node smoke-tests/vtt-controls-audit.smoke.mjs --role=player",
