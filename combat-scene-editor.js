@@ -2411,8 +2411,8 @@
     next.turnStates = Object.assign({}, next.turnStates || {});
     next.collapsedPanels = Object.assign({}, next.collapsedPanels || {});
     next.panelPos = Object.assign({
-      tools: { x: 14, y: 58 },
-      feed: { x: 980, y: 58 },
+      tools: { x: 70, y: 76 },
+      feed: { x: 980, y: 76 },
       actions: { x: 290, y: 560 }
     }, next.panelPos && typeof next.panelPos === 'object' ? next.panelPos : {});
     next.ui = normalizeCombatUi(next.ui);
@@ -2893,8 +2893,8 @@
     logFilters: { round: 'all', actor: 'all', eventType: 'all' },
     turnStates: {},
     panelPos: {
-      tools: { x: 14, y: 58 },
-      feed: { x: 980, y: 58 },
+      tools: { x: 70, y: 76 },
+      feed: { x: 980, y: 76 },
       actions: { x: 290, y: 560 }
     },
     mouse: { panning: false, lastX: 0, lastY: 0 },
@@ -7856,15 +7856,27 @@
       + '</div>'
       + '</div>'
       + '<div class="combat-topbar">'
-      + '<div>'
+      + '<div class="combat-topbar-context">'
       + '<div class="combat-topbar-title">Page: <span id="combatActiveSceneName">Main Scene</span> · Round <span id="combatRoundDisplay">1</span></div>'
       + '<div class="combat-mini" id="combatTopMeta">No active scene. | Turn: <span id="combatTurnDisplay">Awaiting start</span> &middot; <span id="combatSharedSyncBadge">Sync --</span></div>'
+      + '<div class="combat-workspace-status" id="combatWorkspaceStatus">Build workspace · Empty board</div>'
       + '</div>'
-      + '<div style="display:flex;gap:.28rem;align-items:center;">'
+      + '<div class="combat-topbar-primary" aria-label="Essential scene controls">'
       + '<button class="btn btn-xs btn-primary" id="combatStartSceneBtn">Start Scene</button>'
-      + '<button class="btn btn-xs" id="combatPlayModeBtn">Play View</button>'
+      + '<div class="combat-view-switch" role="group" aria-label="VTT workspace view">'
+      + '<button class="btn btn-xs" id="combatBuildViewBtn" title="Prepare maps, tokens, fog, and scene assets">Build</button>'
+      + '<button class="btn btn-xs" id="combatPlayModeBtn" title="Run turns and resolve actions at the table">Run</button>'
+      + '</div>'
+      + '<button class="btn btn-xs" id="combatResetLayoutBtn" title="Restore accessible VTT panel positions">Reset Layout</button>'
+      + '<button class="btn btn-xs btn-red" id="combatCloseBtn">End Scene</button>'
+      + '</div>'
+      + '<div class="combat-topbar-actions">'
+      + '<div class="combat-topbar-group" aria-label="Run scene controls"><span class="combat-topbar-group-label">Run</span>'
       + '<button class="btn btn-xs" id="combatCompactModeBtn" title="Toggle compact panel layout">Compact: Auto</button>'
       + '<button class="btn btn-xs" id="combatAddWayfarerBtn" title="Add Wayfarer to board">+ Wayfarer</button>'
+      + '<button class="btn btn-xs" id="combatRulesReferenceBtn" title="Combat Rules Reference">Rules</button>'
+      + '</div>'
+      + '<div class="combat-topbar-group combat-editor-only" aria-label="Build scene controls"><span class="combat-topbar-group-label">Build</span>'
       + '<button class="btn btn-xs combat-editor-only" id="combatUploadMapBtn">Upload Battlemap</button>'
       + '<button class="btn btn-xs combat-editor-only" id="combatClearMapBtn">Remove Battlemap</button>'
       + '<button class="btn btn-xs combat-editor-only" id="combatClearBoardBtn" title="Clear tokens, placements, fog reveals, and active effects in this scene">Clear Board</button>'
@@ -7872,9 +7884,8 @@
       + '<select class="combat-select combat-editor-only" id="combatPageSelect" style="max-width:180px;"></select>'
       + '<button class="btn btn-xs combat-editor-only" id="combatCreatePageBtn" title="Create new map page">+ Create Page</button>'
       + '<button class="btn btn-xs combat-editor-only" id="combatBuildMapBtn" title="Build map page with auto-filled hexes">Build Map</button>'
-      + '<button class="btn btn-xs btn-red" id="combatCloseBtn">End Scene</button>'
-      + '<div style="display:flex;gap:.28rem;align-items:center;margin-left:.4rem;border-left:1px solid rgba(227,188,94,.2);padding-left:.4rem;">'
-      + '<button class="btn btn-xs" id="combatRulesReferenceBtn" title="Combat Rules Reference">Rules</button>'
+      + '</div>'
+      + '<div class="combat-topbar-group combat-editor-only" aria-label="Scene library controls"><span class="combat-topbar-group-label">Library</span>'
       + '<button class="btn btn-xs combat-editor-only" id="combatSaveSceneCardBtn" title="Save current scene as card">Save Scene</button>'
       + '<button class="btn btn-xs combat-editor-only" id="combatLoadSceneCardBtn" title="Load a saved scene card">Load Scene</button>'
       + '<button class="btn btn-xs combat-editor-only" id="combatNewSceneTemplateBtn" title="Create new scene from template">New Scene</button>'
@@ -7915,9 +7926,11 @@
       + '<svg viewBox="0 0 24 24" width="20" height="20" aria-label="Dice Roller"><rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="16" cy="16" r="1.5" fill="currentColor"/></svg>'
       + '</span></button>'
       + '</aside>'
-      + '<aside class="combat-floating-panel combat-left-tools combat-editor-only" id="combatToolsPanel">'
-      + '<div class="combat-panel-header" data-drag="tools" onclick="togglePanel(\'combatToolsPanel\')">Combat Scene <span style="float:right;font-size:.7rem;cursor:pointer;">◀</span></div>'
+      + '<aside class="combat-floating-panel combat-left-tools combat-editor-only" id="combatToolsPanel" aria-label="Combat Scene build panel">'
+      + '<div class="combat-panel-header" data-drag="tools">Combat Scene <button type="button" class="combat-panel-toggle" data-panel-toggle="combatToolsPanel" aria-label="Collapse Combat Scene panel" onclick="event.stopPropagation();togglePanel(\'combatToolsPanel\')">−</button></div>'
       + '<div class="combat-panel-body">'
+      + '<div class="combat-label">Scene Prep</div>'
+      + '<div class="combat-readiness-grid" id="combatBuildReadiness"></div>'
       + '<div class="combat-label">Layer</div>'
       + '<div class="combat-chip-row" id="combatLayerRow"></div>'
       + '<div class="combat-feed" id="combatLayerSettings" style="margin-top:.22rem;"></div>'
@@ -7972,8 +7985,8 @@
       + '<div class="combat-feed" id="combatBestiaryDrawer"></div>'
       + '</div>'
       + '</aside>'
-      + '<aside class="combat-floating-panel combat-right-rail" id="combatFeedPanel">'
-      + '<div class="combat-panel-header" data-drag="feed" onclick="togglePanel(\'combatFeedPanel\')">Roll Checks <span style="float:right;font-size:.7rem;cursor:pointer;">◀</span></div>'
+      + '<aside class="combat-floating-panel combat-right-rail" id="combatFeedPanel" aria-label="Roll Checks and initiative panel">'
+      + '<div class="combat-panel-header" data-drag="feed">Roll Checks <button type="button" class="combat-panel-toggle" data-panel-toggle="combatFeedPanel" aria-label="Collapse Roll Checks panel" onclick="event.stopPropagation();togglePanel(\'combatFeedPanel\')">−</button></div>'
       + '<div class="combat-panel-body">'
       + '<div class="combat-chip-row" style="margin-bottom:.24rem;">'
       + '<button class="combat-chip" id="combatAssetsBtn" title="Toggle Asset Dock">Assets</button>'
@@ -8029,8 +8042,8 @@
       + '<div class="combat-feed combat-asset-browser-feed" id="combatAssetBrowserFeed"></div>'
       + '</div>'
       + '</aside>'
-      + '<aside class="combat-floating-panel combat-bottom-actions" id="combatActionsPanel">'
-      + '<div class="combat-panel-header" data-drag="actions" onclick="togglePanel(\'combatActionsPanel\')">Token Actions <span style="float:right;font-size:.7rem;cursor:pointer;">◀</span></div>'
+      + '<aside class="combat-floating-panel combat-bottom-actions" id="combatActionsPanel" aria-label="Token Actions panel">'
+      + '<div class="combat-panel-header" data-drag="actions">Token Actions <button type="button" class="combat-panel-toggle" data-panel-toggle="combatActionsPanel" aria-label="Collapse Token Actions panel" onclick="event.stopPropagation();togglePanel(\'combatActionsPanel\')">−</button></div>'
       + '<div class="combat-panel-body">'
       + '<div class="combat-action-block">'
       + '<div class="combat-label">Scene Snapshot</div>'
@@ -9636,15 +9649,98 @@
     });
   }
 
+  function getCombatWorkspaceMetrics(root) {
+    var host = root || document.getElementById('combatModeOverlay');
+    var rootRect = host ? host.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    var topbar = document.querySelector('#combatModeOverlay .combat-topbar');
+    var topbarRect = topbar ? topbar.getBoundingClientRect() : null;
+    var iconRail = document.getElementById('combatIconRail');
+    var iconRect = iconRail ? iconRail.getBoundingClientRect() : null;
+    var width = Math.max(320, Number(host && host.clientWidth || rootRect.width || window.innerWidth || 1280));
+    var height = Math.max(420, Number(host && host.clientHeight || rootRect.height || window.innerHeight || 720));
+    var safeTop = Math.max(68, Math.ceil(topbarRect ? topbarRect.bottom - rootRect.top + 10 : 68));
+    var safeLeft = Math.max(66, Math.ceil(iconRect ? iconRect.right - rootRect.left + 10 : 66));
+    return { width: width, height: height, safeTop: safeTop, safeLeft: safeLeft };
+  }
+
+  function getSafeCombatPanelPosition(panel, key, requested, metrics) {
+    var desired = requested && typeof requested === 'object' ? requested : {};
+    var panelWidth = Math.max(260, Number(panel && panel.offsetWidth || 300));
+    var header = panel && panel.querySelector ? panel.querySelector('.combat-panel-header') : null;
+    var panelHeight = Math.max(Number(header && header.offsetHeight || 34), Number(panel && panel.offsetHeight || 300));
+    var rightReserve = key === 'feed' ? 64 : 10;
+    var minX = key === 'tools' ? metrics.safeLeft : 10;
+    var maxX = Math.max(minX, metrics.width - panelWidth - rightReserve);
+    var minY = metrics.safeTop;
+    var maxY = Math.max(minY, metrics.height - Math.min(panelHeight, metrics.height - minY - 10) - 10);
+    return {
+      x: Math.max(minX, Math.min(maxX, Number(desired.x || 0))),
+      y: Math.max(minY, Math.min(maxY, Number(desired.y || 0)))
+    };
+  }
+
   function setPanelPositions() {
-    var state = store.getState();
+    var root = document.getElementById('combatModeOverlay');
+    if (!root) return;
+    var state = normalizeCombatSceneState(store.getState());
+    var metrics = getCombatWorkspaceMetrics(root);
+    root.style.setProperty('--combat-safe-top', metrics.safeTop + 'px');
+    var panels = {
+      tools: document.getElementById('combatToolsPanel'),
+      feed: document.getElementById('combatFeedPanel'),
+      actions: document.getElementById('combatActionsPanel')
+    };
+    var responsiveDocked = metrics.width <= 980;
+    Object.keys(panels).forEach(function (key) {
+      var panel = panels[key];
+      if (!panel) return;
+      if (responsiveDocked) {
+        panel.style.removeProperty('left');
+        panel.style.removeProperty('top');
+        panel.style.removeProperty('transform');
+        return;
+      }
+      var pos = getSafeCombatPanelPosition(panel, key, state.panelPos && state.panelPos[key], metrics);
+      panel.style.left = pos.x + 'px';
+      panel.style.top = pos.y + 'px';
+      panel.style.transform = 'none';
+    });
+  }
+
+  function resetCombatWorkspaceLayout() {
+    var root = document.getElementById('combatModeOverlay');
+    if (!root) return false;
+    var metrics = getCombatWorkspaceMetrics(root);
     var tools = document.getElementById('combatToolsPanel');
     var feed = document.getElementById('combatFeedPanel');
     var actions = document.getElementById('combatActionsPanel');
-    if (tools) { tools.style.left = state.panelPos.tools.x + 'px'; tools.style.top = state.panelPos.tools.y + 'px'; }
-    if (feed) { feed.style.left = state.panelPos.feed.x + 'px'; feed.style.top = state.panelPos.feed.y + 'px'; }
-    if (actions) { actions.style.left = state.panelPos.actions.x + 'px'; actions.style.top = state.panelPos.actions.y + 'px'; actions.style.transform = 'none'; }
+    var toolsWidth = Math.max(280, Number(tools && tools.offsetWidth || 320));
+    var feedWidth = Math.max(280, Number(feed && feed.offsetWidth || 340));
+    var actionsWidth = Math.max(320, Number(actions && actions.offsetWidth || 560));
+    var actionsHeight = Math.max(220, Number(actions && actions.offsetHeight || 360));
+    var defaults = {
+      tools: { x: metrics.safeLeft, y: metrics.safeTop },
+      feed: { x: Math.max(metrics.safeLeft + toolsWidth + 12, metrics.width - feedWidth - 64), y: metrics.safeTop },
+      actions: { x: Math.max(10, Math.round((metrics.width - actionsWidth) / 2)), y: Math.max(metrics.safeTop, metrics.height - actionsHeight - 12) }
+    };
+    store.setState(function (state) {
+      var next = Object.assign({}, state);
+      next.panelPos = defaults;
+      next.collapsedPanels = Object.assign({}, state.collapsedPanels || {}, {
+        combatToolsPanel: false,
+        combatFeedPanel: false,
+        combatActionsPanel: false
+      });
+      persist(next);
+      return next;
+    });
+    setPanelPositions();
+    updateUiPanels();
+    safeNotif('VTT workspace restored. All panel headers are visible and ready to move.', 'good');
+    return true;
   }
+
+  window.resetCombatWorkspaceLayout = resetCombatWorkspaceLayout;
 
   function updateUiPanels() {
     syncWayfarerTokenHealthFromSheet();
@@ -9654,6 +9750,8 @@
     if (root) {
       if (state.playMode) root.classList.add('play-mode');
       else root.classList.remove('play-mode');
+      root.setAttribute('data-workspace-view', state.playMode ? 'run' : 'build');
+      setPanelPositions();
     }
 
     ['combatToolsPanel', 'combatFeedPanel', 'combatActionsPanel'].forEach(function (panelId) {
@@ -9662,6 +9760,13 @@
       var isCollapsed = !!(state.collapsedPanels && state.collapsedPanels[panelId]);
       if (isCollapsed) panel.classList.add('collapsed');
       else panel.classList.remove('collapsed');
+      var toggle = panel.querySelector('[data-panel-toggle]');
+      if (toggle) {
+        var panelLabel = panelId === 'combatToolsPanel' ? 'Combat Scene' : (panelId === 'combatFeedPanel' ? 'Roll Checks' : 'Token Actions');
+        toggle.textContent = isCollapsed ? '+' : '−';
+        toggle.setAttribute('aria-label', (isCollapsed ? 'Expand ' : 'Collapse ') + panelLabel + ' panel');
+        toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      }
     });
 
     // Update round and turn display
@@ -9702,9 +9807,49 @@
     }
 
     var playModeBtn = document.getElementById('combatPlayModeBtn');
+    var buildModeBtn = document.getElementById('combatBuildViewBtn');
     if (playModeBtn) {
-      playModeBtn.textContent = state.playMode ? 'Build View' : 'Play View';
-      playModeBtn.className = state.playMode ? 'btn btn-xs' : 'btn btn-xs btn-teal';
+      playModeBtn.textContent = 'Run';
+      playModeBtn.className = state.playMode ? 'btn btn-xs btn-teal' : 'btn btn-xs';
+      playModeBtn.setAttribute('aria-pressed', state.playMode ? 'true' : 'false');
+    }
+    if (buildModeBtn) {
+      buildModeBtn.textContent = 'Build';
+      buildModeBtn.className = state.playMode ? 'btn btn-xs' : 'btn btn-xs btn-teal';
+      buildModeBtn.setAttribute('aria-pressed', state.playMode ? 'false' : 'true');
+    }
+
+    var workspaceStatus = document.getElementById('combatWorkspaceStatus');
+    if (workspaceStatus) {
+      var wayfarerCount = (state.tokens || []).filter(function (token) { return token && String(token.faction || '') === 'player'; }).length;
+      var hostileCount = (state.tokens || []).filter(function (token) { return token && String(token.faction || '') === 'monster'; }).length;
+      var boardCols = Math.max(1, Number(state.board && state.board.cols || 15));
+      var boardRows = Math.max(1, Number(state.board && state.board.rows || 15));
+      workspaceStatus.innerHTML = '<strong>' + (state.playMode ? 'RUN' : 'BUILD') + '</strong>'
+        + '<span>' + wayfarerCount + ' Wayfarer' + (wayfarerCount === 1 ? '' : 's') + '</span>'
+        + '<span>' + hostileCount + ' Hostile' + (hostileCount === 1 ? '' : 's') + '</span>'
+        + '<span>' + boardCols + '×' + boardRows + ' Board</span>';
+    }
+
+    var buildReadiness = document.getElementById('combatBuildReadiness');
+    if (buildReadiness) {
+      var activeLayers = state.layers && typeof state.layers === 'object' ? state.layers : {};
+      var paintedCount = ['terrain', 'objects', 'hazards', 'lighting', 'weather', 'foreground', 'interactives', 'spawns'].reduce(function (count, layerName) {
+        return count + Object.keys(activeLayers[layerName] || {}).length;
+      }, 0);
+      var hasMap = !!String(state.board && state.board.background || '').trim() || paintedCount > 0;
+      var prepRows = [
+        { label: 'Map', ready: hasMap, meta: hasMap ? (paintedCount ? paintedCount + ' placed details' : 'Battlemap ready') : 'Add map or terrain' },
+        { label: 'Party', ready: wayfarerCount > 0, meta: wayfarerCount ? wayfarerCount + ' placed' : 'Place a Wayfarer' },
+        { label: 'Hostiles', ready: hostileCount > 0, meta: hostileCount ? hostileCount + ' placed' : 'Place an enemy' },
+        { label: 'Turns', ready: Array.isArray(state.initiative) && state.initiative.length > 0, meta: state.initiative && state.initiative.length ? state.initiative.length + ' in order' : 'Set initiative' }
+      ];
+      buildReadiness.innerHTML = prepRows.map(function (row) {
+        return '<div class="combat-readiness-item ' + (row.ready ? 'ready' : 'pending') + '">'
+          + '<span class="combat-readiness-dot" aria-hidden="true"></span>'
+          + '<span><strong>' + row.label + '</strong><small>' + row.meta + '</small></span>'
+          + '</div>';
+      }).join('');
     }
 
     var compactBtn = document.getElementById('combatCompactModeBtn');
@@ -11125,6 +11270,7 @@
       window.__combatResizeAdaptiveBound = true;
       window.addEventListener('resize', function () {
         applyCombatUiState(store.getState());
+        setPanelPositions();
         drawBoard();
       });
     }
@@ -11791,6 +11937,7 @@
     root.addEventListener('mousedown', function (ev) {
       var handle = ev.target && ev.target.closest && ev.target.closest('[data-drag]');
       if (!handle) return;
+      if (ev.button !== 0 || (ev.target && ev.target.closest && ev.target.closest('button,input,select,textarea,a'))) return;
       var key = String(handle.getAttribute('data-drag') || 'tools');
       var panel = handle.parentElement;
       if (!panel) return;
@@ -12253,16 +12400,38 @@
       };
     }
 
+    function activateWorkspaceMode(playMode) {
+      store.setState(function (state) {
+        var next = Object.assign({}, state, { playMode: !!playMode });
+        persist(next);
+        return next;
+      });
+      updateUiPanels();
+      setPanelPositions();
+      safeNotif(playMode ? 'Run View ready: turn and token actions are in focus.' : 'Build View ready: scene preparation tools are available.', 'good');
+    }
+
+    var buildModeBtn = document.getElementById('combatBuildViewBtn');
+    if (buildModeBtn && !buildModeBtn._bound) {
+      buildModeBtn._bound = true;
+      buildModeBtn.onclick = function () {
+        activateWorkspaceMode(false);
+      };
+    }
+
     var playModeBtn = document.getElementById('combatPlayModeBtn');
     if (playModeBtn && !playModeBtn._bound) {
       playModeBtn._bound = true;
       playModeBtn.onclick = function () {
-        store.setState(function (state) {
-          var next = Object.assign({}, state, { playMode: !state.playMode });
-          persist(next);
-          return next;
-        });
-        updateUiPanels();
+        activateWorkspaceMode(true);
+      };
+    }
+
+    var resetLayoutBtn = document.getElementById('combatResetLayoutBtn');
+    if (resetLayoutBtn && !resetLayoutBtn._bound) {
+      resetLayoutBtn._bound = true;
+      resetLayoutBtn.onclick = function () {
+        resetCombatWorkspaceLayout();
       };
     }
 

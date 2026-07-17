@@ -291,6 +291,87 @@ async function run() {
       throw new Error(`Hover labels missing on side panels: ${JSON.stringify(hoverLabels)}`);
     }
 
+    await page.evaluate(() => {
+      const st = window.CombatSceneStore.getState();
+      window.CombatSceneStore.setState(Object.assign({}, st, {
+        panelPos: Object.assign({}, st.panelPos || {}, { tools: { x: 14, y: 58 } })
+      }));
+    });
+    await page.locator("#combatBuildViewBtn").click();
+
+    const buildWorkspaceLayout = await page.evaluate(() => {
+      const root = document.getElementById("combatModeOverlay");
+      const topbar = root?.querySelector(".combat-topbar");
+      const rail = document.getElementById("combatIconRail");
+      const tools = document.getElementById("combatToolsPanel");
+      const header = tools?.querySelector(".combat-panel-header");
+      const topRect = topbar?.getBoundingClientRect();
+      const railRect = rail?.getBoundingClientRect();
+      const headerRect = header?.getBoundingClientRect();
+      const verticalRailOverlap = !!(railRect && headerRect && headerRect.bottom > railRect.top && headerRect.top < railRect.bottom);
+      return {
+        view: root?.getAttribute("data-workspace-view") || "",
+        headerVisible: !!headerRect && headerRect.width > 0 && headerRect.height > 0,
+        clearsTopbar: !!(topRect && headerRect && headerRect.top >= topRect.bottom + 4),
+        clearsIconRail: !!(railRect && headerRect && (!verticalRailOverlap || headerRect.left >= railRect.right + 4)),
+        readiness: document.getElementById("combatBuildReadiness")?.textContent || "",
+        topbarGroups: Array.from(root?.querySelectorAll(".combat-topbar-group") || []).map((node) => node.getAttribute("aria-label") || "")
+      };
+    });
+
+    if (buildWorkspaceLayout.view !== "build" || !buildWorkspaceLayout.headerVisible || !buildWorkspaceLayout.clearsTopbar || !buildWorkspaceLayout.clearsIconRail) {
+      throw new Error(`Build workspace panels are obstructed: ${JSON.stringify(buildWorkspaceLayout)}`);
+    }
+    if (!/Map/.test(buildWorkspaceLayout.readiness) || !buildWorkspaceLayout.topbarGroups.includes("Build scene controls")) {
+      throw new Error(`Build workspace hierarchy is incomplete: ${JSON.stringify(buildWorkspaceLayout)}`);
+    }
+
+    await page.locator("#combatResetLayoutBtn").click();
+    const resetWorkspace = await page.evaluate(() => {
+      const st = window.CombatSceneStore.getState();
+      return {
+        tools: st.panelPos?.tools || null,
+        toolsCollapsed: !!st.collapsedPanels?.combatToolsPanel,
+        feedCollapsed: !!st.collapsedPanels?.combatFeedPanel,
+        actionsCollapsed: !!st.collapsedPanels?.combatActionsPanel
+      };
+    });
+    if (!resetWorkspace.tools || Number(resetWorkspace.tools.x || 0) < 60 || resetWorkspace.toolsCollapsed || resetWorkspace.feedCollapsed || resetWorkspace.actionsCollapsed) {
+      throw new Error(`Reset Layout did not restore accessible panels: ${JSON.stringify(resetWorkspace)}`);
+    }
+
+    for (const viewport of [{ width: 820, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(100);
+      const responsiveWorkspace = await page.evaluate(() => {
+        const topbar = document.querySelector("#combatModeOverlay .combat-topbar");
+        const primary = document.querySelector("#combatModeOverlay .combat-topbar-primary");
+        const topbarRect = topbar?.getBoundingClientRect();
+        const primaryRect = primary?.getBoundingClientRect();
+        const controls = ["combatStartSceneBtn", "combatBuildViewBtn", "combatPlayModeBtn", "combatResetLayoutBtn", "combatCloseBtn"].map((id) => {
+          const node = document.getElementById(id);
+          const rect = node?.getBoundingClientRect();
+          const centerNode = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+          return {
+            id,
+            visible: !!rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth,
+            reachable: !!node && !!centerNode && (centerNode === node || node.contains(centerNode))
+          };
+        });
+        return {
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          topbarVisible: !!topbarRect && topbarRect.left >= 0 && topbarRect.right <= window.innerWidth,
+          primaryContained: !!(topbarRect && primaryRect && primaryRect.left >= topbarRect.left && primaryRect.right <= topbarRect.right),
+          controls
+        };
+      });
+      if (!responsiveWorkspace.topbarVisible || !responsiveWorkspace.primaryContained || responsiveWorkspace.controls.some((control) => !control.visible || !control.reachable)) {
+        throw new Error(`Essential VTT controls are obstructed at ${viewport.width}px: ${JSON.stringify(responsiveWorkspace)}`);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.waitForTimeout(100);
+
     const effectsTargeting = await page.evaluate(() => {
       const st = window.CombatSceneStore.getState();
       window.CombatSceneStore.setState(Object.assign({}, st, { selectedTokenId: "", selectedTokenIds: [] }));
