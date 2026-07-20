@@ -856,6 +856,10 @@ window.playCustomMusicFromSettings = function() {
               <button class="btn btn-xs" onclick="if(typeof importCharacterSavePrompt==='function'){importCharacterSavePrompt();}">Import Save</button>
               <button class="btn btn-xs" onclick="if(typeof openSoloRecoveryCenter==='function'){openSoloRecoveryCenter();}">Open Recovery Center</button>
               <button class="btn btn-xs" onclick="if(typeof verifySoloSaveHealth==='function'){verifySoloSaveHealth();}">Run Save Health</button>
+              <button class="btn btn-xs" onclick="if(typeof openSoloReference==='function'){openSoloReference();}">Open Solo Reference</button>
+              <button class="btn btn-xs" onclick="if(typeof switchTab==='function'){switchTab('map',document.getElementById('tabnav-map'));}">Go To Province</button>
+              <button class="btn btn-xs" onclick="if(typeof switchTab==='function'){switchTab('missions',document.getElementById('tabnav-missions'));}">Go To Missions</button>
+              <button class="btn btn-xs" onclick="if(typeof switchTab==='function'){switchTab('storyline',document.getElementById('tabnav-storyline'));}">Go To Storyline</button>
             </div>
           </div>
         </div>

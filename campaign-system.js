@@ -871,11 +871,11 @@
       : null;
     var overlay = document.getElementById("combatModeOverlay");
 
-    if (combat && combat.active && vttSession) {
+    if (vttSession) {
       return {
         kind: "vtt",
         label: String(vttSession.sceneName || resolveSharedCombatSceneName() || "Shared VTT"),
-        by: String(vttSession.by || combat.startedBy || "GM"),
+        by: String(vttSession.by || combat && combat.startedBy || "GM"),
         isWithGm: state.role === "gm" || !!(overlay && overlay.classList.contains("open")),
         canJoin: state.role === "player",
         session: vttSession
@@ -1310,22 +1310,25 @@
 
   function maybePromptSharedCombatModeFromScene(sharedCombat, sceneEditorState, syncMeta) {
     if (state.role !== "player") return false;
-    var combatState = sharedCombat && typeof sharedCombat === "object" ? sharedCombat : null;
+    var combatState = sharedCombat && typeof sharedCombat === "object" ? sharedCombat : {};
     var sceneState = sceneEditorState && typeof sceneEditorState === "object" ? sceneEditorState : null;
     if (!sceneState) return false;
     var overlay = document.getElementById("combatModeOverlay");
     if (overlay && overlay.classList.contains("open")) return false;
     var activeSceneId = String(sceneState.activeSceneId || "campaign-shared-scene");
-    var sceneName = resolveSharedCombatSceneName();
     var vttSession = combatState.vttSession && typeof combatState.vttSession === "object"
       ? combatState.vttSession
-      : {
-          enteredAt: Number(syncMeta && syncMeta.at || combatState && combatState.startedAt || Date.now()),
-          by: String(syncMeta && syncMeta.by || combatState && combatState.startedBy || "GM"),
-          sceneName: sceneName,
-          activeSceneId: activeSceneId
-        };
-    var promptKeyBase = String(Math.max(0, Number(combatState && combatState.startedAt || 0)) || activeSceneId || "campaign-shared-scene");
+      : null;
+    if (!Number(vttSession && vttSession.enteredAt || 0)) return false;
+    var promptKeyBase = String(
+      Math.max(
+        0,
+        Number(vttSession && vttSession.enteredAt || 0),
+        Number(combatState && combatState.startedAt || 0)
+      )
+      || activeSceneId
+      || "campaign-shared-scene"
+    );
     var promptKey = [
       promptKeyBase,
       activeSceneId
@@ -1577,6 +1580,33 @@
     return openSharedCampaignAreaSession(session, { quiet: false });
   }
 
+  function closeSharedCampaignAreaSession(reason) {
+    if (!state.code || !state.connected || state.role !== "gm") return false;
+    var shared = getMutableCampaignSharedState();
+    var current = normalizeCampaignAreaSession(shared.areaSession || ensureAreaSessionState(shared));
+    if (!current.id || current.status !== "open") return false;
+    var now = Date.now();
+    var closed = Object.assign({}, current, {
+      status: "closed",
+      updatedAt: now,
+      closedAt: now,
+      closedBy: String(state.playerName || ensureName() || "GM")
+    });
+    shared.areaSession = deepCloneJson(closed) || closed;
+    appendSessionTimeline("area", "Shared area closed: " + String(closed.title || closed.label || "Shared Area") + ".", {
+      areaId: closed.id,
+      kind: closed.kind,
+      reason: String(reason || "area-session-close")
+    });
+    var out = syncSharedPatch(
+      { areaSession: deepCloneJson(shared.areaSession) || shared.areaSession },
+      String(reason || "area-session-close")
+    );
+    if (out && typeof out.catch === "function") out.catch(function () {});
+    renderDockPanel();
+    return true;
+  }
+
   function returnToGmView() {
     if (!state.code || state.role !== "player") {
       safeNotif("Join a campaign as a player to follow the GM.", "warn");
@@ -1815,7 +1845,12 @@
     var playerSharedVttPrompt = false;
     var playerSharedVttSession = null;
 
-    if (tab === "scenes" && state.role === "player" && sharedCombat && sharedCombat.active) {
+    if (
+      tab === "scenes"
+      && state.role === "player"
+      && sharedCombat
+      && getActiveSharedCombatVttSession(getCampaignSharedState())
+    ) {
       var sceneEditorState = window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object"
         ? window.S.combat.sceneEditor
         : null;
@@ -1898,7 +1933,7 @@
         state.lastCampaignVttPromptAt = promptAt;
         promptCampaignCombatModeInvite(playerSharedVttSession);
       }
-    } else if (tab === "scenes" && typeof window.applySharedCombatSceneEditorState === "function") {
+    } else if (tab === "scenes" && state.role !== "player" && typeof window.applySharedCombatSceneEditorState === "function") {
       try {
         if (window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object") {
           window.applySharedCombatSceneEditorState(window.S.combat.sceneEditor, {
@@ -4678,12 +4713,17 @@
         var incomingCombatState = sharedState.campaignCombat && typeof sharedState.campaignCombat === "object"
           ? (deepCloneJson(sharedState.campaignCombat) || {})
           : {};
-        var previousCombat = current && current.campaignCombat && typeof current.campaignCombat === "object"
-          ? (deepCloneJson(current.campaignCombat) || {})
+        var previousCombatSource = previousShared && previousShared.campaignCombat && typeof previousShared.campaignCombat === "object"
+          ? previousShared.campaignCombat
+          : (current && current.campaignCombat && typeof current.campaignCombat === "object" ? current.campaignCombat : null);
+        var previousCombat = previousCombatSource
+          ? (deepCloneJson(previousCombatSource) || {})
           : {};
         var previousVttSession = previousCombat && previousCombat.vttSession && typeof previousCombat.vttSession === "object"
           ? (deepCloneJson(previousCombat.vttSession) || previousCombat.vttSession)
           : null;
+        var incomingHasVttSession = Object.prototype.hasOwnProperty.call(incomingCombatState, "vttSession");
+        var incomingClosedVtt = !!(incomingHasVttSession && !incomingCombatState.vttSession);
         if (!current.campaignCombat) current.campaignCombat = {};
         Object.assign(
           current.campaignCombat,
@@ -4692,12 +4732,32 @@
             : incomingCombatState
         );
         var mergedCombat = ensureCampaignCombatState(current);
-        if (mergedCombat.active && !mergedCombat.vttSession && previousVttSession) {
+        if (!incomingHasVttSession && mergedCombat.active && !mergedCombat.vttSession && previousVttSession) {
           var hasSharedSceneEditor = !!(current.combatScene && current.combatScene.sceneEditor && typeof current.combatScene.sceneEditor === "object");
           var hasLocalSceneEditor = !!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object");
           if (hasSharedSceneEditor || hasLocalSceneEditor) {
             mergedCombat.vttSession = deepCloneJson(previousVttSession) || previousVttSession;
           }
+        }
+        if (state.role === "player" && incomingClosedVtt && previousVttSession) {
+          clearSharedVttJoinRetry();
+          state.lastCampaignScenePromptKey = "";
+          state.lastCampaignVttPromptAt = 0;
+          var sharedVttOverlay = document.getElementById("combatModeOverlay");
+          if (sharedVttOverlay && sharedVttOverlay.classList.contains("open") && typeof window.closeCombatSceneEditor === "function") {
+            try { window.closeCombatSceneEditor(); } catch (_vttCloseErr) {}
+          }
+          var modalTitle = String((document.getElementById("modalTitle") || {}).textContent || "");
+          var rollModal = document.getElementById("rollModal");
+          if (
+            modalTitle === "Join Shared Combat Mode"
+            && rollModal
+            && rollModal.classList.contains("open")
+            && typeof window.closeModal === "function"
+          ) {
+            try { window.closeModal(); } catch (_vttPromptCloseErr) {}
+          }
+          safeNotif("The GM closed the shared VTT scene.", "info");
         }
         var combatStartedAt = Number(mergedCombat.startedAt || 0);
         if (mergedCombat.active && combatStartedAt && combatStartedAt !== state.lastCampaignCombatPromptAt) {
@@ -4710,7 +4770,7 @@
           ? sharedState.combatScene.sceneEditor
           : null;
         var hasRenderableSharedScenePrompt = hasRenderableCombatSceneEditorSnapshot(sharedSceneEditorSnapshot);
-        if (mergedCombat.active && state.role === "player" && vttAt && vttAt !== state.lastCampaignVttPromptAt && hasRenderableSharedScenePrompt) {
+        if (state.role === "player" && vttAt && vttAt !== state.lastCampaignVttPromptAt && hasRenderableSharedScenePrompt) {
           state.lastCampaignVttPromptAt = vttAt;
           promptCampaignCombatModeInvite(vttSession);
         }
@@ -5006,6 +5066,13 @@
       payload: payload
     };
     shared.areaSession = deepCloneJson(session) || session;
+    var campaignCombat = shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? (deepCloneJson(shared.campaignCombat) || shared.campaignCombat)
+      : null;
+    if (campaignCombat && campaignCombat.vttSession) {
+      campaignCombat.vttSession = null;
+      shared.campaignCombat = deepCloneJson(campaignCombat) || campaignCombat;
+    }
     if (!sameArea) {
       appendSessionTimeline("area", "Shared area opened: " + session.title + ".", {
         areaId: session.id,
@@ -5013,7 +5080,11 @@
         label: session.label
       });
     }
-    var out = syncSharedPatch({ areaSession: deepCloneJson(shared.areaSession) || shared.areaSession }, reason || "area-session-open");
+    var areaPatch = { areaSession: deepCloneJson(shared.areaSession) || shared.areaSession };
+    if (campaignCombat) {
+      areaPatch.campaignCombat = deepCloneJson(shared.campaignCombat) || shared.campaignCombat;
+    }
+    var out = syncSharedPatch(areaPatch, reason || "area-session-open");
     if (out && typeof out.catch === "function") out.catch(function () {});
     return session;
   }
@@ -5385,6 +5456,26 @@
         }
       };
     });
+
+    if (typeof window.closeModal === "function" && !window._campaignWrappedAreaSessionCloseModal) {
+      var baseCloseModal = window.closeModal;
+      window.closeModal = function () {
+        var shared = getCampaignSharedState();
+        var area = normalizeCampaignAreaSession(shared && shared.areaSession);
+        var wasClosingSharedArea = !!(
+          state.role === "gm"
+          && area.id
+          && area.status === "open"
+          && isCampaignAreaModalShowing(area)
+        );
+        var out = baseCloseModal.apply(this, arguments);
+        if (wasClosingSharedArea) {
+          closeSharedCampaignAreaSession("area-session-modal-close");
+        }
+        return out;
+      };
+      window._campaignWrappedAreaSessionCloseModal = true;
+    }
 
     window._campaignPatchedAreaSessionHooks = true;
   }
@@ -6249,6 +6340,11 @@
         role: participant.role || "player",
         character: {
           name: participant.character.name || "Wayfarer",
+          career: String(participant.character.career || ""),
+          background: String(participant.character.background || ""),
+          reason: String(participant.character.reason || ""),
+          flavor: String(participant.character.flavor || ""),
+          mutation: String(participant.character.mutation || ""),
           health: Math.max(0, Number(participant.character.health || 0)),
           maxHealth: resolveCharacterMaxHealth(participant.character),
           mentalStress: Math.max(0, Number(participant.character.mentalStress || 0)),
@@ -6257,7 +6353,9 @@
           stats: participant.character.stats || {},
           backpack: Array.isArray(participant.character.backpack) ? participant.character.backpack : [],
           loadout: normalizeCharacterLoadout(participant.character),
-          hacks: normalizeCharacterHacks(participant.character)
+          hacks: normalizeCharacterHacks(participant.character),
+          traits: participant.character.traits && typeof participant.character.traits === "object" ? participant.character.traits : {},
+          backstory: participant.character.backstory && typeof participant.character.backstory === "object" ? participant.character.backstory : {}
         },
         lastSeenAt: Number(participant.lastSeenAt || Date.now())
       });
@@ -7949,7 +8047,10 @@
         + '<div class="campaign-muted">' + escapeHtml(look) + '</div>'
         + '<div class="campaign-muted">Updated ' + escapeHtml(formatTimestamp(updatedAt) || "-") + '</div>'
         + (canViewSheets
-          ? ('<div style="margin-top:.25rem;"><button class="btn btn-xs btn-teal" onclick="window.campaignSystem.viewRosterSheet(\'' + tokenValue + '\')">View Sheet</button></div>')
+          ? ('<div style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.25rem;">'
+            + '<button class="btn btn-xs btn-teal" onclick="window.campaignSystem.viewRosterSheet(\'' + tokenValue + '\')">View Sheet</button>'
+            + '<button class="btn btn-xs" onclick="window.campaignSystem.openWayfarerStoryThreads(\'' + tokenValue + '\')">Story Threads</button>'
+            + '</div>')
           : '')
         + '</div>'
         + '</div>'
@@ -7971,6 +8072,8 @@
     var loadout = c && c.loadout && typeof c.loadout === "object" ? c.loadout : {};
     var hacks = Array.isArray(c.hacks) ? c.hacks.filter(Boolean) : [];
     var conditions = c && c.conditions && typeof c.conditions === "object" ? c.conditions : {};
+    var backstory = c && c.backstory && typeof c.backstory === "object" ? c.backstory : {};
+    var traits = c && c.traits && typeof c.traits === "object" ? c.traits : {};
     var activeConditions = Object.keys(conditions).filter(function (key) { return !!conditions[key]; });
     var updatedAt = c && c.updatedAt ? Number(c.updatedAt) : Number(member && member.lastSeenAt || 0);
     var stress = Math.max(0, Number(c.stress != null ? c.stress : c.mentalStress || 0));
@@ -8006,6 +8109,23 @@
       + '<div class="info-cell"><span class="ic-label">Loadout</span>'
       + escapeHtml([loadout.weapon1, loadout.weapon2, loadout.armor, loadout.readied].filter(Boolean).join(' | ') || 'No loadout synced')
       + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Identity</span>'
+      + escapeHtml([c.career, c.background].filter(Boolean).join(' | ') || 'No career or background synced')
+      + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Drive</span>' + escapeHtml(c.reason || 'No road motive synced') + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Personal Flavor</span>' + escapeHtml(c.flavor || c.look || 'No Personal Flavor synced') + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Traits</span>'
+      + (Object.keys(traits).length ? escapeHtml(Object.keys(traits).map(function (key) { return key + ': ' + traits[key]; }).join(' | ')) : '<span class="campaign-muted">No traits synced.</span>')
+      + '</div>'
+      + '<div class="info-cell"><span class="ic-label">Backstory</span>'
+      + escapeHtml([
+          backstory.origin ? 'Origin: ' + backstory.origin : '',
+          backstory.hometown ? 'Hometown: ' + backstory.hometown : '',
+          backstory.rival ? 'Rival: ' + backstory.rival : '',
+          backstory.connection ? 'Trusted Contact: ' + backstory.connection : '',
+          backstory.notes || ''
+        ].filter(Boolean).join(' | ') || 'No backstory synced')
+      + '</div>'
       + '<div class="info-cell"><span class="ic-label">OS Hacks</span>'
       + (hacks.length ? hacks.map(function (hack) { return '<span class="campaign-look-tag" style="margin:0 .2rem .2rem 0;display:inline-block;">' + escapeHtml(String(hack)) + '</span>'; }).join('') : '<span class="campaign-muted">No hacks synced.</span>')
       + '</div>'
@@ -8017,6 +8137,134 @@
       + (backpack.length ? backpack.map(function (item) { return '<span class="campaign-look-tag" style="margin:0 .2rem .2rem 0;display:inline-block;">' + escapeHtml(String(item)) + '</span>'; }).join('') : '<span class="campaign-muted">No backpack items synced.</span>')
       + '</div>'
       + '</div>';
+  }
+
+  function getCampaignRosterMemberByToken(token) {
+    var roster = state.campaign && Array.isArray(state.campaign.roster) ? state.campaign.roster : [];
+    var wanted = String(token || "");
+    return roster.find(function (member) { return String(member && member.token || "") === wanted; }) || null;
+  }
+
+  function getWayfarerStoryThreadDefinitions(member) {
+    var character = member && member.character && typeof member.character === "object" ? member.character : {};
+    var backstory = character.backstory && typeof character.backstory === "object" ? character.backstory : {};
+    return [
+      {
+        kind: "hometown",
+        label: "Hometown",
+        detail: String(backstory.hometown || ""),
+        stat: "lead",
+        dread: 6,
+        cue: "Introduce a local face, a community need, or a place only this Wayfarer recognizes. The owner decides how they approach their history."
+      },
+      {
+        kind: "rival",
+        label: "Rival",
+        detail: String(backstory.rival || ""),
+        stat: "control",
+        dread: 8,
+        cue: "Bring the Rival in through pressure, a warning, or a visible consequence. The GM chooses whether this becomes parley, pursuit, or combat."
+      },
+      {
+        kind: "connection",
+        label: "Trusted Contact",
+        detail: String(backstory.connection || ""),
+        stat: "lead",
+        dread: 6,
+        cue: "Offer information, access, or aid with a cost. Let the named Wayfarer lead the conversation while the rest of the party can assist."
+      }
+    ];
+  }
+
+  function openWayfarerStoryThreads(token) {
+    if (state.role !== "gm") {
+      safeNotif("Only the GM can stage Wayfarer story threads.", "warn");
+      return;
+    }
+    var member = getCampaignRosterMemberByToken(token);
+    if (!member || !member.character) {
+      safeNotif("That Wayfarer's character sheet is not available.", "warn");
+      return;
+    }
+    var name = String(member.character.name || member.name || "Wayfarer");
+    var tokenValue = String(member.token || "").replace(/'/g, "\\'");
+    var threads = getWayfarerStoryThreadDefinitions(member);
+    var html = ''
+      + '<div style="font-size:.8rem;color:var(--muted2);line-height:1.55;margin-bottom:.5rem;">Each thread belongs to <strong style="color:var(--gold2);">' + escapeHtml(name) + '</strong>. Stage it as a campaign hook or send the recommended roll directly to this player; other Wayfarers\' personal anchors remain separate.</div>'
+      + '<div style="display:grid;gap:.45rem;">'
+      + threads.map(function (thread) {
+          var hasDetail = !!String(thread.detail || "").trim();
+          return '<div class="info-cell" style="display:grid;gap:.25rem;">'
+            + '<div style="display:flex;justify-content:space-between;gap:.35rem;align-items:flex-start;flex-wrap:wrap;">'
+            + '<strong style="color:var(--text2);">' + escapeHtml(thread.label) + '</strong>'
+            + '<span class="campaign-pill">' + escapeHtml(thread.stat.toUpperCase() + ' vs d' + thread.dread) + '</span>'
+            + '</div>'
+            + '<div style="color:' + (hasDetail ? 'var(--text2)' : 'var(--muted2)') + ';">' + escapeHtml(hasDetail ? thread.detail : 'Not set on this Wayfarer\'s sheet yet.') + '</div>'
+            + '<div class="campaign-muted">' + escapeHtml(thread.cue) + '</div>'
+            + '<div class="campaign-actions" style="margin-top:.15rem;">'
+            + '<button class="btn btn-xs" ' + (hasDetail ? '' : 'disabled') + ' onclick="window.campaignSystem.stageWayfarerStoryThread(\'' + tokenValue + '\',\'' + thread.kind + '\')">Stage Campaign Hook</button>'
+            + '<button class="btn btn-xs btn-teal" ' + (hasDetail ? '' : 'disabled') + ' onclick="window.campaignSystem.requestWayfarerStoryRoll(\'' + tokenValue + '\',\'' + thread.kind + '\')">Request ' + escapeHtml(thread.stat.charAt(0).toUpperCase() + thread.stat.slice(1)) + ' Roll</button>'
+            + '</div>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+    if (typeof openModal === "function") openModal(name + " - Personal Story Threads", html);
+  }
+
+  function stageWayfarerStoryThread(token, kind) {
+    if (state.role !== "gm") {
+      safeNotif("Only the GM can stage Wayfarer story threads.", "warn");
+      return false;
+    }
+    var member = getCampaignRosterMemberByToken(token);
+    var thread = getWayfarerStoryThreadDefinitions(member).find(function (entry) { return entry.kind === String(kind || ""); });
+    if (!member || !member.character || !thread || !String(thread.detail || "").trim()) {
+      safeNotif("That story thread has not been filled in on the Wayfarer's sheet.", "warn");
+      return false;
+    }
+    var ownerName = String(member.character.name || member.name || "Wayfarer");
+    var threadKey = "wayfarer:" + String(member.token || "") + ":" + thread.kind;
+    var existing = ensureCampaignHooksState(getMutableCampaignSharedState()).find(function (hook) {
+      return String(hook && hook.missionId || "") === threadKey && String(hook && hook.status || "open") === "open";
+    });
+    if (existing) {
+      safeNotif(ownerName + "'s " + thread.label + " thread is already open.", "info");
+      return existing;
+    }
+    var hook = addCampaignHook({
+      text: ownerName + " - " + thread.label + ": " + thread.detail,
+      source: "Wayfarer: " + ownerName,
+      missionId: threadKey,
+      priority: thread.kind === "rival" ? "high" : "normal"
+    });
+    addCampaignChronicleEntry({
+      title: ownerName + " - " + thread.label,
+      text: "GM staged this personal thread: " + thread.detail,
+      kind: "wayfarer-thread",
+      missionId: threadKey
+    });
+    safeNotif(ownerName + "'s " + thread.label + " is staged for the table.", "good");
+    return hook;
+  }
+
+  async function requestWayfarerStoryRoll(token, kind) {
+    var member = getCampaignRosterMemberByToken(token);
+    var thread = getWayfarerStoryThreadDefinitions(member).find(function (entry) { return entry.kind === String(kind || ""); });
+    if (!member || !member.character || !thread || !String(thread.detail || "").trim()) {
+      safeNotif("That story thread is not ready for a roll.", "warn");
+      return { ok: false, error: "Story thread unavailable." };
+    }
+    stageWayfarerStoryThread(token, kind);
+    var ownerName = String(member.character.name || member.name || "Wayfarer");
+    var result = await requestRollPrompt(
+      ownerName + " - " + thread.label,
+      thread.stat,
+      thread.dread,
+      String(member.token || ""),
+      { defaultOutcomeTarget: String(member.token || ""), failurePenaltyType: "mentalStress", failTmw: 1, autoResolveOnSubmit: true }
+    );
+    if (result && result.ok && typeof closeModal === "function") closeModal();
+    return result;
   }
 
   function viewRosterSheet(token) {
@@ -8075,8 +8323,23 @@
     var conditions = (typeof window.S !== "undefined" && window.S && window.S.conditions && typeof window.S.conditions === "object")
       ? window.S.conditions
       : {};
+    var backstory = (typeof window.S !== "undefined" && window.S && window.S.backstory && typeof window.S.backstory === "object")
+      ? window.S.backstory
+      : {};
+    var traits = (typeof window.S !== "undefined" && window.S && window.S.traits && typeof window.S.traits === "object")
+      ? window.S.traits
+      : {};
+    var cleanTraits = {};
+    Object.keys(traits).slice(0, 24).forEach(function (key) {
+      cleanTraits[String(key || "").slice(0, 32)] = String(traits[key] || "").slice(0, 100);
+    });
     return {
       name: ensureName(),
+      career: String((typeof window.S !== "undefined" && window.S && window.S.career) || "").slice(0, 100),
+      background: String((typeof window.S !== "undefined" && window.S && window.S.background) || "").slice(0, 140),
+      reason: String((typeof window.S !== "undefined" && window.S && window.S.reason) || "").slice(0, 320),
+      flavor: String((typeof window.S !== "undefined" && window.S && window.S.flavor) || "").slice(0, 240),
+      mutation: String((typeof window.S !== "undefined" && window.S && window.S.mutation) || "").slice(0, 180),
       health: remainingHealth,
       maxHealth: maxHealth,
       damageTaken: damageTaken,
@@ -8115,6 +8378,19 @@
         vulnerable: !!conditions.vulnerable,
         distracted: !!conditions.distracted,
         shaken: !!conditions.shaken
+      },
+      traits: cleanTraits,
+      backstory: {
+        origin: String(backstory.origin || "").slice(0, 180),
+        upbringing: String(backstory.upbringing || "").slice(0, 180),
+        hometown: String(backstory.hometown || "").slice(0, 180),
+        faction: String(backstory.faction || "").slice(0, 180),
+        rival: String(backstory.rival || "").slice(0, 220),
+        connection: String(backstory.connection || "").slice(0, 220),
+        earlyCareer: String(backstory.earlyCareer || "").slice(0, 180),
+        earlyBackground: String(backstory.earlyBackground || "").slice(0, 180),
+        lifeEvent: String(backstory.lifeEvent || "").slice(0, 260),
+        notes: String(backstory.notes || "").slice(0, 1200)
       },
       hacks: ownedHacks.map(function (name) { return String(name || "").trim(); }).filter(Boolean),
       backpack: normalizeBackpackItems(window.S && window.S.backpack)
@@ -12938,6 +13214,9 @@
     claimSharedItem: claimSharedItem,
     copyRosterItem: copyRosterItem,
     viewRosterSheet: viewRosterSheet,
+    openWayfarerStoryThreads: openWayfarerStoryThreads,
+    stageWayfarerStoryThread: stageWayfarerStoryThread,
+    requestWayfarerStoryRoll: requestWayfarerStoryRoll,
     // Phase 1: GM modes and campaign combat
     setGmMode: setGmMode,
     setGmCameraLock: setGmCameraLock,
@@ -12956,6 +13235,7 @@
     endCampaignCombat: endCampaignCombat,
     joinSharedCombatMode: joinSharedCampaignCombatMode,
     joinSharedAreaSession: joinSharedCampaignAreaSessionFromPrompt,
+    closeSharedAreaSession: closeSharedCampaignAreaSession,
     getCurrentCombatActor: getCurrentCombatActor,
     getEnemyActionRequest: function () {
       return getCampaignEnemyActionRequest(ensureCampaignCombatState());

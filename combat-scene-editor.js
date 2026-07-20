@@ -2138,7 +2138,6 @@
   function syncCurrentCampaignCombatScene(reason, options) {
     var cs = getCampaignCombatSceneSession();
     if (!cs || String(cs.role || '') !== 'gm' || !cs.connected || !cs.code) return;
-    if (!(window.S && window.S.combat && window.S.combat.active)) return;
     if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== 'function' || typeof window.campaignSystem.getSharedState !== 'function') return;
     var opts = options && typeof options === 'object' ? options : {};
     var scene = buildCampaignCombatSceneSyncPayload();
@@ -2169,7 +2168,9 @@
       combatScene: scene
     };
     if (opts.includeCombatSession !== false) {
-      combatState.active = true;
+      if (window.S && window.S.combat && window.S.combat.active) {
+        combatState.active = true;
+      }
       combatState.vttSession = {
         enteredAt: Date.now(),
         by: String(window.S && window.S.name || cs.playerName || 'GM'),
@@ -2180,6 +2181,17 @@
         shared.campaignCombat = deepCloneJson(combatState) || combatState;
       }
       patch.campaignCombat = combatState;
+      var activeArea = shared && shared.areaSession && typeof shared.areaSession === 'object'
+        ? (deepCloneJson(shared.areaSession) || shared.areaSession)
+        : null;
+      if (activeArea && String(activeArea.status || '') === 'open') {
+        activeArea.status = 'closed';
+        activeArea.updatedAt = Date.now();
+        activeArea.closedAt = activeArea.updatedAt;
+        activeArea.closedBy = String(window.S && window.S.name || cs.playerName || 'GM');
+        shared.areaSession = deepCloneJson(activeArea) || activeArea;
+        patch.areaSession = deepCloneJson(activeArea) || activeArea;
+      }
     }
     var out = window.campaignSystem.syncSharedPatch(patch, String(reason || 'campaign-combat-mode-open'));
     if (out && typeof out.catch === 'function') out.catch(function () {});
@@ -2200,13 +2212,12 @@
       ? nextCombat.vttSession
       : null;
     var sessionAt = Number(nextSession && nextSession.enteredAt || 0);
-    if (!nextCombat || !nextCombat.active || !sessionAt) return;
+    if (!nextCombat || !sessionAt) return;
     if (campaignCombatVttSessionSyncTimer) clearTimeout(campaignCombatVttSessionSyncTimer);
     if (campaignCombatVttSessionFollowupTimer) clearTimeout(campaignCombatVttSessionFollowupTimer);
     function runReassertSync(reasonSuffix) {
       var cs = getCampaignCombatSceneSession();
       if (!cs || String(cs.role || '') !== 'gm' || !cs.connected || !cs.code) return;
-      if (!(window.S && window.S.combat && window.S.combat.active)) return;
       if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== 'function' || typeof window.campaignSystem.getSharedState !== 'function') return;
       var shared = null;
       try {
@@ -2221,7 +2232,7 @@
         ? currentCombat.vttSession
         : null;
       var currentSessionAt = Number(currentSession && currentSession.enteredAt || 0);
-      if (currentSessionAt > sessionAt) return;
+      if (!currentSessionAt || currentSessionAt !== sessionAt) return;
       var scene = buildCampaignCombatSceneSyncPayload();
       var sceneEditor = scene && scene.sceneEditor && typeof scene.sceneEditor === 'object' ? scene.sceneEditor : null;
       var activeSceneId = String(sceneEditor && sceneEditor.activeSceneId || nextSession.activeSceneId || 'campaign-shared-scene');
@@ -15530,7 +15541,7 @@
     var vttSession = combat && combat.vttSession && typeof combat.vttSession === 'object'
       ? combat.vttSession
       : null;
-    if (!combat || !combat.active || !Number(vttSession && vttSession.enteredAt || 0)) return null;
+    if (!combat || !Number(vttSession && vttSession.enteredAt || 0)) return null;
     var seed = buildSharedCampaignCombatSceneSeed();
     if (!seed) return null;
     seed.id = String(vttSession.activeSceneId || seed.id || 'campaign-shared-scene');
@@ -15540,7 +15551,7 @@
 
   function primeCampaignCombatVttSession(seed) {
     var cs = getCampaignCombatSceneSession();
-    if (!cs || String(cs.role || '') !== 'gm' || !cs.code || !(window.S && window.S.combat && window.S.combat.active)) return null;
+    if (!cs || String(cs.role || '') !== 'gm' || !cs.code) return null;
     if (!window.campaignSystem || typeof window.campaignSystem.getSharedState !== 'function' || typeof window.campaignSystem.syncSharedPatch !== 'function') return null;
     var shared = null;
     try {
@@ -15552,7 +15563,7 @@
     var combatState = shared.campaignCombat && typeof shared.campaignCombat === 'object'
       ? (deepCloneJson(shared.campaignCombat) || {})
       : null;
-    if (!combatState || !combatState.active) return null;
+    if (!combatState) return null;
     combatState.vttSession = {
       enteredAt: Date.now(),
       by: String(window.S && window.S.name || cs.playerName || 'GM'),
@@ -15582,12 +15593,12 @@
       var combat = shared && shared.campaignCombat && typeof shared.campaignCombat === 'object'
         ? shared.campaignCombat
         : null;
+      var hasOpenSharedVtt = !!(combat && combat.vttSession && typeof combat.vttSession === 'object' && Number(combat.vttSession.enteredAt || 0));
+      if (hasOpenSharedVtt) {
+        var fallbackSeed = buildSeedFromSharedCombatScene() || buildSharedCampaignCombatSceneSeed() || buildLiveCombatSeed() || expeditionSeed();
+        if (fallbackSeed) return fallbackSeed;
+      }
       if (combat && combat.active) {
-        var hasOpenSharedVtt = !!(combat.vttSession && typeof combat.vttSession === 'object' && Number(combat.vttSession.enteredAt || 0));
-        if (hasOpenSharedVtt) {
-          var fallbackSeed = buildSeedFromSharedCombatScene() || buildSharedCampaignCombatSceneSeed() || buildLiveCombatSeed() || expeditionSeed();
-          if (fallbackSeed) return fallbackSeed;
-        }
         safeNotif('The GM has not opened the shared VTT yet. Stay on the Combat Tab or wait for the join prompt.', 'info');
         return false;
       }
@@ -15665,6 +15676,14 @@
     function finalizeClose() {
       flushCombatInteractionPersist({ skipUi: true });
       combatLiveInteractionActive = false;
+      if (campaignCombatVttSessionSyncTimer) {
+        clearTimeout(campaignCombatVttSessionSyncTimer);
+        campaignCombatVttSessionSyncTimer = null;
+      }
+      if (campaignCombatVttSessionFollowupTimer) {
+        clearTimeout(campaignCombatVttSessionFollowupTimer);
+        campaignCombatVttSessionFollowupTimer = null;
+      }
       if (combatWheelInteractionTimer) {
         clearTimeout(combatWheelInteractionTimer);
         combatWheelInteractionTimer = null;
@@ -15681,6 +15700,32 @@
       root.classList.remove('open');
       store.setState({ open: false, entering: false, draggingTokenId: '' });
       persist(store.getState());
+      var cs = getCampaignCombatSceneSession();
+      if (
+        cs
+        && String(cs.role || '') === 'gm'
+        && cs.connected
+        && cs.code
+        && window.campaignSystem
+        && typeof window.campaignSystem.getSharedState === 'function'
+        && typeof window.campaignSystem.syncSharedPatch === 'function'
+      ) {
+        try {
+          var shared = window.campaignSystem.getSharedState() || {};
+          var campaignCombat = shared.campaignCombat && typeof shared.campaignCombat === 'object'
+            ? (deepCloneJson(shared.campaignCombat) || shared.campaignCombat)
+            : null;
+          if (campaignCombat && campaignCombat.vttSession) {
+            campaignCombat.vttSession = null;
+            shared.campaignCombat = deepCloneJson(campaignCombat) || campaignCombat;
+            var closeOut = window.campaignSystem.syncSharedPatch(
+              { campaignCombat: deepCloneJson(campaignCombat) || campaignCombat },
+              'campaign-combat-mode-close'
+            );
+            if (closeOut && typeof closeOut.catch === 'function') closeOut.catch(function () {});
+          }
+        } catch (_campaignCloseErr) {}
+      }
     }
 
     function buildBoardingDeltaLine(label, delta) {
@@ -16006,10 +16051,6 @@
     syncCurrentCampaignCombatScene('campaign-combat-mode-open-immediate', { includeCombatSession: true });
   };
   
-  window.closeCombatSceneEditor = function () {
-    closeOverlay();
-  };
-
   window.closeCombatSceneEditor = function () {
     closeOverlay();
   };

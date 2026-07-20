@@ -514,6 +514,64 @@ async function runScenario(browser, baseUrl) {
       { timeout: STEP_TIMEOUT_MS }
     );
 
+    const settlementSession = await gmPage.evaluate(() => {
+      const s = window.S = window.S || {};
+      s.holding = Object.assign({ type: "Fortress" }, s.holding || {});
+      if (typeof window.openHoldingSettlementHexcrawl !== "function") {
+        return { ok: false, error: "openHoldingSettlementHexcrawl missing" };
+      }
+      window.openHoldingSettlementHexcrawl("Fortress");
+      const shared = window.campaignSystem.getSharedState();
+      const area = shared && shared.areaSession ? shared.areaSession : null;
+      return {
+        ok: !!(area && area.id && area.status === "open"),
+        id: String(area && area.id || ""),
+        title: String(area && area.title || "")
+      };
+    });
+    if (!settlementSession.ok) {
+      throw new Error(`Settlement presence did not open: ${JSON.stringify(settlementSession)}`);
+    }
+    await playerPage.waitForFunction(
+      (title) => {
+        const modalTitle = String(document.getElementById("modalTitle")?.textContent || "");
+        const modalBody = String(document.getElementById("modalContent")?.textContent || "");
+        return modalTitle === "Join Area" && modalBody.includes(title);
+      },
+      settlementSession.title,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await playerPage.evaluate(() => {
+      const joinButton = Array.from(document.querySelectorAll("#rollModal button"))
+        .find((button) => /join/i.test(String(button.textContent || "")));
+      if (!joinButton) throw new Error("Shared Settlement join button missing.");
+      joinButton.click();
+    });
+    await playerPage.waitForFunction(
+      (title) => String(document.getElementById("modalTitle")?.textContent || "") === title,
+      settlementSession.title,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await gmPage.evaluate(() => {
+      if (typeof window.closeModal === "function") window.closeModal();
+    });
+    await playerPage.waitForFunction(
+      (areaId) => {
+        const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+          ? window.campaignSystem.getSharedState()
+          : null;
+        const area = shared && shared.areaSession;
+        return !!(area && String(area.id || "") === areaId && String(area.status || "") === "closed");
+      },
+      settlementSession.id,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await playerPage.waitForFunction(
+      () => !document.getElementById("rollModal")?.classList.contains("open"),
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+
     await gmPage.evaluate(() => {
       const btn = document.getElementById("combatEnterModeBtn");
       if (!btn) throw new Error("Missing combatEnterModeBtn");
@@ -521,11 +579,22 @@ async function runScenario(browser, baseUrl) {
     });
     await gmPage.waitForSelector("#combatModeOverlay.open", { timeout: STEP_TIMEOUT_MS });
     await waitForPlayerSharedVttJoinPrompt(gmPage, playerPage);
+    await playerPage.waitForFunction(
+      () => {
+        const rail = document.getElementById("globalQuickAccess");
+        const text = String(rail && rail.textContent || "");
+        return text.includes("Join GM VTT") && !text.includes("Settlement Hexcrawl");
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
 
     const promptStateBeforeSwap = await playerPage.evaluate(() => ({
       modalTitle: document.getElementById("modalTitle")?.textContent || "",
       overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
-      joinFnType: typeof window.joinSharedCampaignCombatModeFromPrompt
+      joinFnType: typeof window.joinSharedCampaignCombatModeFromPrompt,
+      areaStatus: String(window.campaignSystem.getSharedState()?.areaSession?.status || ""),
+      tableRail: String(document.getElementById("globalQuickAccess")?.textContent || "").trim()
     }));
 
     const combatMood = await setCampaignMood(
@@ -609,6 +678,132 @@ async function runScenario(browser, baseUrl) {
       soundtrackMood: window.AudioManager?.campaignSoundtrackOverride?.mood || "",
       musicConsent: !!window.AudioManager?.musicConsent
     }));
+    await gmPage.evaluate(() => {
+      if (typeof window.closeCombatSceneEditor === "function") {
+        window.closeCombatSceneEditor();
+      }
+    });
+    try {
+      await playerPage.waitForFunction(
+        () => {
+          const shared = window.campaignSystem && typeof window.campaignSystem.getSharedState === "function"
+            ? window.campaignSystem.getSharedState()
+            : null;
+          const session = shared && shared.campaignCombat && shared.campaignCombat.vttSession;
+          return !session && !document.querySelector("#combatModeOverlay.open");
+        },
+        null,
+        { timeout: 10000 }
+      );
+    } catch (_closeErr) {
+      const [gmCloseDiag, playerCloseDiag] = await Promise.all([
+        gmPage.evaluate(() => ({
+          overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
+          connected: !!window.campaignSystem.getState()?.connected,
+          role: String(window.campaignSystem.getState()?.role || ""),
+          vttSession: window.campaignSystem.getSharedState()?.campaignCombat?.vttSession || null
+        })),
+        playerPage.evaluate(() => ({
+          overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
+          connected: !!window.campaignSystem.getState()?.connected,
+          role: String(window.campaignSystem.getState()?.role || ""),
+          vttSession: window.campaignSystem.getSharedState()?.campaignCombat?.vttSession || null
+        }))
+      ]);
+      throw new Error(`Shared VTT close timeout: GM=${JSON.stringify(gmCloseDiag)} PLAYER=${JSON.stringify(playerCloseDiag)}`);
+    }
+    await wait(1300);
+    const closeSummary = await playerPage.evaluate(() => {
+      const shared = window.campaignSystem.getSharedState();
+      const railText = String(document.getElementById("globalQuickAccess")?.textContent || "");
+      return {
+        overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
+        vttSession: shared?.campaignCombat?.vttSession || null,
+        areaStatus: String(shared?.areaSession?.status || ""),
+        stillOffersVttJoin: railText.includes("Join GM VTT")
+      };
+    });
+    if (closeSummary.overlayOpen || closeSummary.vttSession || closeSummary.stillOffersVttJoin) {
+      throw new Error(`Shared VTT close did not propagate cleanly: ${JSON.stringify(closeSummary)}`);
+    }
+    const inactiveCombatPatch = await gmPage.evaluate(async () => {
+      const shared = window.campaignSystem.getSharedState();
+      const combat = Object.assign({}, shared?.campaignCombat || {}, {
+        active: false,
+        vttSession: null,
+        updatedAt: Date.now()
+      });
+      const result = await window.campaignSystem.syncSharedPatch({ campaignCombat: combat }, "inactive-vtt-entry-smoke");
+      if (window.S?.combat) window.S.combat.active = false;
+      return result;
+    });
+    if (!inactiveCombatPatch || !inactiveCombatPatch.ok) {
+      throw new Error(`Could not prepare inactive VTT entry: ${JSON.stringify(inactiveCombatPatch)}`);
+    }
+    await playerPage.waitForFunction(
+      () => window.campaignSystem.getSharedState()?.campaignCombat?.active === false,
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    const repeatEntryLocalActiveBefore = await gmPage.evaluate(() => {
+      if (typeof window.openCombatSceneEditor !== "function") {
+        throw new Error("openCombatSceneEditor missing for repeat entry.");
+      }
+      if (window.S?.combat) window.S.combat.active = false;
+      const localActiveBefore = !!window.S?.combat?.active;
+      window.openCombatSceneEditor();
+      return localActiveBefore;
+    });
+    if (repeatEntryLocalActiveBefore) {
+      throw new Error("Repeat VTT entry did not begin from locally inactive combat.");
+    }
+    await gmPage.waitForSelector("#combatModeOverlay.open", { timeout: STEP_TIMEOUT_MS });
+    try {
+      await playerPage.waitForFunction(
+        () => {
+          const shared = window.campaignSystem.getSharedState();
+          const railText = String(document.getElementById("globalQuickAccess")?.textContent || "");
+          return !!(
+            shared?.campaignCombat?.vttSession?.enteredAt
+            && document.getElementById("modalTitle")?.textContent === "Join Shared Combat Mode"
+            && railText.includes("Join GM VTT")
+          );
+        },
+        null,
+        { timeout: 10000 }
+      );
+    } catch (_repeatEntryErr) {
+      const [gmRepeatDiag, playerRepeatDiag] = await Promise.all([
+        gmPage.evaluate(() => ({
+          overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
+          combat: window.campaignSystem.getSharedState()?.campaignCombat || null,
+          hasScene: !!window.campaignSystem.getSharedState()?.combatScene?.sceneEditor
+        })),
+        playerPage.evaluate(() => ({
+          overlayOpen: !!document.querySelector("#combatModeOverlay.open"),
+          combat: window.campaignSystem.getSharedState()?.campaignCombat || null,
+          hasScene: !!window.campaignSystem.getSharedState()?.combatScene?.sceneEditor,
+          modalTitle: String(document.getElementById("modalTitle")?.textContent || ""),
+          railText: String(document.getElementById("globalQuickAccess")?.textContent || "")
+        }))
+      ]);
+      throw new Error(`Inactive VTT entry timeout: GM=${JSON.stringify(gmRepeatDiag)} PLAYER=${JSON.stringify(playerRepeatDiag)}`);
+    }
+    const repeatEntrySummary = await playerPage.evaluate(() => ({
+      combatActive: !!window.campaignSystem.getSharedState()?.campaignCombat?.active,
+      vttEnteredAt: Number(window.campaignSystem.getSharedState()?.campaignCombat?.vttSession?.enteredAt || 0),
+      modalTitle: String(document.getElementById("modalTitle")?.textContent || "")
+    }));
+    repeatEntrySummary.localActiveBefore = repeatEntryLocalActiveBefore;
+    await gmPage.evaluate(() => window.closeCombatSceneEditor());
+    await playerPage.waitForFunction(
+      () => {
+        const shared = window.campaignSystem.getSharedState();
+        return !shared?.campaignCombat?.vttSession && !document.getElementById("rollModal")?.classList.contains("open");
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
 
     if (pageErrors.length) {
       throw new Error(`Music/VTT smoke saw page errors: ${pageErrors.join(" | ")}`);
@@ -622,7 +817,9 @@ async function runScenario(browser, baseUrl) {
         promptAfterSwap: promptStateAfterSwap,
         joinAttempt,
         gmSummary,
-        playerSummary
+        playerSummary,
+        closeSummary,
+        repeatEntrySummary
       })
       + "\n"
     );

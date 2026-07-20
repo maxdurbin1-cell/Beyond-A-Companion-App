@@ -1093,8 +1093,13 @@ function serializeCampaign(campaign) {
       role: p.role,
       lastSeenAt: Number(p.lastSeenAt || Date.now()),
       character: p.character
-        ? {
+          ? {
             name: String(p.character.name || p.name || "Wayfarer").slice(0, 48),
+            career: String(p.character.career || "").slice(0, 100),
+            background: String(p.character.background || "").slice(0, 140),
+            reason: String(p.character.reason || "").slice(0, 320),
+            flavor: String(p.character.flavor || "").slice(0, 240),
+            mutation: String(p.character.mutation || "").slice(0, 180),
             health: Math.max(0, Number(p.character.health || 0)),
             maxHealth: Math.max(1, Number(p.character.maxHealth || p.character.maxStress || 1)),
             damageTaken: Math.max(0, Number(p.character.damageTaken || 0)),
@@ -1110,6 +1115,8 @@ function serializeCampaign(campaign) {
             stats: p.character.stats && typeof p.character.stats === "object" ? p.character.stats : {},
             loadout: p.character.loadout && typeof p.character.loadout === "object" ? p.character.loadout : {},
             conditions: p.character.conditions && typeof p.character.conditions === "object" ? p.character.conditions : {},
+            traits: p.character.traits && typeof p.character.traits === "object" ? p.character.traits : {},
+            backstory: p.character.backstory && typeof p.character.backstory === "object" ? p.character.backstory : {},
             hacks: Array.isArray(p.character.hacks) ? p.character.hacks : [],
             backpack: Array.isArray(p.character.backpack)
               ? p.character.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
@@ -1348,6 +1355,11 @@ function snapshotCampaign(campaign, requesterToken) {
       character: member.character
         ? {
             name: String(member.character.name || member.name || "Wayfarer").slice(0, 48),
+            career: String(member.character.career || "").slice(0, 100),
+            background: String(member.character.background || "").slice(0, 140),
+            reason: String(member.character.reason || "").slice(0, 320),
+            flavor: String(member.character.flavor || "").slice(0, 240),
+            mutation: String(member.character.mutation || "").slice(0, 180),
             health: Math.max(0, Number(member.character.health || 0)),
             maxHealth: Math.max(1, Number(member.character.maxHealth || member.character.maxStress || 1)),
             damageTaken: Math.max(0, Number(member.character.damageTaken || 0)),
@@ -1365,6 +1377,8 @@ function snapshotCampaign(campaign, requesterToken) {
             conditions: member.character.conditions && typeof member.character.conditions === "object"
               ? member.character.conditions
               : {},
+            traits: member.character.traits && typeof member.character.traits === "object" ? member.character.traits : {},
+            backstory: member.character.backstory && typeof member.character.backstory === "object" ? member.character.backstory : {},
             hacks: Array.isArray(member.character.hacks) ? member.character.hacks : [],
             backpack: Array.isArray(member.character.backpack)
               ? member.character.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)
@@ -1671,8 +1685,31 @@ function normalizeCharacter(input, fallbackName) {
   };
   const hacksInput = Array.isArray(c.hacks) ? c.hacks : (Array.isArray(c.ownedHacks) ? c.ownedHacks : []);
   const hacks = hacksInput.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 40);
+  const rawBackstory = c.backstory && typeof c.backstory === "object" ? c.backstory : {};
+  const backstory = {
+    origin: String(rawBackstory.origin || "").slice(0, 180),
+    upbringing: String(rawBackstory.upbringing || "").slice(0, 180),
+    hometown: String(rawBackstory.hometown || "").slice(0, 180),
+    faction: String(rawBackstory.faction || "").slice(0, 180),
+    rival: String(rawBackstory.rival || "").slice(0, 220),
+    connection: String(rawBackstory.connection || "").slice(0, 220),
+    earlyCareer: String(rawBackstory.earlyCareer || "").slice(0, 180),
+    earlyBackground: String(rawBackstory.earlyBackground || "").slice(0, 180),
+    lifeEvent: String(rawBackstory.lifeEvent || "").slice(0, 260),
+    notes: String(rawBackstory.notes || "").slice(0, 1200)
+  };
+  const rawTraits = c.traits && typeof c.traits === "object" ? c.traits : {};
+  const traits = {};
+  Object.keys(rawTraits).slice(0, 24).forEach((key) => {
+    traits[String(key || "").slice(0, 32)] = String(rawTraits[key] || "").slice(0, 100);
+  });
   return {
     name: String(c.name || fallbackName || "Wayfarer").slice(0, 48),
+    career: String(c.career || "").slice(0, 100),
+    background: String(c.background || "").slice(0, 140),
+    reason: String(c.reason || "").slice(0, 320),
+    flavor: String(c.flavor || "").slice(0, 240),
+    mutation: String(c.mutation || "").slice(0, 180),
     health: remainingHealth,
     maxHealth,
     damageTaken,
@@ -1688,6 +1725,8 @@ function normalizeCharacter(input, fallbackName) {
     stats,
     loadout,
     conditions,
+    traits,
+    backstory,
     hacks,
     backpack: Array.isArray(c.backpack)
       ? c.backpack.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20)

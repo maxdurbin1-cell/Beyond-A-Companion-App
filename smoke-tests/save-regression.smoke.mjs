@@ -101,6 +101,11 @@ async function runAssertions(page) {
     state.credits = 4321;
     state.traits = state.traits && typeof state.traits === "object" ? state.traits : {};
     state.traits.smokeSaveMarker = marker;
+    state.backstory = state.backstory && typeof state.backstory === "object" ? state.backstory : {};
+    state.backstory.hometown = `Hometown-${marker}`;
+    state.backstory.rival = `Rival-${marker}`;
+    state.backstory.connection = `Contact-${marker}`;
+    state.backstory.notes = `Backstory-${marker}`;
     state.backpack = Array.isArray(state.backpack) ? state.backpack : ["", "", "", "", "", ""];
     state.backpack[0] = `Token-${marker}`;
     state._smokeCycle = cycle;
@@ -132,6 +137,10 @@ async function runAssertions(page) {
     const saveMarkerOk = String(data.name || "") === marker
       && Number(data.credits || 0) === 4321
       && String((data.traits && data.traits.smokeSaveMarker) || "") === marker
+      && String((data.backstory && data.backstory.hometown) || "") === `Hometown-${marker}`
+      && String((data.backstory && data.backstory.rival) || "") === `Rival-${marker}`
+      && String((data.backstory && data.backstory.connection) || "") === `Contact-${marker}`
+      && String((data.backstory && data.backstory.notes) || "") === `Backstory-${marker}`
       && Array.isArray(data.backpack)
       && String(data.backpack[0] || "") === `Token-${marker}`;
 
@@ -142,6 +151,7 @@ async function runAssertions(page) {
         savedName: data.name,
         savedCredits: data.credits,
         savedTrait: data.traits && data.traits.smokeSaveMarker,
+        savedBackstory: data.backstory,
         savedBackpack0: Array.isArray(data.backpack) ? data.backpack[0] : null
       };
     }
@@ -184,6 +194,10 @@ async function runAssertions(page) {
     const hasMarker = String(data.name || "") === expectedMarker
       && Number(data.credits || 0) === 4321
       && String((data.traits && data.traits.smokeSaveMarker) || "") === expectedMarker
+      && String((data.backstory && data.backstory.hometown) || "") === `Hometown-${expectedMarker}`
+      && String((data.backstory && data.backstory.rival) || "") === `Rival-${expectedMarker}`
+      && String((data.backstory && data.backstory.connection) || "") === `Contact-${expectedMarker}`
+      && String((data.backstory && data.backstory.notes) || "") === `Backstory-${expectedMarker}`
       && Array.isArray(data.backpack)
       && String(data.backpack[0] || "") === `Token-${expectedMarker}`;
 
@@ -194,6 +208,7 @@ async function runAssertions(page) {
         savedName: data.name,
         savedCredits: data.credits,
         savedTrait: data.traits && data.traits.smokeSaveMarker,
+        savedBackstory: data.backstory,
         savedBackpack0: Array.isArray(data.backpack) ? data.backpack[0] : null
       };
     }

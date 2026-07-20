@@ -1675,21 +1675,48 @@ function renderTraits() {
     return;
   }
   const keys = Object.keys(TRAITS);
-  if (!keys.some((key) => S.traits && S.traits[key])) {
-    container.innerHTML = '<div style="font-size:.8rem;color:var(--muted2);">No traits rolled yet.</div>';
-    return;
-  }
-
+  if (!S.traits || typeof S.traits !== 'object') S.traits = {};
   container.innerHTML = keys.map((key) => {
     const label = key.charAt(0).toUpperCase() + key.slice(1);
-    const value = (S.traits && S.traits[key]) || "-";
+    const value = String((S.traits && S.traits[key]) || "");
+    const options = ['<option value="">Choose...</option>'].concat((TRAITS[key] || []).map((entry) => {
+      const selected = String(entry) === value ? ' selected' : '';
+      return '<option value="' + escapeManualBuilderHtml(entry) + '"' + selected + '>' + escapeManualBuilderHtml(entry) + '</option>';
+    })).join('');
     return (
       '<div class="stat-row">' +
       '<div class="stat-label">' + label + "</div>" +
-      '<div style="flex:1;min-width:0;font-size:.84rem;color:var(--text2);text-align:right;overflow-wrap:anywhere;word-break:break-word;">' + value + "</div>" +
+      '<div style="display:flex;gap:.25rem;align-items:center;flex:1;min-width:0;justify-content:flex-end;">' +
+      '<select aria-label="Choose ' + escapeManualBuilderHtml(label) + ' trait" style="max-width:12rem;" onchange="setCharacterTrait(\'' + key + '\',this.value)">' + options + '</select>' +
+      '<button type="button" class="btn btn-icon btn-sm" aria-label="Roll ' + escapeManualBuilderHtml(label) + ' trait" onclick="rollCharacterTrait(\'' + key + '\')">⚄</button>' +
+      '</div>' +
       "</div>"
     );
   }).join("");
+}
+
+function escapeManualBuilderHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function setCharacterTrait(key, value) {
+  const traitKey = String(key || '').toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(TRAITS, traitKey)) return;
+  if (!S.traits || typeof S.traits !== 'object') S.traits = {};
+  S.traits[traitKey] = String(value || '');
+  renderTraits();
+}
+
+function rollCharacterTrait(key) {
+  const traitKey = String(key || '').toLowerCase();
+  const values = TRAITS[traitKey];
+  if (!Array.isArray(values) || !values.length) return;
+  setCharacterTrait(traitKey, pick(values));
 }
 
 function rollAllTraits() {
@@ -1721,6 +1748,7 @@ function syncCharacterFields() {
   if (typeof window.renderBackstoryTab === "function") {
     window.renderBackstoryTab();
   }
+  if (typeof syncManualBuilderFields === 'function') syncManualBuilderFields();
 }
 
 function syncCharacterStateFromFields() {
@@ -2144,12 +2172,177 @@ function setGuidedBuildStatus(message, tone) {
   node.style.color = tone === 'good' ? 'var(--green2)' : (tone === 'warn' ? 'var(--gold2)' : 'var(--muted2)');
 }
 
-function startGuidedCharacterBuild() {
-  clearCharacter({ force: true });
-  S.characterBuildGuide = { startedAt: Date.now(), steps: {} };
+function syncManualBuilderFields() {
+  var backstory = (S && S.backstory && typeof S.backstory === 'object') ? S.backstory : {};
+  setInputValue('manualBsOrigin', backstory.origin || '');
+  setInputValue('manualBsHometown', backstory.hometown || '');
+  setInputValue('manualBsRival', backstory.rival || '');
+  setInputValue('manualBsConnection', backstory.connection || '');
+  setInputValue('manualBsNotes', backstory.notes || '');
+}
+
+function startManualCharacterBuild() {
+  if (!S.backstory || typeof S.backstory !== 'object') S.backstory = {};
+  if (!S.traits || typeof S.traits !== 'object') S.traits = {};
   syncCharacterFields();
-  setGuidedBuildStatus('Guided build started. Run Step 1 or fill fields manually.', 'good');
-  if (typeof showNotif === 'function') showNotif('Guided character build started.', 'good');
+  renderTraits();
+  setGuidedBuildStatus('Manual build active. Type directly into the sheet, choose from the tables, or roll only the details you want.', 'good');
+  var builder = document.getElementById('manualCharacterBuilder');
+  if (builder && typeof builder.scrollIntoView === 'function') builder.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (typeof showNotif === 'function') showNotif('Manual character builder ready.', 'good');
+}
+
+function startBlankManualCharacterBuild() {
+  var html = ''
+    + '<div style="font-size:.82rem;color:var(--text2);line-height:1.55;">'
+    + '<div style="margin-bottom:.55rem;">Start with a completely blank Wayfarer sheet? This clears the current unsaved character so you can type or paste an exported sheet manually.</div>'
+    + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
+    + '<button class="btn btn-sm" onclick="closeModal()">Keep Current Sheet</button>'
+    + '<button class="btn btn-sm btn-red" onclick="confirmBlankManualCharacterBuild()">Clear &amp; Start Blank</button>'
+    + '</div></div>';
+  if (typeof openModal === 'function') openModal('Start Blank Manual Sheet', html);
+}
+
+function confirmBlankManualCharacterBuild() {
+  clearCharacter({ force: true });
+  if (typeof closeModal === 'function') closeModal();
+  startManualCharacterBuild();
+  setGuidedBuildStatus('Blank manual sheet ready. Start with the Wayfarer name, then fill only the details you want.', 'good');
+}
+
+function setManualBackstoryField(key, value) {
+  if (!S.backstory || typeof S.backstory !== 'object') S.backstory = {};
+  S.backstory[String(key || '')] = String(value || '');
+  if (typeof window.setBackstoryField === 'function') window.setBackstoryField(String(key || ''), String(value || ''));
+  syncManualBuilderFields();
+}
+
+function rollManualBackstoryAnchors() {
+  if (!S.backstory || typeof S.backstory !== 'object') S.backstory = {};
+  ['origin', 'hometown', 'rival', 'connection'].forEach(function(key) {
+    if (String(S.backstory[key] || '').trim()) return;
+    if (typeof window.rollBackstoryField === 'function') window.rollBackstoryField(key);
+  });
+  syncManualBuilderFields();
+  if (typeof showNotif === 'function') showNotif('Missing backstory anchors rolled. You can still rewrite any of them.', 'good');
+}
+
+function getManualEquipmentChoices() {
+  var categories = ['weapons', 'melee_exp', 'ranged_exp'];
+  var seen = {};
+  var choices = [];
+  categories.forEach(function(category) {
+    var entries = (typeof SHOP_DATA === 'object' && SHOP_DATA && Array.isArray(SHOP_DATA[category])) ? SHOP_DATA[category] : [];
+    entries.forEach(function(entry) {
+      if (!entry || !entry.name) return;
+      var key = String(entry.name) + '|' + String(entry.stat || '');
+      if (seen[key]) return;
+      seen[key] = true;
+      choices.push({ name: String(entry.name), stat: String(entry.stat || ''), desc: String(entry.desc || '') });
+    });
+  });
+  return choices.sort(function(a, b) { return a.name.localeCompare(b.name); });
+}
+
+function openManualEquipmentPicker(slot) {
+  var targetSlot = String(slot || '') === 'weapon2' ? 'weapon2' : 'weapon1';
+  var choices = getManualEquipmentChoices();
+  window._manualEquipmentChoices = choices;
+  var options = '<option value="">Choose a weapon...</option>' + choices.map(function(entry, index) {
+    return '<option value="' + index + '">' + escapeManualBuilderHtml(entry.name + (entry.stat ? ' - ' + entry.stat : '')) + '</option>';
+  }).join('');
+  var html = ''
+    + '<div style="font-size:.8rem;color:var(--muted2);line-height:1.55;margin-bottom:.4rem;">Choose from Merchant weapon tables without purchasing it. Slot 2 accepts a second weapon or a shield.</div>'
+    + '<select id="manualEquipmentChoice" style="margin-bottom:.45rem;">' + options + '</select>'
+    + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
+    + '<button class="btn btn-sm" onclick="closeModal()">Cancel</button>'
+    + '<button class="btn btn-sm btn-teal" onclick="applyManualEquipmentChoice(\'' + targetSlot + '\')">Equip Selection</button>'
+    + '</div>';
+  if (typeof openModal === 'function') openModal(targetSlot === 'weapon2' ? 'Choose Weapon 2 / Shield' : 'Choose Weapon 1', html);
+}
+
+function applyManualEquipmentChoice(slot) {
+  var select = document.getElementById('manualEquipmentChoice');
+  var index = select && String(select.value || '').trim() !== '' ? Number(select.value) : -1;
+  var entry = Array.isArray(window._manualEquipmentChoices) ? window._manualEquipmentChoices[index] : null;
+  if (!entry) {
+    if (typeof showNotif === 'function') showNotif('Choose a weapon first.', 'warn');
+    return;
+  }
+  var targetSlot = String(slot || '') === 'weapon2' ? 'weapon2' : 'weapon1';
+  if (!S.equipment || typeof S.equipment !== 'object') S.equipment = { weapon1: '', weapon2: '', armor: '', readied: '' };
+  S.equipment[targetSlot] = entry.name + (entry.stat ? ' (' + entry.stat + ')' : '');
+  syncCharacterFields();
+  if (typeof renderWeaponModsPanel === 'function') renderWeaponModsPanel();
+  if (typeof updateAllStatDisplays === 'function') updateAllStatDisplays();
+  if (typeof closeModal === 'function') closeModal();
+  if (typeof showNotif === 'function') showNotif(entry.name + ' equipped in ' + (targetSlot === 'weapon2' ? 'Weapon Slot 2.' : 'Weapon Slot 1.'), 'good');
+}
+
+function openManualFlavorPicker() {
+  var flavors = (typeof getCodexFlavorList === 'function') ? getCodexFlavorList() : PERSONAL_FLAVORS;
+  window._manualFlavorChoices = Array.isArray(flavors) ? flavors.slice() : [];
+  var options = '<option value="">Choose a Personal Flavor...</option>' + window._manualFlavorChoices.map(function(entry, index) {
+    return '<option value="' + index + '">' + escapeManualBuilderHtml(entry) + '</option>';
+  }).join('');
+  var html = ''
+    + '<div style="font-size:.8rem;color:var(--muted2);line-height:1.55;margin-bottom:.4rem;">Choose a specific Personal Flavor, or roll one randomly. You may still edit the result directly on the sheet.</div>'
+    + '<select id="manualFlavorChoice" style="margin-bottom:.45rem;">' + options + '</select>'
+    + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
+    + '<button class="btn btn-sm" onclick="rollFlavor();closeModal()">⚄ Roll Instead</button>'
+    + '<button class="btn btn-sm btn-teal" onclick="applyManualFlavorChoice()">Use Selection</button>'
+    + '</div>';
+  if (typeof openModal === 'function') openModal('Choose Personal Flavor', html);
+}
+
+function applyManualFlavorChoice() {
+  var select = document.getElementById('manualFlavorChoice');
+  var index = select && String(select.value || '').trim() !== '' ? Number(select.value) : -1;
+  var flavor = Array.isArray(window._manualFlavorChoices) ? window._manualFlavorChoices[index] : '';
+  if (!flavor) {
+    if (typeof showNotif === 'function') showNotif('Choose a Personal Flavor first.', 'warn');
+    return;
+  }
+  if (typeof setFlavor === 'function') setFlavor(flavor);
+  else S.flavor = String(flavor);
+  syncCharacterFields();
+  if (typeof closeModal === 'function') closeModal();
+}
+
+function finishManualCharacterBuild() {
+  var read = function(id, fallback) {
+    var node = document.getElementById(id);
+    return node ? String(node.value || '') : String(fallback || '');
+  };
+  S.name = read('charName', S.name).trim();
+  S.career = read('charCareer', S.career).trim();
+  S.background = read('charBackground', S.background).trim();
+  S.age = read('charAge', S.age);
+  S.omen = read('charOmen', S.omen).trim();
+  S.reason = read('charReason', S.reason).trim();
+  S.flavor = read('charFlavor', S.flavor).trim();
+  S.mutation = read('charMutation', S.mutation).trim();
+  S.randomItem = read('charItem', S.randomItem).trim();
+  if (!S.equipment || typeof S.equipment !== 'object') S.equipment = {};
+  S.equipment.weapon1 = read('eqWeapon1', S.equipment.weapon1).trim();
+  S.equipment.weapon2 = read('eqWeapon2', S.equipment.weapon2).trim();
+  S.equipment.armor = read('eqArmor', S.equipment.armor).trim();
+  S.equipment.readied = read('eqReadied', S.equipment.readied).trim();
+  setManualBackstoryField('origin', read('manualBsOrigin', S.backstory && S.backstory.origin));
+  setManualBackstoryField('hometown', read('manualBsHometown', S.backstory && S.backstory.hometown));
+  setManualBackstoryField('rival', read('manualBsRival', S.backstory && S.backstory.rival));
+  setManualBackstoryField('connection', read('manualBsConnection', S.backstory && S.backstory.connection));
+  setManualBackstoryField('notes', read('manualBsNotes', S.backstory && S.backstory.notes));
+  syncCharacterFields();
+  if (typeof saveCharacter === 'function') saveCharacter();
+  if (window.campaignSystem && typeof window.campaignSystem.syncCharacterToCampaign === 'function') {
+    window.campaignSystem.syncCharacterToCampaign(true);
+  }
+  setGuidedBuildStatus(S.name ? S.name + ' is saved and ready.' : 'Manual sheet saved. Add a name whenever you are ready.', 'good');
+}
+
+function startGuidedCharacterBuild() {
+  return startManualCharacterBuild();
 }
 
 function runCharacterBuildStep(stepId) {
@@ -3728,7 +3921,7 @@ function maybePromptSoloGuidance() {
     if (dismissed || hasAnySave || metaRaw) return;
     localStorage.setItem("beyond-light-solo-guide-dismissed", "1");
     if (typeof showNotif === "function") {
-      showNotif('Solo quickstart: Character -> Province -> Missions -> Storyline. Open Solo Guide from Solo tools anytime.', 'info');
+      showNotif('Solo quickstart: Character -> Province -> Missions -> Storyline. Open Solo Reference or Settings > Recovery anytime.', 'info');
     }
   } catch (_err) {
     // Ignore first-run guidance failures.

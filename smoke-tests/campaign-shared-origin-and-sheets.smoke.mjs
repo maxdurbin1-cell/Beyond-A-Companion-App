@@ -115,7 +115,7 @@ async function clearSession(page) {
 }
 
 async function buildCharacterAndOrigin(page, playerLabel, reason) {
-  await page.evaluate(({ label, why }) => {
+  await page.evaluate(async ({ label, why }) => {
     function resolveState() {
       try {
         return Function("return (typeof S !== 'undefined' && S) ? S : (window.S || null);")();
@@ -130,9 +130,25 @@ async function buildCharacterAndOrigin(page, playerLabel, reason) {
     if (s) {
       s.name = String(label || "Wayfarer");
       if (!s.reason) s.reason = String(why || "find a better route");
+      s.career = "Smoke Cartographer";
+      s.background = "Shared-table test Wayfarer";
+      s.flavor = "Pathfinder: Add Valor Die as a bonus when encountering Barriers during traversal";
+      s.traits = { virtue: "Mercy", vice: "Vain", reputation: "Honest" };
+      s.equipment = s.equipment && typeof s.equipment === "object" ? s.equipment : {};
+      s.equipment.weapon1 = "Sword (+1 Strike | Engaged)";
+      s.equipment.weapon2 = "Shield (+V.D. Defend)";
+      s.backstory = s.backstory && typeof s.backstory === "object" ? s.backstory : {};
+      s.backstory.origin = `${label} Origin`;
+      s.backstory.hometown = `${label} Hometown`;
+      s.backstory.rival = `${label} Rival`;
+      s.backstory.connection = `${label} Trusted Contact`;
+      s.backstory.notes = `${label} carries a personal campaign thread.`;
     }
     if (typeof window.createOriginMissionFromReason === "function") {
       try { window.createOriginMissionFromReason(true, { suppressFocus: true }); } catch (_err) {}
+    }
+    if (window.campaignSystem && typeof window.campaignSystem.syncCharacterToCampaign === "function") {
+      await window.campaignSystem.syncCharacterToCampaign(true);
     }
   }, { label: playerLabel, why: reason });
 }
@@ -145,6 +161,37 @@ async function runScenario(browser) {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
     await waitForCampaignReady(page);
     await clearSession(page);
+  }
+
+  const manualBuilderCheck = await gmPage.evaluate(() => {
+    if (typeof window.setCharacterTrait === "function") window.setCharacterTrait("virtue", "Mercy");
+    if (typeof window.setManualBackstoryField === "function") window.setManualBackstoryField("hometown", "Manual Smoke Hometown");
+    if (typeof window.openManualEquipmentPicker === "function") window.openManualEquipmentPicker("weapon2");
+    const choices = Array.isArray(window._manualEquipmentChoices) ? window._manualEquipmentChoices : [];
+    const shieldIndex = choices.findIndex((entry) => entry && /shield/i.test(String(entry.name || "")));
+    const picker = document.getElementById("manualEquipmentChoice");
+    if (picker && shieldIndex >= 0) picker.value = String(shieldIndex);
+    if (picker && shieldIndex >= 0 && typeof window.applyManualEquipmentChoice === "function") {
+      window.applyManualEquipmentChoice("weapon2");
+    }
+    const state = (typeof S !== "undefined" && S) ? S : window.S;
+    const topButtons = Array.from(document.querySelectorAll("#tab-character .char-top button")).map((button) => String(button.textContent || "").trim());
+    return {
+      hasManualBuilder: !!document.getElementById("manualCharacterBuilder"),
+      hasManualButton: topButtons.some((label) => label === "Manual Build"),
+      hasGuideButton: topButtons.some((label) => label === "Guide"),
+      hasGuidedBuildText: document.body.textContent.includes("Guided Character Builder"),
+      virtue: String(state && state.traits && state.traits.virtue || ""),
+      hometown: String(state && state.backstory && state.backstory.hometown || ""),
+      weapon2: String(state && state.equipment && state.equipment.weapon2 || ""),
+      hasFlavorPicker: typeof window.openManualFlavorPicker === "function"
+    };
+  });
+  if (!manualBuilderCheck.hasManualBuilder || !manualBuilderCheck.hasManualButton || manualBuilderCheck.hasGuideButton
+    || manualBuilderCheck.hasGuidedBuildText || manualBuilderCheck.virtue !== "Mercy"
+    || manualBuilderCheck.hometown !== "Manual Smoke Hometown" || !/shield/i.test(manualBuilderCheck.weapon2)
+    || !manualBuilderCheck.hasFlavorPicker) {
+    throw new Error(`Manual character builder regression: ${JSON.stringify(manualBuilderCheck)}`);
   }
 
   await gmPage.evaluate(() => {
@@ -188,7 +235,9 @@ async function runScenario(browser) {
         const origins = missions.filter((m) => m && m.missionType === "origin_story");
         const ownerTokens = new Set(origins.map((m) => String(m.originOwnerToken || "")).filter(Boolean));
         const rosterWithCharacters = roster.filter((m) => m && m.character);
-        return origins.length >= 1 && ownerTokens.size >= 1 && rosterWithCharacters.length >= 2;
+        const rosterWithStoryThreads = roster.filter((m) => m && m.character && m.character.backstory
+          && m.character.backstory.hometown && m.character.backstory.rival && m.character.backstory.connection);
+        return origins.length >= 1 && ownerTokens.size >= 1 && rosterWithCharacters.length >= 2 && rosterWithStoryThreads.length >= 2;
       },
       null,
       { timeout: STEP_TIMEOUT_MS }
@@ -209,6 +258,8 @@ async function runScenario(browser) {
         rosterWithCharacter: roster.filter((m) => m && m.character).length,
         rosterWithLoadout: roster.filter((m) => m && m.character && m.character.loadout).length,
         rosterWithHacks: roster.filter((m) => m && m.character && Array.isArray(m.character.hacks)).length,
+        rosterWithStoryThreads: roster.filter((m) => m && m.character && m.character.backstory
+          && m.character.backstory.hometown && m.character.backstory.rival && m.character.backstory.connection).length,
         originCount: origins.length,
         ownerTokenCount: ownerTokens.length,
         ownerTokens
@@ -289,6 +340,11 @@ async function runScenario(browser) {
     const shared = st && st.campaign && st.campaign.shared && st.campaign.shared.state ? st.campaign.shared.state : {};
     const origins = (Array.isArray(shared.activeMissions) ? shared.activeMissions : [])
       .filter((m) => m && m.missionType === "origin_story");
+    const playerMember = roster.find((member) => member && member.role === "player" && member.character);
+    let stagedStoryHook = null;
+    if (playerMember && window.campaignSystem && typeof window.campaignSystem.stageWayfarerStoryThread === "function") {
+      stagedStoryHook = window.campaignSystem.stageWayfarerStoryThread(playerMember.token, "hometown");
+    }
 
     const sheetChecks = roster.map((member) => {
       let opened = false;
@@ -305,6 +361,9 @@ async function runScenario(browser) {
         hasCharacter: !!(member && member.character),
         hasLoadout: !!(member && member.character && member.character.loadout),
         hasHacks: !!(member && member.character && Array.isArray(member.character.hacks)),
+        hasTraits: !!(member && member.character && member.character.traits && member.character.traits.virtue),
+        hasBackstory: !!(member && member.character && member.character.backstory
+          && member.character.backstory.hometown && member.character.backstory.rival && member.character.backstory.connection),
         opened
       };
     });
@@ -313,6 +372,12 @@ async function runScenario(browser) {
       rosterSize: roster.length,
       originCount: origins.length,
       ownerTokenCount: new Set(origins.map((m) => String(m.originOwnerToken || "")).filter(Boolean)).size,
+      stagedStoryHook: stagedStoryHook ? {
+        text: String(stagedStoryHook.text || ""),
+        source: String(stagedStoryHook.source || ""),
+        missionId: String(stagedStoryHook.missionId || "")
+      } : null,
+      canRequestStoryRoll: !!(window.campaignSystem && typeof window.campaignSystem.requestWayfarerStoryRoll === "function"),
       sheetChecks
     };
   });
@@ -323,9 +388,38 @@ async function runScenario(browser) {
   if (gmSummary.originCount < 1 || gmSummary.ownerTokenCount < 1) {
     throw new Error(`Shared origin mission thread was not preserved: ${JSON.stringify(gmSummary)}`);
   }
-  if (!gmSummary.sheetChecks.every((row) => row.hasCharacter && row.hasLoadout && row.hasHacks && row.opened)) {
+  if (!gmSummary.sheetChecks.every((row) => row.hasCharacter && row.hasLoadout && row.hasHacks && row.hasTraits && row.hasBackstory && row.opened)) {
     throw new Error(`GM could not open full synced sheets for all players: ${JSON.stringify(gmSummary)}`);
   }
+  if (!gmSummary.stagedStoryHook || !gmSummary.stagedStoryHook.missionId.includes("wayfarer:") || !gmSummary.canRequestStoryRoll) {
+    throw new Error(`GM could not stage and manage a player-owned story thread: ${JSON.stringify(gmSummary)}`);
+  }
+
+  const storyRollRequest = await gmPage.evaluate(async () => {
+    const state = window.campaignSystem.getState();
+    const roster = Array.isArray(state && state.campaign && state.campaign.roster) ? state.campaign.roster : [];
+    const player = roster.find((member) => member && member.role === "player" && member.character);
+    if (!player) return { ok: false, error: "Player Wayfarer not found." };
+    return window.campaignSystem.requestWayfarerStoryRoll(player.token, "rival");
+  });
+  if (!storyRollRequest || !storyRollRequest.ok) {
+    throw new Error(`GM could not request the player's Rival roll: ${JSON.stringify(storyRollRequest)}`);
+  }
+  await p1Page.waitForFunction(
+    () => {
+      const state = window.campaignSystem && window.campaignSystem.getState ? window.campaignSystem.getState() : null;
+      const request = state && state.campaign ? state.campaign.activeRollRequest : null;
+      return !!(request && request.id && /rival/i.test(String(request.label || ""))
+        && String(request.targetToken || "") === String(state.token || ""));
+    },
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+  gmSummary.storyRollRequest = {
+    ok: true,
+    label: "Rival",
+    target: "player-owner"
+  };
 
   return {
     ok: true,
