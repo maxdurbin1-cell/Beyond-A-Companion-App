@@ -166,6 +166,10 @@
     activeCampaignAreaSessionId: "",
     activeCampaignAreaRenderHash: "",
     sharedVttJoinRetryAt: 0,
+    sharedVttJoinRequested: false,
+    sharedVttJoinStartedAt: 0,
+    sharedVttJoinRetryTimer: null,
+    sharedVttJoinLastResyncAt: 0,
     lastAppliedCampaignSoundtrackHash: "",
     lastCampaignTravelAppliedAt: 0,
     lastReadyCheckPromptId: "",
@@ -835,6 +839,85 @@
     return false;
   }
 
+  function isCurrentViewMatchingCampaignTravel(travel) {
+    if (!travel || typeof travel !== "object") return false;
+    var expectedContext = String(travel.context || "");
+    var expectedTab = String(travel.tab || "");
+    var activeContext = getActiveContextId();
+    var activeTab = getActiveTabId();
+    if (expectedContext && activeContext !== expectedContext) return false;
+    if (expectedTab && activeTab !== expectedTab) return false;
+    if (expectedTab === "map") {
+      var expectedProvince = String(travel.provinceKey || "");
+      var currentProvince = typeof window.getProvinceSelectedKey === "function"
+        ? String(window.getProvinceSelectedKey() || "")
+        : "";
+      if (expectedProvince && currentProvince !== expectedProvince) return false;
+    }
+    return !!(expectedTab || expectedContext);
+  }
+
+  function getCampaignGmPresence(sharedState) {
+    var shared = sharedState && typeof sharedState === "object"
+      ? sharedState
+      : (getCampaignSharedState() || {});
+    var combat = shared.campaignCombat && typeof shared.campaignCombat === "object"
+      ? shared.campaignCombat
+      : null;
+    var vttSession = getActiveSharedCombatVttSession(shared);
+    var areaSession = normalizeCampaignAreaSession(shared.areaSession);
+    var travel = shared.campaignTravel && typeof shared.campaignTravel === "object"
+      ? shared.campaignTravel
+      : null;
+    var overlay = document.getElementById("combatModeOverlay");
+
+    if (combat && combat.active && vttSession) {
+      return {
+        kind: "vtt",
+        label: String(vttSession.sceneName || resolveSharedCombatSceneName() || "Shared VTT"),
+        by: String(vttSession.by || combat.startedBy || "GM"),
+        isWithGm: state.role === "gm" || !!(overlay && overlay.classList.contains("open")),
+        canJoin: state.role === "player",
+        session: vttSession
+      };
+    }
+
+    if (areaSession.id && areaSession.status === "open" && isCampaignAreaSessionCurrent(areaSession, shared)) {
+      var areaOpen = String(state.activeCampaignAreaSessionId || "") === areaSession.id;
+      if (areaOpen && areaSession.kind !== "galaxy-area" && areaSession.kind !== "yessod-area") {
+        areaOpen = isCampaignAreaModalShowing(areaSession);
+      }
+      return {
+        kind: "area",
+        label: resolveCampaignAreaModalTitle(areaSession),
+        by: String(areaSession.by || "GM"),
+        isWithGm: state.role === "gm" || areaOpen,
+        canJoin: state.role === "player",
+        session: areaSession
+      };
+    }
+
+    if (travel) {
+      return {
+        kind: "travel",
+        label: String(travel.label || getCameraTravelLabel(travel.tab, travel.context) || "Campaign Table"),
+        by: String(travel.movedBy || "GM"),
+        isWithGm: state.role === "gm" || isCurrentViewMatchingCampaignTravel(travel),
+        canJoin: state.role === "player",
+        session: travel
+      };
+    }
+
+    return {
+      kind: "table",
+      label: "Campaign Table",
+      by: "GM",
+      isWithGm: state.role === "gm",
+      canJoin: false,
+      session: null
+    };
+  }
+
   function scheduleGmCameraSync(reason, includeWorldSync) {
     if (!state.code || !state.connected || state.role !== "gm") return;
     if (!isStrictGmCameraLockEnabled()) return;
@@ -1091,29 +1174,65 @@
     return snapshot;
   }
 
-  function joinSharedCampaignCombatMode() {
+  function clearSharedVttJoinRetry() {
+    if (state.sharedVttJoinRetryTimer) {
+      clearTimeout(state.sharedVttJoinRetryTimer);
+    }
+    state.sharedVttJoinRetryTimer = null;
+    state.sharedVttJoinRequested = false;
+    state.sharedVttJoinStartedAt = 0;
+    state.sharedVttJoinRetryAt = 0;
+    state.sharedVttJoinLastResyncAt = 0;
+  }
+
+  function queueSharedVttJoinRetry(options) {
+    var opts = options && typeof options === "object" ? options : {};
+    var now = Date.now();
+    if (!state.sharedVttJoinRequested) {
+      state.sharedVttJoinRequested = true;
+      state.sharedVttJoinStartedAt = now;
+    }
+    state.sharedVttJoinRetryAt = now;
+
+    if (now - Number(state.sharedVttJoinStartedAt || now) >= 8000) {
+      clearSharedVttJoinRetry();
+      safeNotif("The GM's VTT did not finish syncing. Stay connected and use Join GM VTT to try again.", "warn");
+      renderDockPanel();
+      return false;
+    }
+
+    if (now - Number(state.sharedVttJoinLastResyncAt || 0) >= 900) {
+      state.sharedVttJoinLastResyncAt = now;
+      try {
+        var retryRequest = requestResync();
+        if (retryRequest && typeof retryRequest.catch === "function") {
+          retryRequest.catch(function () {});
+        }
+      } catch (_resyncErr) {}
+    }
+
+    if (state.sharedVttJoinRetryTimer) {
+      clearTimeout(state.sharedVttJoinRetryTimer);
+    }
+    state.sharedVttJoinRetryTimer = setTimeout(function () {
+      state.sharedVttJoinRetryTimer = null;
+      if (!state.sharedVttJoinRequested || state.role !== "player" || !state.code) return;
+      joinSharedCampaignCombatMode({ retry: true });
+    }, 360);
+
+    if (!opts.retry) {
+      safeNotif("Joining the GM's VTT as soon as the shared scene finishes syncing...", "info");
+    }
+    renderDockPanel();
+    return true;
+  }
+
+  function joinSharedCampaignCombatMode(options) {
+    var opts = options && typeof options === "object" ? options : {};
     var sceneSnapshot = getSharedCombatSceneEditorSnapshot();
     if (!sceneSnapshot) {
       if (state.role === "player") {
-        var retryAt = Date.now();
-        var shouldRetry = retryAt - Number(state.sharedVttJoinRetryAt || 0) > 900;
-        state.sharedVttJoinRetryAt = retryAt;
-        if (shouldRetry) {
-          try {
-            var retryRequest = requestResync();
-            if (retryRequest && typeof retryRequest.catch === "function") {
-              retryRequest.catch(function () {});
-            }
-          } catch (_resyncErr) {}
-          setTimeout(function () {
-            try {
-              if (state.role === "player" && state.code && Date.now() - Number(state.sharedVttJoinRetryAt || 0) < 2500) {
-                joinSharedCampaignCombatMode();
-              }
-            } catch (_retryErr) {}
-          }, 320);
-        }
-        safeNotif("The shared VTT is still syncing from the GM. Reconnecting now...", "warn");
+        queueSharedVttJoinRetry(opts);
         return false;
       }
       if (typeof window.openCombatSceneEditorFromExpedition === "function") {
@@ -1140,20 +1259,21 @@
       });
       if (!opened) {
         if (state.role === "player") {
-          try {
-            var retryRequest2 = requestResync();
-            if (retryRequest2 && typeof retryRequest2.catch === "function") {
-              retryRequest2.catch(function () {});
-            }
-          } catch (_resyncErr2) {}
+          queueSharedVttJoinRetry(opts);
+          return false;
         }
         safeNotif("Could not join the shared Combat Mode scene.", "warn");
         return false;
       }
-      state.sharedVttJoinRetryAt = 0;
+      clearSharedVttJoinRetry();
       safeNotif("Joined the shared Combat Mode scene.", "good");
+      renderDockPanel();
       return true;
     } catch (_err) {
+      if (state.role === "player") {
+        queueSharedVttJoinRetry(opts);
+        return false;
+      }
       safeNotif("Could not join the shared Combat Mode scene.", "warn");
       return false;
     }
@@ -1169,7 +1289,7 @@
     }
     window.joinSharedCampaignCombatModeFromPrompt = function () {
       var ok = joinSharedCampaignCombatMode();
-      if (ok && typeof window.closeModal === "function") window.closeModal();
+      if ((ok || state.sharedVttJoinRequested) && typeof window.closeModal === "function") window.closeModal();
       return ok;
     };
     window.dismissSharedCampaignCombatModePrompt = function () {
@@ -1455,6 +1575,35 @@
       return false;
     }
     return openSharedCampaignAreaSession(session, { quiet: false });
+  }
+
+  function returnToGmView() {
+    if (!state.code || state.role !== "player") {
+      safeNotif("Join a campaign as a player to follow the GM.", "warn");
+      return false;
+    }
+    var shared = getCampaignSharedState() || {};
+    var presence = getCampaignGmPresence(shared);
+    if (presence.kind === "vtt") {
+      return joinSharedCampaignCombatMode();
+    }
+    if (presence.kind === "area") {
+      var joinedArea = openSharedCampaignAreaSession(presence.session, { quiet: false });
+      if (!joinedArea) {
+        safeNotif("The GM's shared area is still loading. Requesting the latest table state...", "warn");
+        requestResync();
+      }
+      renderDockPanel();
+      return joinedArea;
+    }
+    if (presence.kind === "travel" && presence.session) {
+      applyCampaignTravelState(presence.session, { force: true });
+      safeNotif("Returned to the GM at " + presence.label + ".", "good");
+      renderDockPanel();
+      return true;
+    }
+    safeNotif("The GM has not opened a shared location yet.", "info");
+    return false;
   }
 
   function promptCampaignAreaSessionInvite(session) {
@@ -1845,6 +1994,7 @@
       window.switchTab = function () {
         var suppressCampaignSync = !!window.__campaignSuppressNavigationSync || isNavigationSyncSuppressed();
         var out = baseSwitchTab.apply(this, arguments);
+        if (state.code) renderGlobalQuickAccess();
         if (!!window.__campaignSuppressNavigationSync) window.__campaignSuppressNavigationSync = false;
         if (state.applyingSharedState || suppressCampaignSync) return out;
         syncCampaignNavigationState(window._activeContext || "", String(arguments[0] || ""));
@@ -1858,6 +2008,7 @@
       window.setContext = function () {
         var suppressCampaignSync = !!window.__campaignSuppressNavigationSync || isNavigationSyncSuppressed();
         var out = baseSetContext.apply(this, arguments);
+        if (state.code) renderGlobalQuickAccess();
         if (!!window.__campaignSuppressNavigationSync) window.__campaignSuppressNavigationSync = false;
         if (state.applyingSharedState || suppressCampaignSync) return out;
         var currentTabBtn = document.querySelector('#mainNavTablist .tab-btn.active[data-tab]');
@@ -8429,12 +8580,12 @@
       var text = String(entry && entry.text || "");
       return text.indexOf("GM Trigger Debug") >= 0 || text.indexOf("Trigger:") >= 0 || text.indexOf("hex-enter") >= 0;
     }
-    if (state.role !== "gm") return source;
     var mode = String(state.timelineFilter || "all");
     if (mode === "all") return source.filter(function (entry) { return !isTriggerDebug(entry); });
     if (mode === "chat") {
       return source.filter(function (entry) { return String(entry && entry.kind || "") === "chat"; });
     }
+    if (state.role !== "gm") return source.filter(function (entry) { return !isTriggerDebug(entry); });
     if (mode === "roll") {
       return source.filter(function (entry) {
         var k = String(entry && entry.kind || "");
@@ -9563,7 +9714,11 @@
       + '<div id="campaignDockPanel" class="campaign-dock-panel">'
       + '<div class="campaign-dock-head">'
       + '<div class="campaign-dock-title">Campaign Live</div>'
+      + '<div class="campaign-dock-head-actions">'
+      + '<button class="btn btn-xs" onclick="window.campaignSystem.openChat()">Chat</button>'
       + '<div id="campaignDockBadge" class="campaign-dock-badge offline">Offline</div>'
+      + '<button class="campaign-dock-close" type="button" aria-label="Close campaign panel" onclick="window.campaignSystem.toggleDock()">&times;</button>'
+      + '</div>'
       + "</div>"
       + '<div id="campaignDockMeta" class="campaign-dock-meta">No campaign connected.</div>'
       + '<div id="campaignDockScene" class="campaign-dock-scene"></div>'
@@ -10037,23 +10192,52 @@
 
     var shared = getCampaignSharedState();
     var contract = getCampaignLiveActionContract(shared, state.campaign || {});
+    var presence = getCampaignGmPresence(shared);
+    var passive = contract.kind === "idle";
     var soundtrackChip = contract.soundtrackLabel
       ? ('<span class="table-rail-chip is-gold">Music · ' + escapeHtml(contract.soundtrackLabel) + '</span>')
       : '';
     var chips = ''
       + '<span class="table-rail-chip is-teal">Code · ' + escapeHtml(state.code || "-") + '</span>'
-      + '<span class="table-rail-chip">Role · ' + escapeHtml(state.role === "gm" ? "GM" : "Player") + '</span>'
       + '<span class="table-rail-chip is-' + escapeHtml(state.syncHealth || "muted") + '">Sync · ' + escapeHtml(String(state.syncText || state.syncHealth || "idle")) + '</span>'
-      + '<span class="table-rail-chip">Scene · ' + escapeHtml(String(contract.tableStateKey === "combat" ? "Combat" : contract.tableStateLabel || "Exploration")) + '</span>'
       + (contract.vttOpen ? '<span class="table-rail-chip is-teal">Shared VTT</span>' : '')
       + (contract.pendingActiveCount > 0 ? '<span class="table-rail-chip">Checks · ' + contract.pendingActiveCount + '</span>' : '')
       + soundtrackChip;
-    var buttonsHtml = renderCampaignActionButtons(contract.actions, { limit: 4, sizeClass: "btn-sm" });
+    var dedicatedActions = [];
+    if (state.role === "player" && presence.canJoin && !presence.isWithGm) {
+      pushCampaignUiAction(
+        dedicatedActions,
+        presence.kind === "vtt" ? (state.sharedVttJoinRequested ? "Joining GM VTT..." : "Join GM VTT") : (presence.kind === "area" ? "Join GM Area" : "Return to GM"),
+        "window.campaignSystem.returnToGmView()",
+        "teal"
+      );
+      if (state.sharedVttJoinRequested && dedicatedActions.length) {
+        dedicatedActions[dedicatedActions.length - 1].disabled = true;
+      }
+    }
+    pushCampaignUiAction(dedicatedActions, "Chat", "window.campaignSystem.openChat()", "");
+    var supplementalActions = (Array.isArray(contract.actions) ? contract.actions : []).filter(function (action) {
+      var label = String(action && action.label || "");
+      return label !== "Open Dock" && label !== "Join Shared VTT" && label !== "Open Shared VTT";
+    });
+    var buttonsHtml = renderCampaignActionButtons(dedicatedActions.concat(supplementalActions), { limit: 4, sizeClass: "btn-sm" });
+    var presenceTitle = state.role === "gm"
+      ? ("You are hosting · " + presence.label)
+      : ("GM at " + presence.label);
+    var presenceSummary = state.role === "gm"
+      ? "Players can follow this shared table location."
+      : (presence.isWithGm ? "You are with the table." : "You are viewing something else. Rejoin whenever you are ready.");
     var hash = JSON.stringify({
       code: state.code,
       role: state.role,
       syncText: state.syncText,
       syncHealth: state.syncHealth,
+      presence: {
+        kind: presence.kind,
+        label: presence.label,
+        isWithGm: presence.isWithGm,
+        joinRequested: state.sharedVttJoinRequested
+      },
       contract: {
         kind: contract.kind,
         id: contract.id,
@@ -10075,12 +10259,14 @@
     root.hidden = false;
     root.style.display = "";
     root.classList.add("is-active");
+    root.classList.toggle("is-passive", passive);
+    root.classList.toggle("is-away-from-gm", state.role === "player" && !presence.isWithGm);
     root.innerHTML = ''
       + '<span class="qa-label">Table</span>'
       + '<div class="table-rail-copy">'
-      + '<div class="table-rail-title">' + escapeHtml(String(contract.label || "Table Ready")) + '</div>'
-      + '<div class="table-rail-sub">' + escapeHtml(String(contract.summary || "")) + (contract.detail ? ' · ' + escapeHtml(String(contract.detail || "")) : '') + '</div>'
-      + (contract.prompt ? '<div class="table-rail-sub is-muted">' + escapeHtml(String(contract.prompt || "")) + '</div>' : '')
+      + '<div class="table-rail-title">' + escapeHtml(presenceTitle) + '</div>'
+      + '<div class="table-rail-sub">' + escapeHtml(passive ? presenceSummary : String(contract.label || "Table Ready") + " · " + String(contract.summary || "")) + '</div>'
+      + (!passive && contract.prompt ? '<div class="table-rail-sub is-muted">' + escapeHtml(String(contract.prompt || "")) + '</div>' : '')
       + '</div>'
       + '<div class="table-rail-chip-row">' + chips + '</div>'
       + (buttonsHtml ? '<div class="table-rail-actions">' + buttonsHtml + '</div>' : '');
@@ -10125,6 +10311,7 @@
     root.classList.toggle("campaign-scene-narrative", sceneMode === "narrative");
     root.classList.toggle("campaign-scene-exploration", sceneMode === "exploration");
     root.classList.toggle("campaign-scene-combat", sceneMode === "combat");
+    root.classList.toggle("campaign-chat-focus", state.dockOpen && state.timelineFilter === "chat");
     applyGlobalSceneFocus(sceneMode);
     state.effectiveTableSceneMode = sceneMode;
     if (state.tableSceneMode === "auto") {
@@ -10293,7 +10480,13 @@
           return '<button class="btn btn-xs ' + (on ? 'btn-teal' : '') + '" onclick="window.campaignSystem.setTimelineFilter(\'' + m.id + '\')">' + m.label + '</button>';
         }).join("");
       } else {
-        filters.innerHTML = "";
+        filters.innerHTML = [
+          { id: "all", label: "All" },
+          { id: "chat", label: "Chat" }
+        ].map(function (m) {
+          var on = state.timelineFilter === m.id;
+          return '<button class="btn btn-xs ' + (on ? 'btn-teal' : '') + '" onclick="window.campaignSystem.setTimelineFilter(\'' + m.id + '\')">' + m.label + '</button>';
+        }).join("");
       }
     }
 
@@ -10597,6 +10790,7 @@
 
     state.socket.on("campaign:deleted", function (payload) {
       var code = payload && payload.code ? String(payload.code) : state.code;
+      clearSharedVttJoinRetry();
       state.code = "";
       state.role = "";
       state.token = "";
@@ -11324,6 +11518,7 @@
       await emitWithAck("campaign:leave", {});
     }
 
+    clearSharedVttJoinRetry();
     state.code = "";
     state.role = "";
     state.token = "";
@@ -11772,6 +11967,7 @@
     }
 
     var oldCode = state.code;
+    clearSharedVttJoinRetry();
     state.code = "";
     state.role = "";
     state.token = "";
@@ -12188,6 +12384,17 @@
     if (filterMode) setTimelineFilter(filterMode);
     state.dockOpen = true;
     renderDockPanel();
+  }
+
+  function openCampaignChat() {
+    state.timelineFilter = "chat";
+    state.timelineFilterManual = true;
+    state.dockOpen = true;
+    renderDockPanel();
+    setTimeout(function () {
+      var input = document.getElementById("campaignDockChatInput");
+      if (input && typeof input.focus === "function") input.focus();
+    }, 0);
   }
 
   function toggleDock() {
@@ -12704,6 +12911,8 @@
     restoreRecentDockChat: restoreRecentDockChat,
     toggleDock: toggleDock,
     openDock: openDock,
+    openChat: openCampaignChat,
+    returnToGmView: returnToGmView,
     toggleDockTimelinePin: toggleDockTimelinePin,
     jumpDockTimelineLatest: jumpDockTimelineLatest,
     recordEconomyDelta: recordEconomyDelta,

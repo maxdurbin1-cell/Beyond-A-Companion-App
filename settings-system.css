@@ -971,6 +971,31 @@ body.campaign-player-lite-mode .campaign-log-row {
   border-bottom: 1px solid var(--border);
 }
 
+.campaign-dock-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.campaign-dock-close {
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted2);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.campaign-dock-close:hover,
+.campaign-dock-close:focus-visible {
+  border-color: var(--gold);
+  color: var(--gold2);
+}
+
 .campaign-dock-title {
   font-family: 'Cinzel', serif;
   font-size: 0.64rem;
@@ -1288,6 +1313,28 @@ body.campaign-player-lite-mode .campaign-log-row {
   justify-content: flex-end;
   gap: 0.3rem;
   flex-wrap: wrap;
+}
+
+#campaignDock.campaign-chat-focus .campaign-dock-panel {
+  height: min(50vh, 460px);
+  min-height: min(330px, calc(100vh - 5rem));
+  border-color: rgba(46, 196, 182, 0.5);
+}
+
+#campaignDock.campaign-chat-focus .campaign-dock-meta,
+#campaignDock.campaign-chat-focus .campaign-dock-scene,
+#campaignDock.campaign-chat-focus .campaign-dock-live,
+#campaignDock.campaign-chat-focus .campaign-dock-mechanics,
+#campaignDock.campaign-chat-focus .campaign-dock-lock,
+#campaignDock.campaign-chat-focus .campaign-dock-trigger,
+#campaignDock.campaign-chat-focus .campaign-dock-timeline-actions,
+#campaignDock.campaign-chat-focus .campaign-dock-chat-helper,
+#campaignDock.campaign-chat-focus .campaign-dock-chat-actions {
+  display: none !important;
+}
+
+#campaignDock.campaign-chat-focus .campaign-dock-filters {
+  display: flex !important;
 }
 
 .campaign-dock-panel {

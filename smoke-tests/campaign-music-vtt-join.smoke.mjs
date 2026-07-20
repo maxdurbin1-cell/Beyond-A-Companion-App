@@ -322,6 +322,82 @@ async function runScenario(browser, baseUrl) {
     await syncCharacter(playerPage, "Music Risk Player");
     await wait(800);
 
+    const presenceSync = await gmPage.evaluate(async () => {
+      return window.campaignSystem.syncSharedPatch({
+        campaignTravel: {
+          region: "province",
+          context: "traveling",
+          tab: "map",
+          label: "Province Map",
+          provinceKey: "",
+          movedBy: "Music Risk GM",
+          reason: "table-presence-smoke",
+          phaseCost: 0,
+          updatedAt: Date.now()
+        }
+      }, "table-presence-smoke");
+    });
+    if (!presenceSync || !presenceSync.ok) {
+      throw new Error(`Table presence sync failed: ${JSON.stringify(presenceSync)}`);
+    }
+    await playerPage.waitForFunction(
+      () => {
+        const rail = document.getElementById("globalQuickAccess");
+        return !!(rail && rail.textContent.includes("GM at Province Map"));
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await playerPage.evaluate(() => {
+      if (window.switchTab) window.switchTab("character");
+    });
+    await playerPage.waitForFunction(
+      () => {
+        const rail = document.getElementById("globalQuickAccess");
+        return !!(
+          rail
+          && rail.textContent.includes("GM at Province Map")
+          && Array.from(rail.querySelectorAll("button")).some((button) => button.textContent.includes("Return to GM"))
+        );
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    const returnedToGm = await playerPage.evaluate(() => window.campaignSystem.returnToGmView());
+    if (!returnedToGm) throw new Error("Player could not return to the GM's map view.");
+    await playerPage.waitForFunction(
+      () => !!document.querySelector("#tab-map.active"),
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+
+    const chatMessage = `Table chat ${Date.now()}`;
+    await playerPage.evaluate(async (message) => {
+      window.campaignSystem.openChat();
+      const input = document.getElementById("campaignDockChatInput");
+      if (!input) throw new Error("Missing campaign chat input.");
+      input.value = message;
+      await window.campaignSystem.sendChatMessage();
+    }, chatMessage);
+    await playerPage.waitForFunction(
+      () => {
+        const dock = document.getElementById("campaignDock");
+        const input = document.getElementById("campaignDockChatInput");
+        return !!(dock && dock.classList.contains("campaign-chat-focus") && input && document.activeElement === input);
+      },
+      null,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+    await gmPage.evaluate(() => window.campaignSystem.openChat());
+    await gmPage.waitForFunction(
+      (message) => {
+        const timeline = document.getElementById("campaignDockTimeline");
+        return !!(timeline && timeline.textContent.includes(message));
+      },
+      chatMessage,
+      { timeout: STEP_TIMEOUT_MS }
+    );
+
     const provinceMood = await setCampaignMood(
       gmPage,
       "province-expedition",
@@ -484,6 +560,11 @@ async function runScenario(browser, baseUrl) {
 
     const joinAttempt = await playerPage.evaluate(() => {
       const beforeOpen = !!document.querySelector("#combatModeOverlay.open");
+      const originalApply = window.applySharedCombatSceneEditorState;
+      window.applySharedCombatSceneEditorState = () => false;
+      window.setTimeout(() => {
+        window.applySharedCombatSceneEditorState = originalApply;
+      }, 1100);
       let method = "missing";
       let result = "missing";
       if (typeof window.joinSharedCampaignCombatModeFromPrompt === "function") {
@@ -497,7 +578,8 @@ async function runScenario(browser, baseUrl) {
         method,
         resultType: typeof result,
         beforeOpen,
-        afterOpen: !!document.querySelector("#combatModeOverlay.open")
+        afterOpen: !!document.querySelector("#combatModeOverlay.open"),
+        delayedSnapshotMs: 1100
       };
     });
 

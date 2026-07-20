@@ -88,16 +88,18 @@ header{background:linear-gradient(180deg,rgba(4,5,8,.98) 0%,rgba(10,12,24,.95) 5
 .quick-nav-label{font-size:.78rem;letter-spacing:.13em;text-transform:uppercase;color:var(--text2);align-self:center;margin-right:.3rem;font-family:'Cinzel',serif;font-weight:600;}
 .quick-nav .btn{font-size:.78rem;padding:.32rem .7rem;}
 .panel-quick-access{margin-bottom:.55rem;}
-.global-quick-access{position:sticky;top:var(--quick-access-top, 8.2rem);z-index:190;padding:.52rem 1.2rem;background:linear-gradient(180deg,rgba(8,10,18,.96) 0%,rgba(8,10,18,.9) 100%);border-bottom:1px solid rgba(201,162,39,.12);display:none;gap:.35rem;flex-wrap:wrap;align-items:center;box-shadow:0 10px 24px rgba(0,0,0,.14);}
+.global-quick-access{position:sticky;top:var(--quick-access-top, 8.2rem);z-index:190;padding:.42rem 1.2rem;background:linear-gradient(180deg,rgba(8,10,18,.96) 0%,rgba(8,10,18,.9) 100%);border-bottom:1px solid rgba(201,162,39,.12);display:none;gap:.45rem;flex-wrap:wrap;align-items:center;box-shadow:0 8px 18px rgba(0,0,0,.12);}
 .global-quick-access.is-active{display:flex;}
+.global-quick-access.is-away-from-gm{border-bottom-color:rgba(46,196,182,.42);}
 .global-quick-access .qa-label{font-size:.68rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted2);font-family:'Cinzel',serif;margin-right:.2rem;}
 .global-quick-access .qa-empty{font-size:.83rem;color:var(--muted2);}
 .global-quick-access .btn{font-size:.77rem;padding:.3rem .62rem;}
-.table-rail-copy{display:flex;flex-direction:column;gap:.12rem;min-width:min(24rem,100%);flex:1 1 18rem;}
+.table-rail-copy{display:flex;flex-direction:column;gap:.08rem;min-width:min(16rem,100%);flex:1 1 14rem;}
 .table-rail-title{font-family:'Rajdhani',sans-serif;font-size:.92rem;font-weight:700;letter-spacing:.06em;color:var(--text2);}
 .table-rail-sub{font-size:.76rem;line-height:1.45;color:var(--text2);}
 .table-rail-sub.is-muted{color:var(--muted2);}
-.table-rail-chip-row{display:flex;gap:.24rem;flex-wrap:wrap;align-items:center;flex:1 1 16rem;}
+.global-quick-access.is-passive .table-rail-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.table-rail-chip-row{display:flex;gap:.24rem;flex-wrap:wrap;align-items:center;flex:0 1 auto;}
 .table-rail-chip{display:inline-flex;align-items:center;gap:.2rem;padding:.18rem .44rem;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);font-family:'Rajdhani',sans-serif;font-size:.7rem;letter-spacing:.05em;color:var(--muted2);white-space:nowrap;}
 .table-rail-chip.is-teal{border-color:rgba(46,196,182,.34);background:rgba(46,196,182,.08);color:var(--teal2);}
 .table-rail-chip.is-gold{border-color:rgba(232,192,80,.34);background:rgba(232,192,80,.08);color:var(--gold2);}
