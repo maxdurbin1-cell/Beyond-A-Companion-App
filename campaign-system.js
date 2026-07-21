@@ -92,8 +92,6 @@
     campaign: null,
     suppressTmwEmit: false,
     lastKnownTmw: null,
-    suppressMentalStressEmit: false,
-    lastKnownMentalStress: null,
     suppressCreditsEmit: false,
     lastKnownCredits: null,
     suppressRenownEmit: false,
@@ -111,6 +109,7 @@
     lastCharacterHash: "",
     lastAppliedSelfCharacterAt: 0,
     characterSyncSuppressUntil: 0,
+    characterSyncQueue: Promise.resolve(),
     gmIdea: "",
     gmWayfarerSort: "online",
     lastSharedHash: "",
@@ -131,7 +130,6 @@
     syncInFlight: false,
     syncQueued: false,
     syncQueuedReason: "",
-    lastResyncRequester: "",
     lastResyncRequestAt: 0,
     lastAutoRebroadcastAt: 0,
     lastAutoRebroadcastOk: null,
@@ -244,7 +242,6 @@
   var PLAYER_SHARED_PATCH_KEYS = {
     renown: true,
     credits: true,
-    mentalStress: true,
     missionTokens: true,
     activeMissions: true,
     completedMissions: true,
@@ -4577,7 +4574,6 @@
     var shared = {
       credits: Math.max(0, Number(gameState.credits || 0)),
       renown: Math.max(0, Number(gameState.renown || 0)),
-      mentalStress: Math.max(0, Number((typeof current.mentalStress === "number" ? current.mentalStress : gameState.mentalStress) || 0)),
       missionTokens: deepCloneJson(gameState.missionTokens || {}),
       activeMissions: deepCloneJson(gameState.activeMissions || []),
       completedMissions: deepCloneJson(gameState.completedMissions || []),
@@ -4635,7 +4631,6 @@
     var patch = {
       renown: Math.max(0, Number(gameState.renown || 0)),
       credits: Math.max(0, Number(gameState.credits || 0)),
-      mentalStress: Math.max(0, Number(gameState.mentalStress || 0)),
       missionTokens: deepCloneJson(gameState.missionTokens || {}),
       activeMissions: deepCloneJson(gameState.activeMissions || []),
       completedMissions: deepCloneJson(gameState.completedMissions || []),
@@ -4737,12 +4732,6 @@
         window.S.renown = Math.max(0, Number(sharedState.renown || 0));
         state.lastKnownRenown = window.S.renown;
         setTimeout(function () { state.suppressRenownEmit = false; }, 0);
-      }
-      if (typeof sharedState.mentalStress === "number") {
-        state.suppressMentalStressEmit = true;
-        window.S.mentalStress = Math.max(0, Number(sharedState.mentalStress || 0));
-        state.lastKnownMentalStress = window.S.mentalStress;
-        setTimeout(function () { state.suppressMentalStressEmit = false; }, 0);
       }
       if (sharedState.storyline && typeof sharedState.storyline === "object") {
         window.S.storyline = deepCloneJson(sharedState.storyline) || {};
@@ -5714,7 +5703,6 @@
       safeNotif((res && res.error) || "Shared world sync failed.", "warn");
       return;
     }
-    safeNotif("Shared world synced (v" + Number(res.stateVersion || 0) + ").", "good");
   }
 
   async function syncSharedSilent(reason) {
@@ -7000,18 +6988,16 @@
         participants: wayfarerTokens.length
       });
 
+      var startSyncPromise = null;
       if (state.code && state.connected) {
         if (state.role === "player") {
-          syncPlayerSharedPatch({ campaignCombat: deepCloneJson(combatState) || {} }, "start-campaign-combat-player");
+          startSyncPromise = syncPlayerSharedPatch({ campaignCombat: deepCloneJson(combatState) || {} }, "start-campaign-combat-player");
         } else {
-          var startPatch = syncSharedPatch({
+          startSyncPromise = syncSharedPatch({
             campaignCombat: sharedState.campaignCombat,
             combatScene: sharedState.combatScene,
             campaignTravel: sharedState.campaignTravel
           }, "start-campaign-combat");
-          if (startPatch && typeof startPatch.catch === "function") {
-            startPatch.catch(function () {});
-          }
         }
         broadcastRollResult(
           "Campaign Combat",
@@ -7026,7 +7012,22 @@
           window.__campaignSuppressNavigationSync = false;
         }
       }
-      if (callback) callback({ ok: true });
+      if (startSyncPromise && typeof startSyncPromise.then === "function") {
+        startSyncPromise.then(function (res) {
+          if (!res || !res.ok) {
+            var failed = res || { ok: false, error: "Combat start did not sync." };
+            safeNotif(String(failed.error || "Combat start did not sync."), "warn");
+            if (callback) callback(failed);
+            return;
+          }
+          if (callback) callback({ ok: true, stateVersion: Number(res.stateVersion || 0) });
+        }).catch(function (err) {
+          safeNotif("Combat start did not sync. Check the Campaign connection and try again.", "warn");
+          if (callback) callback({ ok: false, error: String(err) });
+        });
+      } else if (callback) {
+        callback({ ok: true });
+      }
     } catch (err) {
       if (callback) callback({ ok: false, error: String(err) });
     }
@@ -8077,13 +8078,6 @@
     await emitWithAck("campaign:setTmw", { value: tmw, reason: reason || "sync" });
   }
 
-  async function syncMentalStressDelta(delta, reason) {
-    if (!state.connected || !state.code) return;
-    var val = Number(delta || 0);
-    if (!Number.isFinite(val) || val === 0) return;
-    await emitWithAck("campaign:deltaMentalStress", { delta: val, reason: reason || "sync" });
-  }
-
   async function syncCreditsDelta(delta, reason) {
     if (!state.connected || !state.code) return;
     if (state.applyingSharedState || state.suppressCreditsEmit) return;
@@ -8139,14 +8133,14 @@
     if (typeof window.changeMentalStress !== "function") return;
 
     var originalMental = window.changeMentalStress;
-    window.changeMentalStress = function (delta) {
-      var before = (typeof window.S !== "undefined" && window.S) ? Number(window.S.mentalStress || 0) : 0;
+    window.changeMentalStress = function () {
+      var gameState = syncWindowStateAlias();
+      var before = gameState ? Number(gameState.mentalStress || 0) : 0;
       var result = originalMental.apply(this, arguments);
-      var after = (typeof window.S !== "undefined" && window.S) ? Number(window.S.mentalStress || 0) : before;
-      var appliedDelta = after - before;
-      if (!state.suppressMentalStressEmit && appliedDelta !== 0) {
-        state.lastKnownMentalStress = after;
-        syncMentalStressDelta(appliedDelta, "changeMentalStress");
+      gameState = syncWindowStateAlias();
+      var after = gameState ? Number(gameState.mentalStress || 0) : before;
+      if (before !== after && state.connected && state.code && !state.applyingSharedState) {
+        syncCharacterToCampaign(true).catch(function () {});
       }
       return result;
     };
@@ -8531,6 +8525,7 @@
   }
 
   function collectCharacterSummary() {
+    syncWindowStateAlias();
     var stats = (typeof window.S !== "undefined" && window.S && window.S.stats) ? window.S.stats : {};
     var hp = (typeof window.S !== "undefined" && window.S)
       ? ((typeof window.S.health === "number") ? window.S.health : 0)
@@ -8647,7 +8642,7 @@
   }
 
   function applyAuthoritativeSelfCharacterFromSnapshot(snapshot) {
-    if (!snapshot || state.role !== "player" || !state.token || typeof window.S === "undefined" || !window.S) return false;
+    if (!snapshot || !state.token || typeof window.S === "undefined" || !window.S) return false;
     var character = findRosterCharacterSnapshot(snapshot, state.token);
     if (!character) return false;
 
@@ -8896,12 +8891,11 @@
     safeNotif("Shared from wayfarer sheet: " + item, "good");
   }
 
-  async function syncCharacterToCampaign(force) {
+  async function publishCharacterSummary(summary, hash, staleRetryCount, sessionKey) {
     if (!state.socket || !state.connected || !state.code) return;
-    if (!force && Number(state.characterSyncSuppressUntil || 0) > Date.now()) return;
-    var summary = collectCharacterSummary();
-    var hash = JSON.stringify(summary);
-    if (!force && hash === state.lastCharacterHash) return;
+    if (String(state.code || "") + ":" + String(state.token || "") !== sessionKey) {
+      return { ok: false, skipped: true, error: "Campaign seat changed before character sync." };
+    }
     var res = await emitWithAck("campaign:updateCharacter", {
       character: summary,
       baseUpdatedAt: Math.max(0, Number(state.lastAppliedSelfCharacterAt || 0))
@@ -8914,7 +8908,41 @@
           Number(res.updatedAt || 0)
         );
       }
+      return res;
     }
+    if (res && res.stale && Number(staleRetryCount || 0) < 1) {
+      var authoritativeRevision = Math.max(0, Number(res.updatedAt || 0));
+      for (var attempt = 0; attempt < 8 && Number(state.lastAppliedSelfCharacterAt || 0) < authoritativeRevision; attempt += 1) {
+        await new Promise(function (resolve) { setTimeout(resolve, 50); });
+      }
+      if (Number(state.lastAppliedSelfCharacterAt || 0) >= authoritativeRevision) {
+        var rebasedSummary = collectCharacterSummary();
+        return publishCharacterSummary(
+          rebasedSummary,
+          JSON.stringify(rebasedSummary),
+          Number(staleRetryCount || 0) + 1,
+          sessionKey
+        );
+      }
+    }
+    return res;
+  }
+
+  function syncCharacterToCampaign(force, staleRetryCount) {
+    if (!state.socket || !state.connected || !state.code) return Promise.resolve();
+    if (!force && Number(state.characterSyncSuppressUntil || 0) > Date.now()) return Promise.resolve();
+    var summary = collectCharacterSummary();
+    var hash = JSON.stringify(summary);
+    if (!force && hash === state.lastCharacterHash) return Promise.resolve();
+    var sessionKey = String(state.code || "") + ":" + String(state.token || "");
+    var previous = state.characterSyncQueue && typeof state.characterSyncQueue.then === "function"
+      ? state.characterSyncQueue
+      : Promise.resolve();
+    var task = previous.catch(function () {}).then(function () {
+      return publishCharacterSummary(summary, hash, staleRetryCount, sessionKey);
+    });
+    state.characterSyncQueue = task;
+    return task;
   }
 
   function generateWayfarerIdea() {
@@ -9415,8 +9443,6 @@
       : '';
     var authoritativeStamp = formatTimestamp(state.lastAuthoritativeAt) || formatTimestamp(state.lastSyncAt) || "-";
     var snapshotAgeText = state.lastCampaignStateAt ? (getLastSnapshotAgeSeconds() + "s ago") : "-";
-    var gmResyncRequester = state.lastResyncRequester ? String(state.lastResyncRequester) : "-";
-    var gmResyncRequestAt = formatTimestamp(state.lastResyncRequestAt) || "-";
     var gmAutoRebroadcastAt = formatTimestamp(state.lastAutoRebroadcastAt) || "-";
     var gmAutoRebroadcastStatus = state.lastAutoRebroadcastOk === null
       ? "No auto-rebroadcast yet"
@@ -9701,7 +9727,6 @@
           + '<div class="campaign-card">'
           + '<div class="campaign-card-title">GM Campaign Debug</div>'
           + '<div class="campaign-muted">Last authoritative push: <strong style="color:var(--text2);">' + escapeHtml(authoritativeStamp) + '</strong></div>'
-          + '<div class="campaign-muted" style="margin-top:.2rem;">Last player resync request: <strong style="color:var(--text2);">' + escapeHtml(gmResyncRequester) + '</strong> @ <strong style="color:var(--text2);">' + escapeHtml(gmResyncRequestAt) + '</strong></div>'
           + '<div class="campaign-muted" style="margin-top:.2rem;">Auto-rebroadcast: <strong style="color:' + (state.lastAutoRebroadcastOk === false ? 'var(--red2)' : 'var(--teal)') + ';">' + escapeHtml(gmAutoRebroadcastStatus) + '</strong> @ <strong style="color:var(--text2);">' + escapeHtml(gmAutoRebroadcastAt) + '</strong>' + escapeHtml(gmAutoRebroadcastDetail) + '</div>'
           + '</div>'
           + '<div class="campaign-card">'
@@ -11270,7 +11295,6 @@
     state.socket.on("campaign:resyncRequested", function (payload) {
       if (state.role !== "gm" || !state.code || !state.connected) return;
       syncWindowStateAlias();
-      state.lastResyncRequester = payload && payload.requesterName ? String(payload.requesterName) : "Player";
       state.lastResyncRequestAt = Number(payload && payload.requestedAt || Date.now()) || Date.now();
       syncSharedSilent("gm-authoritative-resync-request").then(function (res) {
         state.lastAutoRebroadcastAt = Date.now();
@@ -11283,8 +11307,6 @@
           safeNotif("Auto-rebroadcast failed: " + state.lastAutoRebroadcastError + ".", "warn");
           return;
         }
-        var requester = payload && payload.requesterName ? String(payload.requesterName) : "Player";
-        safeNotif("Authoritative resync sent for " + requester + ".", "good");
       }).catch(function () {});
       renderSettingsSection();
     });
@@ -12298,7 +12320,6 @@
       safeNotif((res && res.error) || "Broadcast sync failed.", "warn");
       return;
     }
-    safeNotif("Authoritative world state broadcasted to campaign.", "good");
   }
 
   async function reconnectNow() {
@@ -12308,7 +12329,6 @@
     }
     if (state.socket && !state.connected && typeof state.socket.connect === "function") {
       state.socket.connect();
-      safeNotif(state.code ? "Reconnect requested." : "Connecting to campaign server...", "info");
       return { ok: true, pending: true };
     }
     if (!state.code || !state.role) {
@@ -12332,7 +12352,6 @@
     refreshSyncHealth();
     renderSettingsSection();
     renderDockPanel();
-    safeNotif("Reconnect handshake complete.", "good");
     return joinResult;
   }
 
@@ -13003,11 +13022,6 @@
     }
     if (res.authoritativeAt) {
       state.lastAuthoritativeAt = Number(res.authoritativeAt || 0) || state.lastAuthoritativeAt;
-    }
-    if (res.gmOnline === false) {
-      safeNotif("Requested resync, but GM is offline. Last snapshot replayed.", "warn");
-    } else {
-      safeNotif("Requested authoritative resync.", "good");
     }
     refreshSyncHealth();
   }

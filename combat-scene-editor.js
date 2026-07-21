@@ -2017,7 +2017,7 @@
     var list = Array.isArray(tokens) ? tokens.filter(Boolean) : [];
     var session = getCampaignCombatSceneSession();
     var roster = getCampaignRosterForCombatScene();
-    if (!session || !session.code || !roster.length || !list.length) return list.slice();
+    if (!session || !session.code || !roster.length) return list.slice();
     var playerSide = list.filter(isCampaignScenePlayerSideToken);
     var nonPlayer = list.filter(function (token) { return !isCampaignScenePlayerSideToken(token); });
     var remaining = playerSide.slice();
@@ -2083,9 +2083,22 @@
   }
 
   function normalizeCampaignCombatSceneState(state) {
-    if (!state || typeof state !== 'object' || !Array.isArray(state.tokens)) return state;
+    if (!state || typeof state !== 'object') return state;
+    var hasLiveTokens = Array.isArray(state.tokens);
+    var hasSavedScenes = Array.isArray(state.scenes);
+    if (!hasLiveTokens && !hasSavedScenes) return state;
     var next = Object.assign({}, state);
-    next.tokens = normalizeCampaignCombatSceneTokens(state.tokens);
+    if (hasLiveTokens) {
+      next.tokens = normalizeCampaignCombatSceneTokens(state.tokens);
+    }
+    if (hasSavedScenes) {
+      next.scenes = state.scenes.map(function (scene) {
+        if (!scene || typeof scene !== 'object' || !Array.isArray(scene.tokens)) return scene;
+        return Object.assign({}, scene, {
+          tokens: normalizeCampaignCombatSceneTokens(scene.tokens)
+        });
+      });
+    }
     return next;
   }
 

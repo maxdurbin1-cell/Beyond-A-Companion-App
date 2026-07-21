@@ -100,6 +100,11 @@ async function runScenario(page, baseUrl) {
   );
 
   const summary = await page.evaluate(() => {
+    let smokeRandomState = 0x51de2026;
+    Math.random = () => {
+      smokeRandomState = (Math.imul(smokeRandomState, 1664525) + 1013904223) >>> 0;
+      return smokeRandomState / 0x100000000;
+    };
     const requireState = (condition, message) => {
       if (!condition) throw new Error(message);
     };

@@ -273,6 +273,13 @@ async function runScenario(browser) {
         rosterWithHacks: roster.filter((m) => m && m.character && Array.isArray(m.character.hacks)).length,
         rosterWithStoryThreads: roster.filter((m) => m && m.character && m.character.backstory
           && m.character.backstory.hometown && m.character.backstory.rival && m.character.backstory.connection).length,
+        rosterStoryThreads: roster.map((m) => ({
+          member: String(m && m.name || ""),
+          character: String(m && m.character && m.character.name || ""),
+          hometown: String(m && m.character && m.character.backstory && m.character.backstory.hometown || ""),
+          rival: String(m && m.character && m.character.backstory && m.character.backstory.rival || ""),
+          connection: String(m && m.character && m.character.backstory && m.character.backstory.connection || "")
+        })),
         originCount: origins.length,
         ownerTokenCount: ownerTokens.length,
         ownerTokens

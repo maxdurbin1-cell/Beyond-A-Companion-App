@@ -30,6 +30,7 @@ const suites = {
     "smoke:campaign-missions-context",
     "smoke:guild-multiplayer-sync",
     "smoke:campaign-shared-origin-and-sheets",
+    "smoke:campaign-mental-stress-isolation",
     "smoke:campaign-roll-request-flow",
     "smoke:authority-travel",
     "smoke:campaign-exploration-sweep",
@@ -58,6 +59,7 @@ const suites = {
     "smoke:campaign-music-vtt-join",
     "smoke:guild-multiplayer-sync",
     "smoke:campaign-shared-origin-and-sheets",
+    "smoke:campaign-mental-stress-isolation",
     "smoke:campaign-roll-request-flow"
   ]
 };

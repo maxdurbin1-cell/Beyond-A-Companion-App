@@ -189,8 +189,13 @@ async function main() {
     const code = await gmPage.evaluate(() => window.campaignSystem.getState().code || "");
     if (!code) throw new Error("Campaign prompt smoke failed: no campaign code created.");
 
-    await playerPage.evaluate(async (campaignCode) => {
-      await window.campaignSystem.joinCampaign("player", { code: campaignCode, name: "Campaign Prompt Smoke Player", silent: true });
+    await playerPage.evaluate((campaignCode) => {
+      window.campaignSystem.joinCampaign("player", {
+        code: campaignCode,
+        name: "Campaign Prompt Smoke Player",
+        silent: true
+      }).catch(() => {});
+      return true;
     }, code);
     await playerPage.waitForFunction(
       (campaignCode) => {

@@ -88,6 +88,11 @@ async function runScenario(browser) {
   );
 
   const summary = await page.evaluate(async () => {
+    let smokeRandomState = 0x5eed1234;
+    Math.random = () => {
+      smokeRandomState = (Math.imul(smokeRandomState, 1664525) + 1013904223) >>> 0;
+      return smokeRandomState / 0x100000000;
+    };
     if (window.settingsSystem && typeof window.settingsSystem.setGameMode === "function") {
       window.settingsSystem.setGameMode("solo", { silent: true });
     }

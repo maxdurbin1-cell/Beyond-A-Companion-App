@@ -62,6 +62,7 @@
     "smoke:guild-system": "node smoke-tests/guild-system-smoke.mjs",
     "smoke:guild-multiplayer-sync": "node smoke-tests/guild-multiplayer-sync.smoke.mjs",
     "smoke:campaign-shared-origin-and-sheets": "node smoke-tests/campaign-shared-origin-and-sheets.smoke.mjs",
+    "smoke:campaign-mental-stress-isolation": "node smoke-tests/campaign-mental-stress-isolation.smoke.mjs",
     "smoke:campaign-roll-request-flow": "node smoke-tests/campaign-roll-request-flow.smoke.mjs",
     "smoke:campaign-music-vtt-join": "node smoke-tests/campaign-music-vtt-join.smoke.mjs",
     "smoke:campaign-exploration-sweep": "node smoke-tests/campaign-exploration-sweep.smoke.mjs",

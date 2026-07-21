@@ -111,7 +111,6 @@ const AUTHORITATIVE_STATE_KEYS = [
 const PLAYER_PATCH_ALLOWED_KEYS = {
   renown: true,
   credits: true,
-  mentalStress: true,
   missionTokens: true,
   activeMissions: true,
   completedMissions: true,
@@ -1217,6 +1216,9 @@ function ensureCampaignShape(raw) {
     updatedAt: Number(raw && raw.updatedAt) || Date.now()
   };
 
+  // Mental Stress belongs to each participant's character, never the shared table.
+  delete normalized.shared.state.mentalStress;
+
   const participantList = Array.isArray(raw && raw.participants) ? raw.participants : [];
   for (let i = 0; i < participantList.length; i += 1) {
     const p = participantList[i] || {};
@@ -1611,7 +1613,10 @@ function snapshotCampaign(campaign, requesterToken) {
     : [];
 
   function canViewerSeeLogEntry(entry) {
-    if (!entry || !entry.meta || typeof entry.meta !== "object") return true;
+    if (!entry) return true;
+    const logText = String(entry.text || entry.message || "");
+    if (/\b(?:resync|sync flow|reconnect handshake)\b/i.test(logText)) return false;
+    if (!entry.meta || typeof entry.meta !== "object") return true;
     const visibility = String(entry.meta.visibility || "public");
     if (visibility === "public") return true;
 
@@ -2984,26 +2989,26 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const sharedState = campaign.shared && campaign.shared.state && typeof campaign.shared.state === "object"
-      ? campaign.shared.state
-      : {};
-    const next = Math.max(0, Number(sharedState.mentalStress || 0) + delta);
-    sharedState.mentalStress = next;
-    campaign.shared.state = sharedState;
-    campaign.shared.stateVersion = Math.max(0, Number(campaign.shared.stateVersion || 0)) + 1;
-    campaign.updatedAt = Date.now();
-
     const token = socket.data.token;
     const member = token ? campaign.participants.get(token) : null;
-    addLog(
-      campaign,
-      "system",
-      `${member ? member.name : "Someone"} changed shared Mental Stress by ${delta > 0 ? "+" : ""}${delta} (now ${next}).`,
-      { token: token || "", delta, mentalStress: next }
-    );
+    if (!member) {
+      if (typeof ack === "function") ack({ ok: false, error: "Invalid participant session." });
+      return;
+    }
 
-    emitCampaignState(campaign.code);
-    if (typeof ack === "function") ack({ ok: true, mentalStress: next, stateVersion: campaign.shared.stateVersion, authoritativeAt: campaign.updatedAt });
+    const character = normalizeCharacter(member.character || {}, member.name);
+    const maxMentalStress = Math.max(1, Number(character.maxMentalStress || character.mentalStressCap || character.stressCap || 20));
+    const next = Math.max(0, Math.min(maxMentalStress, Number(character.mentalStress || character.stress || 0) + delta));
+    character.mentalStress = next;
+    character.stress = next;
+    character.updatedAt = Date.now();
+    member.character = character;
+    member.lastSeenAt = Date.now();
+    campaign.updatedAt = Date.now();
+    schedulePersist();
+
+    emitCampaignState(campaign.code, { immediate: true });
+    if (typeof ack === "function") ack({ ok: true, mentalStress: next, updatedAt: character.updatedAt, authoritativeAt: campaign.updatedAt });
   });
 
   socket.on("campaign:deltaCredits", (payload, ack) => {
@@ -3293,11 +3298,7 @@ io.on("connection", (socket) => {
     } else if (Array.isArray(merged.partyStash)) {
       merged.partyStash = merged.partyStash.slice();
     }
-    if (typeof merged.mentalStress === "number") {
-      merged.mentalStress = Math.max(0, Number(merged.mentalStress || 0));
-    } else if (typeof existingState.mentalStress === "number") {
-      merged.mentalStress = Math.max(0, Number(existingState.mentalStress || 0));
-    }
+    delete merged.mentalStress;
     if (typeof merged.credits === "number") {
       merged.credits = Math.max(0, Number(merged.credits || 0));
     } else if (typeof existingState.credits === "number") {
@@ -3627,12 +3628,6 @@ io.on("connection", (socket) => {
     }
     const token = String(socket.data.token || "");
     const member = token ? campaign.participants.get(token) : null;
-    addLog(
-      campaign,
-      "system",
-      `${member ? member.name : "Player"} requested an authoritative resync.`,
-      { token }
-    );
 
     const gmSocketIds = [];
     campaign.sessions.forEach((sessionToken, socketId) => {
