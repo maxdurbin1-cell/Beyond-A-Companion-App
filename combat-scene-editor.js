@@ -44,6 +44,7 @@
   };
   var tokenContextMenuHideTimer = null;
   var applyingSharedCombatSceneEditorState = false;
+  var campaignCombatVttOpenAnnouncementTimer = null;
   var campaignCombatVttSessionSyncTimer = null;
   var campaignCombatVttSessionFollowupTimer = null;
   var combatDragDebugState = {
@@ -1140,9 +1141,16 @@
 
   function flattenCodexBestiary() {
     var out = [];
-    if (typeof NAMED_ENEMY_BESTIARY === 'object' && NAMED_ENEMY_BESTIARY) {
-      Object.keys(NAMED_ENEMY_BESTIARY).forEach(function (region) {
-        var list = NAMED_ENEMY_BESTIARY[region];
+    var sourceBestiary = null;
+    if (typeof window.getCodexBestiaryByRegion === 'function') {
+      try { sourceBestiary = window.getCodexBestiaryByRegion(); } catch (_err) { sourceBestiary = null; }
+    }
+    if (!sourceBestiary && typeof NAMED_ENEMY_BESTIARY === 'object' && NAMED_ENEMY_BESTIARY) {
+      sourceBestiary = NAMED_ENEMY_BESTIARY;
+    }
+    if (sourceBestiary && typeof sourceBestiary === 'object') {
+      Object.keys(sourceBestiary).forEach(function (region) {
+        var list = sourceBestiary[region];
         if (!Array.isArray(list)) return;
         list.forEach(function (entry) {
           if (!entry) return;
@@ -2135,12 +2143,14 @@
     };
   }
 
-  function syncCurrentCampaignCombatScene(reason, options) {
+  async function syncCurrentCampaignCombatScene(reason, options) {
     var cs = getCampaignCombatSceneSession();
-    if (!cs || String(cs.role || '') !== 'gm' || !cs.connected || !cs.code) return;
-    if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== 'function' || typeof window.campaignSystem.getSharedState !== 'function') return;
+    if (!cs || String(cs.role || '') !== 'gm' || !cs.connected || !cs.code) return { ok: false, skipped: true };
+    if (!window.campaignSystem || typeof window.campaignSystem.syncSharedPatch !== 'function' || typeof window.campaignSystem.getSharedState !== 'function') return { ok: false, skipped: true };
     var opts = options && typeof options === 'object' ? options : {};
-    var scene = buildCampaignCombatSceneSyncPayload();
+    var scene = opts.scene && typeof opts.scene === 'object'
+      ? (deepCloneJson(opts.scene) || opts.scene)
+      : buildCampaignCombatSceneSyncPayload();
     var sceneEditor = scene && scene.sceneEditor && typeof scene.sceneEditor === 'object' ? scene.sceneEditor : null;
     var activeSceneId = String(sceneEditor && sceneEditor.activeSceneId || 'campaign-shared-scene');
     var scenes = sceneEditor && Array.isArray(sceneEditor.scenes) ? sceneEditor.scenes : [];
@@ -2171,8 +2181,10 @@
       if (window.S && window.S.combat && window.S.combat.active) {
         combatState.active = true;
       }
+      var enteredAt = Date.now();
       combatState.vttSession = {
-        enteredAt: Date.now(),
+        id: 'vtt-' + String(enteredAt) + '-' + Math.floor(Math.random() * 100000),
+        enteredAt: enteredAt,
         by: String(window.S && window.S.name || cs.playerName || 'GM'),
         sceneName: String(activeScene && activeScene.name || 'Campaign Shared Scene'),
         activeSceneId: activeSceneId
@@ -2193,15 +2205,32 @@
         patch.areaSession = deepCloneJson(activeArea) || activeArea;
       }
     }
-    var out = window.campaignSystem.syncSharedPatch(patch, String(reason || 'campaign-combat-mode-open'));
-    if (out && typeof out.catch === 'function') out.catch(function () {});
-    if (opts.includeCombatSession !== false) {
+    var out = await window.campaignSystem.syncSharedPatch(patch, String(reason || 'campaign-combat-mode-open'));
+    if (out && out.ok && opts.includeCombatSession !== false) {
       queueCampaignCombatVttSessionReassert(combatState, String(reason || 'campaign-combat-mode-open'));
+      safeNotif('Shared VTT is ready. Players have been invited to join.', 'good');
+    } else if ((!out || !out.ok) && opts.includeCombatSession !== false) {
+      safeNotif('The VTT opened locally, but the table invitation did not sync. Check Campaign connection and try Enter Combat Mode again.', 'warn');
     }
+    return out || { ok: false };
   }
 
-  function announceCampaignCombatModeOpen(reason) {
-    syncCurrentCampaignCombatScene(reason, { includeCombatSession: true });
+  function announceCampaignCombatModeOpen(reason, scene) {
+    return syncCurrentCampaignCombatScene(reason, { includeCombatSession: true, scene: scene });
+  }
+
+  function scheduleCampaignCombatModeOpenAnnouncement(reason) {
+    var scene = buildCampaignCombatSceneSyncPayload();
+    if (campaignCombatVttOpenAnnouncementTimer) clearTimeout(campaignCombatVttOpenAnnouncementTimer);
+    campaignCombatVttOpenAnnouncementTimer = setTimeout(function () {
+      campaignCombatVttOpenAnnouncementTimer = null;
+      var out = announceCampaignCombatModeOpen(reason || 'campaign-combat-mode-open', scene);
+      if (out && typeof out.catch === 'function') {
+        out.catch(function () {
+          safeNotif('The VTT opened locally, but the table invitation did not sync. Check Campaign connection and try Enter Combat Mode again.', 'warn');
+        });
+      }
+    }, 0);
   }
 
   function queueCampaignCombatVttSessionReassert(combatState, reason) {
@@ -2860,7 +2889,13 @@
           isPlayer: false,
           dread: dread,
           deathNumber: dread,
-          sourceEnemyId: Number(enemy.id || 0)
+          sourceEnemyId: Number(enemy.id || 0),
+          enemyProfileName: String(enemy.enemyProfileName || enemy.name || ''),
+          description: String(enemy.desc || enemy.description || ''),
+          codexRegion: String(enemy.codexRegion || enemy.region || 'province'),
+          enemySkills: Array.isArray(enemy.enemySkills)
+            ? clone(enemy.enemySkills).slice(0, 2)
+            : (Array.isArray(enemy.skills) ? clone(enemy.skills).slice(0, 2) : [])
         };
       });
     }
@@ -7452,22 +7487,26 @@
     if (!profile) return;
     store.setState(function (state) {
       var next = Object.assign({}, state);
+      var dread = Math.max(4, Number(profile.dread || 6));
+      var maxHp = Math.max(1, Number(profile.health || profile.hp || dread * 2));
       var token = {
         id: uid('bst'),
         name: String(profile.name || 'Beast'),
         enemyProfileName: String(profile.name || ''),
+        description: String(profile.desc || profile.description || ''),
         faction: 'monster',
-        dread: Math.max(4, Number(profile.dread || 6)),
-        deathNumber: Math.max(4, Number(profile.dread || 6)),
-        hp: Math.max(1, Math.max(4, Number(profile.dread || 6)) * 2),
-        maxHp: Math.max(1, Math.max(4, Number(profile.dread || 6)) * 2),
+        dread: dread,
+        deathNumber: Math.max(1, Math.ceil(maxHp / 2)),
+        hp: maxHp,
+        maxHp: maxHp,
         status: [],
         q: Number(q || 0),
         r: Number(r || 0),
         image: String(profile.image || ''),
         size: Number(profile.size || 1),
         codexRegion: String(profile.region || 'province'),
-        inventory: seedTokenInventoryItems('monster', Math.max(4, Number(profile.dread || 6))),
+        sourceEnemyId: Math.max(0, Number(profile.combatEnemyId || profile.sourceEnemyId || 0)),
+        inventory: seedTokenInventoryItems('monster', dread),
         enemySkills: (Array.isArray(profile.skills) && profile.skills.length ? profile.skills.slice(0, 2) : (Array.isArray(profile.abilities) && profile.abilities.length ? profile.abilities.slice(0, 2) : (Array.isArray(profile.moves) && profile.moves.length ? profile.moves.slice(0, 2) : [])))
       };
       next.tokens = (state.tokens || []).concat([token]);
@@ -7480,6 +7519,17 @@
     drawBoard();
     updateUiPanels();
   }
+
+  window.spawnBestiaryTokenInCombatMode = function (profile, options) {
+    if (!profile || typeof profile !== 'object') return false;
+    var opts = options && typeof options === 'object' ? options : {};
+    var state = store.getState();
+    var actor = byId(state.selectedTokenId);
+    var q = Number.isFinite(Number(opts.q)) ? Number(opts.q) : (actor ? Number(actor.q || 0) + 2 : 2);
+    var r = Number.isFinite(Number(opts.r)) ? Number(opts.r) : (actor ? Number(actor.r || 0) : 0);
+    spawnBestiaryToken(profile, q, r);
+    return true;
+  };
 
   function consumeMovementAction(actor, distance) {
     if (!actor) return true;
@@ -15380,7 +15430,7 @@
           next.initiative = [];
           next.actionHistory = [];
         }
-        if (Array.isArray(seed.tokens) && seed.tokens.length) {
+        if (Array.isArray(seed.tokens)) {
           var seedEnemyDread = Math.max(4, Number(window.S && window.S.combat && window.S.combat.enemyDread || 6));
           next.tokens = normalizeCampaignCombatSceneTokens(seed.tokens).map(function (token, idx) {
             var mergedToken = Object.assign({ id: uid('seed-' + idx), faction: 'npc', hp: 8, maxHp: 8, status: [], q: idx, r: 0, size: 1, image: '' }, token || {});
@@ -15484,9 +15534,7 @@
 
     var hasExistingScene = !!(seed && typeof seed === 'object' && seed.id);
     addHistory('Entering encounter. Combat mode online.' + (hasExistingScene ? ' Scene loaded.' : ' Fresh canvas ready.'));
-    setTimeout(function () {
-      try { announceCampaignCombatModeOpen('campaign-combat-mode-open'); } catch (_err2) {}
-    }, 60);
+    scheduleCampaignCombatModeOpenAnnouncement('campaign-combat-mode-open');
     if (!store.getState().ui || !store.getState().ui.tutorialSeen) {
       setTimeout(function () {
         var current = store.getState();
@@ -15564,8 +15612,10 @@
       ? (deepCloneJson(shared.campaignCombat) || {})
       : null;
     if (!combatState) return null;
+    var enteredAt = Date.now();
     combatState.vttSession = {
-      enteredAt: Date.now(),
+      id: 'vtt-' + String(enteredAt) + '-' + Math.floor(Math.random() * 100000),
+      enteredAt: enteredAt,
       by: String(window.S && window.S.name || cs.playerName || 'GM'),
       sceneName: String(seed && seed.name || 'Campaign Shared Scene'),
       activeSceneId: String(seed && seed.id || 'campaign-shared-scene')
@@ -15679,6 +15729,10 @@
       if (campaignCombatVttSessionSyncTimer) {
         clearTimeout(campaignCombatVttSessionSyncTimer);
         campaignCombatVttSessionSyncTimer = null;
+      }
+      if (campaignCombatVttOpenAnnouncementTimer) {
+        clearTimeout(campaignCombatVttOpenAnnouncementTimer);
+        campaignCombatVttOpenAnnouncementTimer = null;
       }
       if (campaignCombatVttSessionFollowupTimer) {
         clearTimeout(campaignCombatVttSessionFollowupTimer);
@@ -15900,12 +15954,25 @@
   }
 
   function getEnemyTrackerByName(name) {
-    var needle = String(name || '').trim().toLowerCase();
+    var needle = String(name || '').replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
     if (!needle || !window.S || !Array.isArray(window.S.enemies)) return null;
     return window.S.enemies.find(function (entry) {
       if (!entry || entry.ally) return false;
       return String(entry.name || '').trim().toLowerCase() === needle;
     }) || null;
+  }
+
+  function getEnemyTrackerForCombatMapUnit(unit) {
+    if (!unit || !window.S || !Array.isArray(window.S.enemies)) return null;
+    var trackerKey = String(unit.trackerKey || '');
+    if (trackerKey.indexOf('enemy:') === 0) {
+      var trackerId = trackerKey.slice('enemy:'.length);
+      var matched = window.S.enemies.find(function (entry) {
+        return !!(entry && !entry.ally && String(entry.id) === trackerId);
+      }) || null;
+      if (matched) return matched;
+    }
+    return getEnemyTrackerByName(unit.name);
   }
 
   function buildSeedFromCombatMapState() {
@@ -15942,23 +16009,30 @@
         };
       }
 
-      var trackerEnemy = getEnemyTrackerByName(unit.name);
+      var trackerEnemy = getEnemyTrackerForCombatMapUnit(unit);
       var dread = Math.max(4, Number((trackerEnemy && trackerEnemy.dread) || unit.dread || defaultEnemyDread || 6));
       var maxStress = Math.max(1, Number((trackerEnemy && trackerEnemy.maxStress) || (dread * 2)));
       var curStress = Math.max(0, Number((trackerEnemy && trackerEnemy.stress) || 0));
       return {
         id: String(unit.id || uid('enm-' + idx)),
-        name: String(unit.name || ('Enemy ' + (idx + 1))),
+        name: String(trackerEnemy && trackerEnemy.name || unit.name || ('Enemy ' + (idx + 1))),
+        enemyProfileName: String(trackerEnemy && (trackerEnemy.enemyProfileName || trackerEnemy.name) || ''),
+        description: String(trackerEnemy && (trackerEnemy.desc || trackerEnemy.description) || ''),
         faction: 'monster',
         hp: Math.max(1, maxStress - curStress),
         maxHp: maxStress,
         status: [],
         q: Number(pos.q || 0),
         r: Number(pos.r || 0),
-        image: '',
+        image: String(trackerEnemy && trackerEnemy.image || ''),
         size: 1,
         dread: dread,
-        deathNumber: dread
+        deathNumber: Math.max(1, Number(trackerEnemy && trackerEnemy.deathNumber || Math.ceil(maxStress / 2))),
+        sourceEnemyId: Math.max(0, Number(trackerEnemy && trackerEnemy.id || 0)),
+        codexRegion: String(trackerEnemy && (trackerEnemy.codexRegion || trackerEnemy.region) || 'province'),
+        enemySkills: trackerEnemy && Array.isArray(trackerEnemy.enemySkills)
+          ? clone(trackerEnemy.enemySkills).slice(0, 2)
+          : (trackerEnemy && Array.isArray(trackerEnemy.skills) ? clone(trackerEnemy.skills).slice(0, 2) : [])
       };
     }).filter(Boolean);
 
@@ -16045,10 +16119,10 @@
         refreshUi: true,
         sceneName: String(preparedSeed.name || 'Campaign Shared Scene')
       });
+      scheduleCampaignCombatModeOpenAnnouncement('campaign-combat-scene-switch');
     } else {
       openOverlay(preparedSeed);
     }
-    syncCurrentCampaignCombatScene('campaign-combat-mode-open-immediate', { includeCombatSession: true });
   };
   
   window.closeCombatSceneEditor = function () {
@@ -16060,7 +16134,6 @@
     if (seed === false) return;
     syncCombatScenesTabNavigation();
     openOverlay(prepareCampaignCombatSeed(seed || null));
-    syncCurrentCampaignCombatScene('campaign-combat-mode-open-immediate', { includeCombatSession: true });
   };
   window.applySharedCombatSceneEditorState = applySharedCombatSceneEditorState;
 

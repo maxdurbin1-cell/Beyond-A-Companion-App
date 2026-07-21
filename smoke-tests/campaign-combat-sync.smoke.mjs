@@ -587,7 +587,15 @@ async function waitForSharedVttPrompt(page, label) {
     await page.waitForFunction(
       () => {
         const overlay = document.getElementById('combatModeOverlay');
-        return !!window.joinSharedCampaignCombatModeFromPrompt && !(overlay && overlay.classList.contains('open'));
+        const shared = window.campaignSystem && window.campaignSystem.getSharedState
+          ? window.campaignSystem.getSharedState()
+          : null;
+        return !!(
+          window.joinSharedCampaignCombatModeFromPrompt
+          && shared?.campaignCombat?.vttSession?.enteredAt
+          && String(document.getElementById('modalTitle')?.textContent || '') === 'Join Shared Combat Mode'
+          && !(overlay && overlay.classList.contains('open'))
+        );
       },
       null,
       { timeout: COMBAT_SYNC_TIMEOUT_MS }
@@ -786,6 +794,61 @@ async function runScenario(browser, baseUrl) {
   });
   await ensurePlayerJoinedSharedVtt(playerPage, 'Player initial shared VTT state', 2);
 
+  await gmPage.evaluate(() => {
+    if (typeof window.closeCombatSceneEditor === 'function') window.closeCombatSceneEditor();
+  });
+  await playerPage.waitForFunction(
+    () => {
+      const shared = window.campaignSystem && window.campaignSystem.getSharedState
+        ? window.campaignSystem.getSharedState()
+        : null;
+      return !shared?.campaignCombat?.vttSession && !document.querySelector('#combatModeOverlay.open');
+    },
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+
+  await gmPage.evaluate(() => {
+    window.openCombatSceneEditor({
+      id: 'smoke-saved-empty-scene',
+      name: 'Saved Empty Smoke Scene',
+      board: { cols: 12, rows: 12, size: 42, zoom: 1, panX: 480, panY: 300, background: '' },
+      layers: { terrain: {}, objects: {}, hazards: {} },
+      fog: { enabled: true, revealed: {} },
+      tokens: []
+    });
+  });
+  await waitForSceneEditorState(gmPage, {
+    overlayOpen: true,
+    sceneName: 'Saved Empty Smoke Scene'
+  }, 'GM saved empty scene opened');
+  await waitForSharedVttPrompt(playerPage, 'Player receives saved empty scene prompt');
+  const savedSceneInvite = await playerPage.evaluate(() => {
+    const shared = window.campaignSystem.getSharedState();
+    const session = shared?.campaignCombat?.vttSession || null;
+    const editor = shared?.combatScene?.sceneEditor || null;
+    return {
+      sessionId: String(session?.id || ''),
+      sessionSceneId: String(session?.activeSceneId || ''),
+      sessionSceneName: String(session?.sceneName || ''),
+      editorSceneId: String(editor?.activeSceneId || ''),
+      boardCols: Number(editor?.board?.cols || 0)
+    };
+  });
+  if (
+    !savedSceneInvite.sessionId
+    || savedSceneInvite.sessionSceneId !== 'smoke-saved-empty-scene'
+    || savedSceneInvite.editorSceneId !== 'smoke-saved-empty-scene'
+    || savedSceneInvite.boardCols !== 12
+  ) {
+    throw new Error(`Saved empty scene invitation was incomplete: ${JSON.stringify(savedSceneInvite)}`);
+  }
+  await ensurePlayerJoinedSharedVtt(playerPage, 'Player saved empty scene VTT state', 0);
+  await waitForSceneEditorState(playerPage, {
+    overlayOpen: true,
+    sceneName: 'Saved Empty Smoke Scene'
+  }, 'Player joined saved empty scene');
+
   const seeded = await gmPage.evaluate(async () => {
     const liveState = (() => {
       try {
@@ -884,7 +947,7 @@ async function runScenario(browser, baseUrl) {
 
   const gmSummary = await collectCombatSummary(gmPage);
   const playerSummary = await collectCombatSummary(playerPage);
-  process.stdout.write(`Combat sync smoke passed: code=${code}, gm=${JSON.stringify(gmSummary)}, player=${JSON.stringify(playerSummary)}\n`);
+  process.stdout.write(`Combat sync smoke passed: code=${code}, savedScene=${JSON.stringify(savedSceneInvite)}, gm=${JSON.stringify(gmSummary)}, player=${JSON.stringify(playerSummary)}\n`);
 
   await gmPage.close();
   await playerPage.close();

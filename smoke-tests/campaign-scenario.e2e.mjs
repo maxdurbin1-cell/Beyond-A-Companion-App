@@ -393,22 +393,37 @@ async function waitForHydratedMaps(page, expected) {
     galaxyCells: Number(expected && expected.galaxyCells || 0),
     worldCells: Number(expected && expected.worldCells || 0)
   };
-  await page.waitForFunction(
-    (target) => {
-      const province = (typeof window.getProvinceMapState === "function") ? window.getProvinceMapState() : null;
-      const provinceCells = province && Array.isArray(province.mapData) ? province.mapData.length : 0;
-      const seaCells = (window.S && window.S.lastSea && Array.isArray(window.S.lastSea.map)) ? window.S.lastSea.map.length : 0;
-      const galaxyCells = (window.S && window.S.starSystem && Array.isArray(window.S.starSystem.hexes)) ? window.S.starSystem.hexes.length : 0;
-      const worldCells = (window.S && window.S.worldThatWas && Array.isArray(window.S.worldThatWas.hexes)) ? window.S.worldThatWas.hexes.length : 0;
-      const provinceOk = target.provinceCells > 0 ? provinceCells > 0 : true;
-      const seaOk = target.seaCells > 0 ? seaCells > 0 : true;
-      const galaxyOk = target.galaxyCells > 0 ? galaxyCells > 0 : true;
-      const worldOk = target.worldCells > 0 ? worldCells > 0 : true;
-      return provinceOk && seaOk && galaxyOk && worldOk;
-    },
-    goal,
-    { timeout: STEP_TIMEOUT_MS }
-  );
+  let lastSummary = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await page.waitForFunction(
+        (target) => {
+          const province = (typeof window.getProvinceMapState === "function") ? window.getProvinceMapState() : null;
+          const provinceCells = province && Array.isArray(province.mapData) ? province.mapData.length : 0;
+          const seaCells = (window.S && window.S.lastSea && Array.isArray(window.S.lastSea.map)) ? window.S.lastSea.map.length : 0;
+          const galaxyCells = (window.S && window.S.starSystem && Array.isArray(window.S.starSystem.hexes)) ? window.S.starSystem.hexes.length : 0;
+          const worldCells = (window.S && window.S.worldThatWas && Array.isArray(window.S.worldThatWas.hexes)) ? window.S.worldThatWas.hexes.length : 0;
+          const provinceOk = target.provinceCells > 0 ? provinceCells > 0 : true;
+          const seaOk = target.seaCells > 0 ? seaCells > 0 : true;
+          const galaxyOk = target.galaxyCells > 0 ? galaxyCells > 0 : true;
+          const worldOk = target.worldCells > 0 ? worldCells > 0 : true;
+          return provinceOk && seaOk && galaxyOk && worldOk;
+        },
+        goal,
+        { timeout: Math.min(9000, STEP_TIMEOUT_MS) }
+      );
+      return;
+    } catch (_err) {
+      lastSummary = await collectMapSummary(page);
+      await page.evaluate(async () => {
+        if (window.campaignSystem && typeof window.campaignSystem.requestResync === "function") {
+          try { await window.campaignSystem.requestResync(); } catch (_resyncErr) {}
+        }
+      });
+      await wait(500 + (attempt * 350));
+    }
+  }
+  throw new Error(`Map hydration timed out: expected=${JSON.stringify(goal)} actual=${JSON.stringify(lastSummary || {})}`);
 }
 
 async function runScenario(browser) {

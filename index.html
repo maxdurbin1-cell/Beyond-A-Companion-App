@@ -6985,7 +6985,8 @@ function saveCustomBestiaryFromCodex(){
   var desc=String((document.getElementById('codexBestiaryDesc')||{}).value||'').trim();
   var dread=normalizeBestiaryDreadDie(Number((document.getElementById('codexBestiaryDread')||{}).value||8));
   if(!region||!name||!desc){showNotif('Region, name, and description are required.','warn');return;}
-  var payload=normalizeBestiaryEntryStats({region:region,name:name,desc:desc,dread:dread});
+  var selectedSkills=(typeof getSelectedCodexBestiarySkills==='function')?getSelectedCodexBestiarySkills(dread):[];
+  var payload=normalizeBestiaryEntryStats({region:region,name:name,desc:desc,dread:dread,skills:selectedSkills});
   var edit=getCustomCodexEditState();
   if(edit.bestiary>=0&&edit.bestiary<S.customContent.bestiary.length){
     S.customContent.bestiary[edit.bestiary]=payload;
@@ -7009,6 +7010,15 @@ function editCustomBestiaryEntry(idx){
   set('codexBestiaryName',row.name);
   set('codexBestiaryDread',row.dread||8);
   set('codexBestiaryDesc',row.desc);
+  var skills=Array.isArray(row.skills)?row.skills:[];
+  var pool=(typeof getCodexBestiaryMovePool==='function')?getCodexBestiaryMovePool():[];
+  ['codexBestiarySkill1','codexBestiarySkill2'].forEach(function(id,skillIdx){
+    var el=document.getElementById(id);
+    if(!el)return;
+    var skillName=String(skills[skillIdx]&&skills[skillIdx].name||'');
+    var poolIdx=pool.findIndex(function(move){return String(move&&move.name||'')===skillName;});
+    el.value=poolIdx>=0?String(poolIdx):'';
+  });
 }
 
 function clearCustomBestiaryForm(){
@@ -7018,6 +7028,7 @@ function clearCustomBestiaryForm(){
   if(regionEl)regionEl.value='province';
   var dreadEl=document.getElementById('codexBestiaryDread');
   if(dreadEl)dreadEl.value='6';
+  ['codexBestiarySkill1','codexBestiarySkill2'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
 }
 
 function removeCustomBestiaryEntry(idx){
@@ -24336,6 +24347,8 @@ function showCodexCat(cat,btn){
     </div>`;
   }else if(cat==='bestiary'){
     var bestiaryByRegion=(typeof getCodexBestiaryByRegion==='function')?getCodexBestiaryByRegion():CODEX_BESTIARY;
+    var bestiarySkillPool=(typeof getCodexBestiaryMovePool==='function')?getCodexBestiaryMovePool():[];
+    var bestiarySkillOptions='<option value="">Auto-generate a skill</option>'+bestiarySkillPool.map(function(move,idx){return '<option value="'+idx+'">'+String(move&&move.name||('Enemy Skill '+(idx+1))).replace(/</g,'&lt;').replace(/>/g,'&gt;')+' · '+String(move&&move.saveStat||'Defend')+'</option>';}).join('');
     c.innerHTML=`<div class="card"><div class="section-title">Enemy Bestiary</div>
       <div style="font-size:.82rem;color:var(--muted2);margin-bottom:.45rem;">Death Number is listed as half Health, rounded up. Use it as the quick threshold for when a creature is entering its kill window.</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.28rem;border:1px solid var(--border2);background:rgba(255,255,255,.03);padding:.42rem .45rem;margin-bottom:.6rem;">
@@ -24343,14 +24356,18 @@ function showCodexCat(cat,btn){
         <input class="input" id="codexBestiaryName" placeholder="Creature name">
         <select class="input" id="codexBestiaryDread" title="Dread Die"><option value="4">Dread d4</option><option value="6" selected>Dread d6</option><option value="8">Dread d8</option><option value="10">Dread d10</option><option value="12">Dread d12</option><option value="20">Dread d20</option></select>
         <input class="input" id="codexBestiaryDesc" placeholder="Description" style="grid-column:1/-1;">
+        <label style="font-size:.7rem;color:var(--muted2);">Skill 1<select class="input" id="codexBestiarySkill1" style="margin-top:.12rem;">${bestiarySkillOptions}</select></label>
+        <label style="font-size:.7rem;color:var(--muted2);">Skill 2<select class="input" id="codexBestiarySkill2" style="margin-top:.12rem;">${bestiarySkillOptions}</select></label>
+        <div style="grid-column:1/-1;font-size:.72rem;color:var(--muted2);">Choose each skill or roll a pair. Saved skills follow this monster into the Combat tab and shared VTT.</div>
         <div style="display:flex;gap:.3rem;grid-column:1/-1;">
           <button class="btn btn-teal btn-sm" onclick="saveCustomBestiaryFromCodex()">Save GM Bestiary Entry</button>
+          <button class="btn btn-sm" onclick="rollCustomBestiarySkills()">Roll Skills</button>
           <button class="btn btn-sm" onclick="clearCustomBestiaryForm()">Clear</button>
         </div>
       </div>
       <div class="codex-grid">
         ${Object.keys(bestiaryByRegion).map(region=>`<div class="card"><div class="section-title" style="display:flex;align-items:center;gap:.45rem;">${window.SharedIconSystem&&typeof window.SharedIconSystem.getBestiaryEntryIconHtml==='function'?window.SharedIconSystem.getBestiaryEntryIconHtml(region,{name:region==='wtw'?'World That Was':'Bestiary Region'},{size:26}):''}<span>${region==='wtw'?'World That Was':region.charAt(0).toUpperCase()+region.slice(1)}</span></div>
-          ${bestiaryByRegion[region].map(entry=>{var stats=getBestiaryDerivedStats(entry);var skills=(typeof getBestiaryEntrySkillNames==='function')?getBestiaryEntrySkillNames(entry):[];return `<div class="hist-entry" style="display:grid;grid-template-columns:auto auto 1fr auto;gap:.55rem;align-items:center;">${window.SharedIconSystem&&typeof window.SharedIconSystem.getBestiaryEntryIconHtml==='function'?window.SharedIconSystem.getBestiaryEntryIconHtml(region,entry,{size:42}):''}<div class="hist-num">d${stats.dread}</div><div class="hist-text"><strong>${entry.name}</strong>${entry._customIndex!==undefined?' <span style="font-size:.68rem;color:var(--teal);">GM</span>':''}<br>${entry.desc}<br><span style="color:var(--gold2);">Health ${stats.health} · Death Number ${stats.deathNumber}</span><div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.24rem;"><button class="btn btn-xs" onclick='openBestiaryEntryDetails(${JSON.stringify(region)},${JSON.stringify(entry.name)})'>View</button><button class="btn btn-xs" onclick='openBestiaryEntryDetails(${JSON.stringify(region)},${JSON.stringify(entry.name)})'>Inspect Skills</button></div><span style="color:var(--teal);font-size:.72rem;display:block;margin-top:.2rem;">Skills: ${skills.slice(0,2).join(', ')}</span>${entry._customIndex!==undefined?`<div style="margin-top:.22rem;display:flex;gap:.22rem;"><button class="btn btn-xs" onclick="editCustomBestiaryEntry(${Number(entry._customIndex)})">Edit</button><button class="btn btn-xs" onclick="removeCustomBestiaryEntry(${Number(entry._customIndex)})">Remove</button></div>`:''}</div><div style="font-size:.68rem;color:var(--muted2);align-self:start;padding-top:.15rem;">Entry</div></div>`;}).join('')}
+          ${bestiaryByRegion[region].map(entry=>{var stats=getBestiaryDerivedStats(entry);var skills=(typeof getBestiaryEntrySkillNames==='function')?getBestiaryEntrySkillNames(entry):[];return `<div class="hist-entry" style="display:grid;grid-template-columns:auto auto 1fr auto;gap:.55rem;align-items:center;">${window.SharedIconSystem&&typeof window.SharedIconSystem.getBestiaryEntryIconHtml==='function'?window.SharedIconSystem.getBestiaryEntryIconHtml(region,entry,{size:42}):''}<div class="hist-num">d${stats.dread}</div><div class="hist-text"><strong>${entry.name}</strong>${entry._customIndex!==undefined?' <span style="font-size:.68rem;color:var(--teal);">GM</span>':''}<br>${entry.desc}<br><span style="color:var(--gold2);">Health ${stats.health} · Death Number ${stats.deathNumber}</span><div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.24rem;"><button class="btn btn-xs" onclick='openBestiaryEntryDetails(${JSON.stringify(region)},${JSON.stringify(entry.name)})'>View</button><button class="btn btn-xs" onclick='openBestiaryEntryDetails(${JSON.stringify(region)},${JSON.stringify(entry.name)})'>Inspect Skills</button><button class="btn btn-xs btn-teal" onclick='addBestiaryMonsterToCombatByName(${JSON.stringify(region)},${JSON.stringify(entry.name)})'>Add to Combat</button></div><span style="color:var(--teal);font-size:.72rem;display:block;margin-top:.2rem;">Skills: ${skills.slice(0,2).join(', ')}</span>${entry._customIndex!==undefined?`<div style="margin-top:.22rem;display:flex;gap:.22rem;"><button class="btn btn-xs" onclick="editCustomBestiaryEntry(${Number(entry._customIndex)})">Edit</button><button class="btn btn-xs" onclick="removeCustomBestiaryEntry(${Number(entry._customIndex)})">Remove</button></div>`:''}</div><div style="font-size:.68rem;color:var(--muted2);align-self:start;padding-top:.15rem;">Entry</div></div>`;}).join('')}
         </div>`).join('')}
         <div id="codexBestiaryForgeSlot">${typeof renderCodexBestiaryForgeCard==='function' ? renderCodexBestiaryForgeCard() : '<div class="card"><div class="section-title">Monster Forge</div><div style="font-size:.82rem;color:var(--muted2);">The monster forge is loading.</div></div>'}</div>
       </div>
@@ -24428,6 +24445,7 @@ function openBestiaryEntryDetails(region, name){
       + '</div>'
       + '<div style="font-family:Cinzel,serif;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-top:.45rem;">Skills</div>'
       + skillHtml
+      + '<div style="display:flex;justify-content:flex-end;margin-top:.55rem;"><button class="btn btn-sm btn-teal" onclick=\'addBestiaryMonsterToCombatByName(' + JSON.stringify(regionKey) + ',' + JSON.stringify(String(entry.name || '')) + ')\'>Add to Combat</button></div>'
       + '</div>');
   }
 }
@@ -25436,6 +25454,145 @@ function runWhenIdle(fn, timeoutMs){
       };
     }).filter(function(entry){ return !!entry.name; });
   }
+  window.getCodexBestiaryMovePool=getCodexBestiaryMovePool;
+
+  function convertCodexMoveToBestiarySkill(move,dread){
+    if(!move||typeof move!=='object')return null;
+    var dd=Math.max(4,Number(dread||move.dreadDie||6));
+    var rules=describeCodexBestiaryMoveRules(move,dd);
+    var ranges=Array.isArray(move.rangesNormalized)&&move.rangesNormalized.length
+      ?move.rangesNormalized.map(function(range){return String(range||'close').toLowerCase();})
+      :['close'];
+    return {
+      name:String(move.name||'Enemy Skill'),
+      desc:String(move.desc||'A hostile bestiary technique.'),
+      save:String(move.saveStat||'Defend').toLowerCase(),
+      range:ranges,
+      onFail:String(rules.fail||'Apply the failed-roll consequence.'),
+      onSuccess:String(rules.success||'No effect.'),
+      effectType:String(move.kind||'special').toLowerCase(),
+      effectCondition:String(move.condition||''),
+      effectBonus:Math.max(0,Number(move.bonus||move.scale||0)),
+      damageMode:'margin',
+      dreadDie:dd,
+      source:String(move.source||'Bestiary'),
+      kind:String(move.kind||'special'),
+      costActions:1
+    };
+  }
+
+  function getSelectedCodexBestiarySkills(dread){
+    var pool=getCodexBestiaryMovePool();
+    var picked=[];
+    ['codexBestiarySkill1','codexBestiarySkill2'].forEach(function(id){
+      var el=document.getElementById(id);
+      var idx=el&&el.value!==''?Number(el.value):-1;
+      var move=idx>=0&&idx<pool.length?pool[idx]:null;
+      if(move&&!picked.some(function(skill){return String(skill.name)===String(move.name);})){
+        var skill=convertCodexMoveToBestiarySkill(move,dread);
+        if(skill)picked.push(skill);
+      }
+    });
+    return picked.slice(0,2);
+  }
+  window.getSelectedCodexBestiarySkills=getSelectedCodexBestiarySkills;
+
+  function rollCustomBestiarySkills(){
+    var pool=getCodexBestiaryMovePool();
+    if(pool.length<2){
+      if(typeof showNotif==='function')showNotif('The combat skill pool is not ready yet.','warn');
+      return false;
+    }
+    var first=Math.floor(Math.random()*pool.length);
+    var second=Math.floor(Math.random()*(pool.length-1));
+    if(second>=first)second++;
+    var firstEl=document.getElementById('codexBestiarySkill1');
+    var secondEl=document.getElementById('codexBestiarySkill2');
+    if(firstEl)firstEl.value=String(first);
+    if(secondEl)secondEl.value=String(second);
+    if(typeof showNotif==='function')showNotif('Rolled '+pool[first].name+' and '+pool[second].name+'.','good');
+    return true;
+  }
+  window.rollCustomBestiarySkills=rollCustomBestiarySkills;
+
+  function addBestiaryMonsterToCombat(entry,options){
+    if(!entry||typeof entry!=='object')return false;
+    var campaignState=window.campaignSystem&&typeof window.campaignSystem.getState==='function'
+      ?window.campaignSystem.getState()
+      :null;
+    if(campaignState&&campaignState.code&&String(campaignState.role||'')==='player'){
+      if(typeof showNotif==='function')showNotif('Only the GM can add Bestiary monsters to shared combat.','warn');
+      return false;
+    }
+    if(!window.S||typeof window.S!=='object')return false;
+    if(!Array.isArray(S.enemies))S.enemies=[];
+    if(!S.combat||typeof S.combat!=='object')S.combat={};
+    if(!S.combatMap||!Array.isArray(S.combatMap.units))S.combatMap={units:[]};
+    var opts=options&&typeof options==='object'?options:{};
+    var stats=getBestiaryDerivedStats(entry);
+    var skills=getBestiaryEntrySkillObjects(entry);
+    var id=(typeof enemyIdCounter!=='undefined')?enemyIdCounter++:(Date.now()+Math.floor(Math.random()*100000));
+    var openingZone=String(opts.zone||(typeof getCombatEnemyOpeningRange==='function'?getCombatEnemyOpeningRange():'Engaged'));
+    var standing=String(entry.faction||(typeof pickRandomFactionStanding==='function'?pickRandomFactionStanding():'Unknown'));
+    var monster={
+      id:id,
+      name:String(entry.name||'Bestiary Monster'),
+      enemyProfileName:String(entry.name||''),
+      desc:String(entry.desc||entry.description||''),
+      codexRegion:String(entry.region||opts.region||'province'),
+      dread:stats.dread,
+      stress:0,
+      maxStress:stats.health,
+      health:stats.health,
+      deathNumber:stats.deathNumber,
+      conditions:[],
+      faction:standing,
+      enemySkills:skills.slice(0,2)
+    };
+    S.enemies.push(monster);
+    if(S.enemies.filter(function(enemy){return enemy&&!enemy.ally;}).length===1)S.combat.enemyDread=stats.dread;
+    S.combatMap.units.push({
+      id:Date.now()+Math.floor(Math.random()*100000),
+      name:standing?monster.name+' ['+standing+']':monster.name,
+      side:'enemy',
+      zone:openingZone,
+      fromTracker:true,
+      trackerKey:'enemy:'+String(id)
+    });
+    var overlay=document.getElementById('combatModeOverlay');
+    if(overlay&&overlay.classList.contains('open')&&typeof window.spawnBestiaryTokenInCombatMode==='function'){
+      window.spawnBestiaryTokenInCombatMode(Object.assign({},entry,{
+        region:monster.codexRegion,
+        dread:stats.dread,
+        health:stats.health,
+        skills:skills,
+        combatEnemyId:id
+      }));
+    }
+    if(typeof renderEnemies==='function')renderEnemies();
+    if(typeof renderCombatMap==='function')renderCombatMap();
+    if(typeof renderCombatOptions==='function')renderCombatOptions();
+    if(typeof syncStarsUnitsFromCombatMap==='function')syncStarsUnitsFromCombatMap();
+    if(typeof updateCombatUI==='function')updateCombatUI();
+    if(typeof renderQP==='function')renderQP('combat');
+    if(campaignState&&campaignState.code&&String(campaignState.role||'')==='gm'&&window.campaignSystem&&typeof window.campaignSystem.syncSharedSilent==='function'){
+      setTimeout(function(){window.campaignSystem.syncSharedSilent('bestiary-add-to-combat').catch(function(){});},0);
+    }
+    if(typeof showNotif==='function')showNotif(monster.name+' added to Combat at '+openingZone+' with '+skills.map(function(skill){return skill.name;}).join(' and ')+'.','good');
+    return monster;
+  }
+  window.addBestiaryMonsterToCombat=addBestiaryMonsterToCombat;
+
+  function addBestiaryMonsterToCombatByName(region,name){
+    var byRegion=getCodexBestiaryByRegion();
+    var regionKey=String(region||'province').toLowerCase();
+    var entries=Array.isArray(byRegion&&byRegion[regionKey])?byRegion[regionKey]:[];
+    var entry=entries.find(function(row){return String(row&&row.name||'')===String(name||'');})||null;
+    if(!entry){if(typeof showNotif==='function')showNotif('Bestiary entry not found.','warn');return false;}
+    entry=Object.assign({},entry,{region:regionKey});
+    return addBestiaryMonsterToCombat(entry,{region:regionKey});
+  }
+  window.addBestiaryMonsterToCombatByName=addBestiaryMonsterToCombatByName;
 
   function getCodexBestiaryMoveSeverity(move){
     var kind=String(move&&move.kind||'').toLowerCase();
@@ -25612,11 +25769,106 @@ function runWhenIdle(fn, timeoutMs){
         + '</div>'
       + '</div>'
       + '<div style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.55rem;">'
-        + '<button class="btn btn-primary btn-sm" onclick="generateCodexBestiaryMonster()">⚄ Generate Monster</button>'
-        + '<button class="btn btn-sm" onclick="generateCodexBestiaryMonster()">Reroll Skills</button>'
+        + '<button class="btn btn-teal btn-sm" onclick="addCodexForgeMonsterToCombat()">Add to Combat</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="generateCodexBestiaryMonster()">⚄ Generate New Monster</button>'
+        + '<button class="btn btn-sm" onclick="rerollCodexBestiaryMonsterSkills()">Roll Skills</button>'
+        + '<button class="btn btn-sm" onclick="openCodexBestiarySkillChooser()">Choose Skills</button>'
+        + '<button class="btn btn-sm" onclick="saveCodexForgeMonsterToBestiary()">Save to Bestiary</button>'
       + '</div>'
     + '</div>';
   }
+
+  function rollCodexBestiaryMovePair(){
+    var pool=getCodexBestiaryMovePool();
+    if(!pool.length)return [];
+    var first=pool[Math.floor(Math.random()*pool.length)];
+    var alternatives=pool.filter(function(move){return !first||String(move.name)!==String(first.name);});
+    var second=(alternatives.length?alternatives:pool)[Math.floor(Math.random()*(alternatives.length||pool.length))];
+    return [first,second].filter(Boolean).slice(0,2);
+  }
+
+  function rerollCodexBestiaryMonsterSkills(){
+    var current=window._codexBestiaryForge||buildCodexBestiaryMonster();
+    var moves=rollCodexBestiaryMovePair();
+    if(moves.length<2){if(typeof showNotif==='function')showNotif('The combat skill pool is not ready yet.','warn');return current;}
+    window._codexBestiaryForge=Object.assign({},current,{
+      moves:moves,
+      sourceLabel:moves[0].source===moves[1].source?moves[0].source:'Combat Tab / Raid Boss'
+    });
+    refreshCodexBestiaryForgeSlot();
+    if(typeof showNotif==='function')showNotif('Rolled '+moves[0].name+' and '+moves[1].name+' without changing the monster.','good');
+    return window._codexBestiaryForge;
+  }
+  window.rerollCodexBestiaryMonsterSkills=rerollCodexBestiaryMonsterSkills;
+
+  function openCodexBestiarySkillChooser(){
+    var monster=window._codexBestiaryForge||buildCodexBestiaryMonster();
+    var pool=getCodexBestiaryMovePool();
+    if(pool.length<2){if(typeof showNotif==='function')showNotif('The combat skill pool is not ready yet.','warn');return false;}
+    var current=Array.isArray(monster.moves)?monster.moves:[];
+    function optionsFor(selected){
+      return pool.map(function(move,idx){
+        var isSelected=String(move&&move.name||'')===String(selected&&selected.name||'');
+        return '<option value="'+idx+'"'+(isSelected?' selected':'')+'>'+String(move&&move.name||('Skill '+(idx+1))).replace(/</g,'&lt;').replace(/>/g,'&gt;')+' · '+String(move&&move.saveStat||'Defend')+'</option>';
+      }).join('');
+    }
+    var html=''
+      +'<div style="font-size:.8rem;color:var(--text2);line-height:1.5;">Choose two different skills. The monster name, Dread, Health, role, and tactic stay unchanged.</div>'
+      +'<label style="display:block;font-size:.72rem;color:var(--muted2);margin-top:.45rem;">Skill 1<select id="codexForgeSkillChoice1" class="input" style="width:100%;margin-top:.12rem;">'+optionsFor(current[0])+'</select></label>'
+      +'<label style="display:block;font-size:.72rem;color:var(--muted2);margin-top:.35rem;">Skill 2<select id="codexForgeSkillChoice2" class="input" style="width:100%;margin-top:.12rem;">'+optionsFor(current[1])+'</select></label>'
+      +'<div style="display:flex;justify-content:flex-end;gap:.3rem;margin-top:.55rem;"><button class="btn btn-sm" onclick="closeModal()">Cancel</button><button class="btn btn-sm btn-teal" onclick="applyCodexBestiarySkillChoices()">Apply Skills</button></div>';
+    if(typeof openModal==='function')openModal('Choose Monster Skills',html,null,{preventScroll:true,focusTrap:true});
+    return true;
+  }
+  window.openCodexBestiarySkillChooser=openCodexBestiarySkillChooser;
+
+  function applyCodexBestiarySkillChoices(){
+    var pool=getCodexBestiaryMovePool();
+    var first=pool[Number((document.getElementById('codexForgeSkillChoice1')||{}).value||0)];
+    var second=pool[Number((document.getElementById('codexForgeSkillChoice2')||{}).value||0)];
+    if(!first||!second||String(first.name)===String(second.name)){
+      if(typeof showNotif==='function')showNotif('Choose two different monster skills.','warn');
+      return false;
+    }
+    var current=window._codexBestiaryForge||buildCodexBestiaryMonster();
+    window._codexBestiaryForge=Object.assign({},current,{
+      moves:[first,second],
+      sourceLabel:first.source===second.source?first.source:'Combat Tab / Raid Boss'
+    });
+    if(typeof closeModal==='function')closeModal();
+    refreshCodexBestiaryForgeSlot();
+    if(typeof showNotif==='function')showNotif('Monster skills updated.','good');
+    return true;
+  }
+  window.applyCodexBestiarySkillChoices=applyCodexBestiarySkillChoices;
+
+  function getCodexForgeMonsterCombatProfile(){
+    var monster=window._codexBestiaryForge||buildCodexBestiaryMonster();
+    var moves=Array.isArray(monster.moves)?monster.moves:[];
+    return normalizeBestiaryEntryStats({
+      name:String(monster.name||'Forged Monster'),
+      region:String(monster.region||'province'),
+      desc:String(monster.role||'Predator')+'. '+String(monster.tactic||'It hunts in layers.'),
+      dread:Math.max(4,Number(monster.dread||6)),
+      skills:moves.map(function(move){return convertCodexMoveToBestiarySkill(move,monster.dread);}).filter(Boolean).slice(0,2)
+    });
+  }
+
+  function addCodexForgeMonsterToCombat(){
+    return addBestiaryMonsterToCombat(getCodexForgeMonsterCombatProfile());
+  }
+  window.addCodexForgeMonsterToCombat=addCodexForgeMonsterToCombat;
+
+  function saveCodexForgeMonsterToBestiary(){
+    ensureCustomCodexState();
+    var profile=getCodexForgeMonsterCombatProfile();
+    S.customContent.bestiary.push(profile);
+    if(typeof showNotif==='function')showNotif(profile.name+' saved to the GM Bestiary.','good');
+    var currentBtn=document.querySelector('.codex-cats .scat.on');
+    showCodexCat('bestiary',currentBtn);
+    return profile;
+  }
+  window.saveCodexForgeMonsterToBestiary=saveCodexForgeMonsterToBestiary;
 
   function renderCodexBestiaryForgeCard(){
     try {

@@ -230,8 +230,15 @@ async function run() {
     throw error;
   } finally {
     await browser.close();
-    if (child.exitCode === null) child.kill("SIGTERM");
-    if (ownsTempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (child.exitCode === null) {
+      child.kill("SIGTERM");
+      await Promise.race([
+        new Promise((resolve) => child.once("exit", resolve)),
+        wait(1500)
+      ]);
+    }
+    if (child.exitCode === null) child.kill("SIGKILL");
+    if (ownsTempRoot) fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 

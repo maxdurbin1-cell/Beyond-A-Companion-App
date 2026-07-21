@@ -117,12 +117,19 @@ async function run() {
         return { total: 1, effectiveDie: 4 };
       };
 
+      const merchantItem = Object.keys(window.SHOP_DATA || {}).reduce((found, category) => {
+        if (found) return found;
+        const list = Array.isArray(window.SHOP_DATA[category]) ? window.SHOP_DATA[category] : [];
+        const entry = list.find((row) => row && String(row.name || row).trim());
+        return entry ? String(entry.name || entry).trim() : "";
+      }, "");
+      if (!merchantItem) throw new Error("Merchant item pool was unavailable for deterministic loot setup.");
       window.openCombatSceneEditor({
         id: "smoke-enemy-loot-drop-items-only",
         name: "Smoke Enemy Loot Drop Items Only",
         tokens: [
           { id: "pc-1", name: "Wayfarer", faction: "player", hp: 12, maxHp: 12, q: 0, r: 0, size: 1, isPlayer: true },
-          { id: "mob-vine", name: "Vine Horror", faction: "monster", hp: 5, maxHp: 5, q: 1, r: 0, size: 1, dread: 6 }
+          { id: "mob-vine", name: "Vine Horror", faction: "monster", hp: 5, maxHp: 5, q: 1, r: 0, size: 1, dread: 6, inventory: [merchantItem] }
         ]
       });
     });
