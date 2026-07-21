@@ -164,6 +164,7 @@ async function runScenario(browser) {
   }
 
   const manualBuilderCheck = await gmPage.evaluate(() => {
+    const state = (typeof S !== "undefined" && S) ? S : window.S;
     if (typeof window.setCharacterTrait === "function") window.setCharacterTrait("virtue", "Mercy");
     if (typeof window.setManualBackstoryField === "function") window.setManualBackstoryField("hometown", "Manual Smoke Hometown");
     if (typeof window.openManualEquipmentPicker === "function") window.openManualEquipmentPicker("weapon2");
@@ -174,7 +175,16 @@ async function runScenario(browser) {
     if (picker && shieldIndex >= 0 && typeof window.applyManualEquipmentChoice === "function") {
       window.applyManualEquipmentChoice("weapon2");
     }
-    const state = (typeof S !== "undefined" && S) ? S : window.S;
+    state.backpack = ["", "", "", "", "", ""];
+    if (typeof window.renderBackpackUI === "function") window.renderBackpackUI();
+    if (typeof window.openManualBackpackPicker === "function") window.openManualBackpackPicker();
+    const backpackChoices = Array.isArray(window._manualBackpackChoices) ? window._manualBackpackChoices : [];
+    const compassIndex = backpackChoices.findIndex((entry) => String(entry && entry.name || "") === "Compass");
+    const backpackPicker = document.getElementById("manualBackpackChoice");
+    if (backpackPicker && compassIndex >= 0) backpackPicker.value = String(compassIndex);
+    if (backpackPicker && compassIndex >= 0 && typeof window.applyManualBackpackChoice === "function") {
+      window.applyManualBackpackChoice();
+    }
     const topButtons = Array.from(document.querySelectorAll("#tab-character .char-top button")).map((button) => String(button.textContent || "").trim());
     return {
       hasManualBuilder: !!document.getElementById("manualCharacterBuilder"),
@@ -184,13 +194,16 @@ async function runScenario(browser) {
       virtue: String(state && state.traits && state.traits.virtue || ""),
       hometown: String(state && state.backstory && state.backstory.hometown || ""),
       weapon2: String(state && state.equipment && state.equipment.weapon2 || ""),
-      hasFlavorPicker: typeof window.openManualFlavorPicker === "function"
+      hasFlavorPicker: typeof window.openManualFlavorPicker === "function",
+      hasBackpackPicker: typeof window.openManualBackpackPicker === "function",
+      backpack: Array.isArray(state && state.backpack) ? state.backpack.slice() : []
     };
   });
   if (!manualBuilderCheck.hasManualBuilder || !manualBuilderCheck.hasManualButton || manualBuilderCheck.hasGuideButton
     || manualBuilderCheck.hasGuidedBuildText || manualBuilderCheck.virtue !== "Mercy"
     || manualBuilderCheck.hometown !== "Manual Smoke Hometown" || !/shield/i.test(manualBuilderCheck.weapon2)
-    || !manualBuilderCheck.hasFlavorPicker) {
+    || !manualBuilderCheck.hasFlavorPicker || !manualBuilderCheck.hasBackpackPicker
+    || !manualBuilderCheck.backpack.some((item) => String(item || "") === "Compass")) {
     throw new Error(`Manual character builder regression: ${JSON.stringify(manualBuilderCheck)}`);
   }
 

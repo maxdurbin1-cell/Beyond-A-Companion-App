@@ -363,7 +363,14 @@ async function main() {
       throw new Error(`GM province focus did not sync: ${JSON.stringify(diag)} error=${String(err && err.message ? err.message : err)}`);
     }
 
-    await playerPage.evaluate(() => {
+    await playerPage.evaluate((gmKey) => {
+      const province = typeof window.getProvinceMapState === "function" ? window.getProvinceMapState() : null;
+      const alternate = province && Array.isArray(province.mapData)
+        ? province.mapData.find((entry) => entry && `${entry.col},${entry.row}` !== gmKey)
+        : null;
+      if (alternate && typeof window.setProvinceSelectedKey === "function") {
+        window.setProvinceSelectedKey(`${alternate.col},${alternate.row}`);
+      }
       if (typeof window.setContext === "function") {
         const ctxBtn = document.querySelector('.ctx-btn[data-ctx="holding"]');
         window.setContext("holding", ctxBtn || null);
@@ -372,7 +379,7 @@ async function main() {
         const btn = document.getElementById("tabnav-map") || document.querySelector('#mainNavTablist .tab-btn[data-tab="map"]');
         window.switchTab("map", btn || null);
       }
-    });
+    }, selectedKey);
 
     await playerPage.waitForFunction(
       (key) => {

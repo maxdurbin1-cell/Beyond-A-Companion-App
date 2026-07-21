@@ -2279,6 +2279,93 @@ function applyManualEquipmentChoice(slot) {
   if (typeof showNotif === 'function') showNotif(entry.name + ' equipped in ' + (targetSlot === 'weapon2' ? 'Weapon Slot 2.' : 'Weapon Slot 1.'), 'good');
 }
 
+function getManualBackpackChoices() {
+  var categoryLabels = {
+    essentials: 'Essentials',
+    toolkits: 'Toolkits',
+    items: 'Items',
+    scrolls: 'Scrolls',
+    remedies: 'Remedies',
+    drugs: 'Drugs',
+    strange: 'Strange Items',
+    tradegoods: 'Trade Goods',
+    cosmic: 'Cosmic Items'
+  };
+  var choices = [];
+  Object.keys(categoryLabels).forEach(function(category) {
+    var entries = (typeof SHOP_DATA === 'object' && SHOP_DATA && Array.isArray(SHOP_DATA[category])) ? SHOP_DATA[category] : [];
+    entries.forEach(function(entry) {
+      if (!entry || !entry.name) return;
+      choices.push({
+        category: category,
+        categoryLabel: categoryLabels[category],
+        name: String(entry.name),
+        stat: String(entry.stat || ''),
+        desc: String(entry.desc || '')
+      });
+    });
+  });
+  return choices;
+}
+
+function openManualBackpackPicker() {
+  var choices = getManualBackpackChoices();
+  window._manualBackpackChoices = choices;
+  var grouped = {};
+  choices.forEach(function(entry, index) {
+    if (!grouped[entry.categoryLabel]) grouped[entry.categoryLabel] = [];
+    grouped[entry.categoryLabel].push({ entry: entry, index: index });
+  });
+  var options = Object.keys(grouped).map(function(label) {
+    return '<optgroup label="' + escapeManualBuilderHtml(label) + '">'
+      + grouped[label].map(function(row) {
+          var detail = row.entry.name + (row.entry.stat ? ' - ' + row.entry.stat : '');
+          return '<option value="' + row.index + '">' + escapeManualBuilderHtml(detail) + '</option>';
+        }).join('')
+      + '</optgroup>';
+  }).join('');
+  var capacity = typeof getBackpackCapacity === 'function' ? getBackpackCapacity() : 6;
+  var used = typeof getUsedBackpackSlots === 'function'
+    ? getUsedBackpackSlots()
+    : (Array.isArray(S.backpack) ? S.backpack.filter(Boolean).length : 0);
+  var html = ''
+    + '<div style="font-size:.8rem;color:var(--muted2);line-height:1.55;margin-bottom:.4rem;">Choose a starting item from the Merchant tables. It belongs to this Wayfarer and is added to the next available backpack slot.</div>'
+    + '<div style="font-size:.72rem;color:var(--gold2);margin-bottom:.35rem;">Backpack: ' + used + '/' + capacity + ' slots used</div>'
+    + '<select id="manualBackpackChoice" style="margin-bottom:.45rem;"><option value="">Choose an item...</option>' + options + '</select>'
+    + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
+    + '<button class="btn btn-sm" onclick="closeModal()">Cancel</button>'
+    + '<button class="btn btn-sm btn-teal" onclick="applyManualBackpackChoice()">Add to Backpack</button>'
+    + '</div>';
+  if (typeof openModal === 'function') openModal('Choose Backpack Item', html);
+}
+
+function applyManualBackpackChoice() {
+  var select = document.getElementById('manualBackpackChoice');
+  var index = select && String(select.value || '').trim() !== '' ? Number(select.value) : -1;
+  var entry = Array.isArray(window._manualBackpackChoices) ? window._manualBackpackChoices[index] : null;
+  if (!entry) {
+    if (typeof showNotif === 'function') showNotif('Choose an item first.', 'warn');
+    return;
+  }
+  if (!Array.isArray(S.backpack)) S.backpack = [];
+  var added = typeof addToBackpack === 'function' ? addToBackpack(entry.name) : false;
+  if (!added && typeof addToBackpack !== 'function') {
+    var capacity = typeof getBackpackCapacity === 'function' ? getBackpackCapacity() : 6;
+    while (S.backpack.length < capacity) S.backpack.push('');
+    var emptyIndex = S.backpack.findIndex(function(item) { return !String(item || '').trim(); });
+    if (emptyIndex >= 0) {
+      S.backpack[emptyIndex] = entry.name;
+      added = true;
+    }
+  }
+  if (!added) return;
+  if (typeof renderBackpackUI === 'function') renderBackpackUI();
+  syncCharacterFields();
+  if (typeof closeModal === 'function') closeModal();
+  setGuidedBuildStatus(entry.name + ' added to this Wayfarer\'s backpack. Choose Backpack Items again to add another.', 'good');
+  if (typeof showNotif === 'function') showNotif(entry.name + ' added to backpack.', 'good');
+}
+
 function openManualFlavorPicker() {
   var flavors = (typeof getCodexFlavorList === 'function') ? getCodexFlavorList() : PERSONAL_FLAVORS;
   window._manualFlavorChoices = Array.isArray(flavors) ? flavors.slice() : [];
@@ -2328,6 +2415,12 @@ function finishManualCharacterBuild() {
   S.equipment.weapon2 = read('eqWeapon2', S.equipment.weapon2).trim();
   S.equipment.armor = read('eqArmor', S.equipment.armor).trim();
   S.equipment.readied = read('eqReadied', S.equipment.readied).trim();
+  if (typeof ensureBackpackCapacity === 'function') ensureBackpackCapacity();
+  var backpackCapacity = typeof getBackpackCapacity === 'function' ? getBackpackCapacity() : Math.max(6, Array.isArray(S.backpack) ? S.backpack.length : 0);
+  if (!Array.isArray(S.backpack)) S.backpack = [];
+  for (var backpackIndex = 0; backpackIndex < backpackCapacity; backpackIndex++) {
+    S.backpack[backpackIndex] = read('bp' + backpackIndex, S.backpack[backpackIndex]).trim();
+  }
   setManualBackstoryField('origin', read('manualBsOrigin', S.backstory && S.backstory.origin));
   setManualBackstoryField('hometown', read('manualBsHometown', S.backstory && S.backstory.hometown));
   setManualBackstoryField('rival', read('manualBsRival', S.backstory && S.backstory.rival));

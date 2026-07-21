@@ -863,6 +863,7 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
       <button class="btn btn-sm" onclick="startBlankManualCharacterBuild()">Start Blank Sheet</button>
       <button class="btn btn-sm" onclick="openManualEquipmentPicker('weapon1')">Choose Weapon 1</button>
       <button class="btn btn-sm" onclick="openManualEquipmentPicker('weapon2')">Choose Weapon 2 / Shield</button>
+      <button class="btn btn-sm" onclick="openManualBackpackPicker()">Choose Backpack Items</button>
       <button class="btn btn-sm" onclick="openManualFlavorPicker()">Choose Personal Flavor</button>
       <button class="btn btn-sm" onclick="rollFlavor()">⚄ Roll Flavor</button>
       <button class="btn btn-sm" onclick="rollAllTraits()">⚄ Roll Traits</button>
@@ -18180,6 +18181,7 @@ function ensureMapFogState(){
     if(!S.mapFog[region]||typeof S.mapFog[region]!=='object')S.mapFog[region]={};
     const cfg=S.mapFog[region];
     cfg.enabled=!!cfg.enabled;
+    cfg.updatedAt=Math.max(0,Number(cfg.updatedAt||0));
     if(typeof cfg.playerCurrentOnlyInCampaign!=='boolean')cfg.playerCurrentOnlyInCampaign=false;
     if(!cfg.revealed||typeof cfg.revealed!=='object')cfg.revealed={};
   });
@@ -18223,15 +18225,18 @@ function revealMapFogHex(region,key,opts){
   };
   applyKey(key);
   if(Array.isArray(options.adjacentKeys))options.adjacentKeys.forEach(applyKey);
+  if(changed)cfg.updatedAt=Date.now();
   if(changed&&!options.suppressAutoSync&&typeof scheduleMapFogCampaignSync==='function'){
     scheduleMapFogCampaignSync(region,options.syncReason||'reveal');
   }
   return changed;
 }
 function toggleMapFogForRegion(region){
-  const cfg=getMapFogConfig(region);
+  const scope=String(region||'province').toLowerCase();
+  const cfg=getMapFogConfig(scope);
   cfg.enabled=!cfg.enabled;
-  if(String(region||'province').toLowerCase()==='province'&&S&&S.mapClickMode==='fog'&&!cfg.enabled){
+  cfg.updatedAt=Date.now();
+  if(scope==='province'&&S&&S.mapClickMode==='fog'&&!cfg.enabled){
     S.mapClickMode='travel';
     if(typeof updateMapClickModeUI==='function')updateMapClickModeUI();
   }
@@ -18244,13 +18249,16 @@ function toggleMapFogForRegion(region){
   if(typeof renderPlanetExplorationPanel==='function')renderPlanetExplorationPanel();
   if(typeof renderYessodPanel==='function')renderYessodPanel();
   if(typeof renderWorldThatWas==='function')renderWorldThatWas();
+  if(typeof scheduleMapFogCampaignSync==='function')scheduleMapFogCampaignSync(scope,cfg.enabled?'enabled':'disabled');
   return cfg.enabled;
 }
 function setCampaignFogPlayerVision(currentOnly){
   const val=!!currentOnly;
+  const updatedAt=Date.now();
   ['province','sea','galaxy','planet','yessod','wtw'].forEach(function(region){
     const cfg=getMapFogConfig(region);
     cfg.playerCurrentOnlyInCampaign=val;
+    cfg.updatedAt=updatedAt;
   });
   updateCampaignFogPlayerVisionUI();
   return val;
@@ -18273,6 +18281,9 @@ function toggleCampaignFogPlayerVision(){
   if(typeof renderLastSeaInfo==='function')renderLastSeaInfo();
   if(typeof renderStarSystemMap==='function')renderStarSystemMap();
   if(typeof updateStarSystemReadouts==='function')updateStarSystemReadouts();
+  ['province','sea','galaxy','planet','yessod','wtw'].forEach(function(region){
+    if(typeof scheduleMapFogCampaignSync==='function')scheduleMapFogCampaignSync(region,'player-vision');
+  });
 }
 window.isMapFogHexVisible=isMapFogHexVisible;
 window.revealMapFogHex=revealMapFogHex;
@@ -18282,16 +18293,26 @@ window.toggleCampaignFogPlayerVision=toggleCampaignFogPlayerVision;
 const mapFogCampaignSyncTimers={};
 function scheduleMapFogCampaignSync(region,reason){
   const scope=String(region||'province').toLowerCase();
-  if(!window.campaignSystem||typeof window.campaignSystem.getState!=='function'||typeof window.campaignSystem.syncSharedSilent!=='function')return;
+  if(!window.campaignSystem||typeof window.campaignSystem.getState!=='function')return;
+  const canPatch=typeof window.campaignSystem.syncSharedPatch==='function';
+  const canSnapshot=typeof window.campaignSystem.syncSharedSilent==='function';
+  if(!canPatch&&!canSnapshot)return;
   const cs=window.campaignSystem.getState()||null;
   if(!cs||!cs.code||cs.role!=='gm'||!cs.connected)return;
   if(mapFogCampaignSyncTimers[scope])clearTimeout(mapFogCampaignSyncTimers[scope]);
   mapFogCampaignSyncTimers[scope]=setTimeout(function(){
-    delete mapFogCampaignSyncTimers[scope];
-    try{
-      const out=window.campaignSystem.syncSharedSilent('map-fog-'+scope+'-'+String(reason||'update'));
+    const dispatchFogState=function(suffix){try{
+      const syncReason='map-fog-'+scope+'-'+String(reason||'update');
+      const out=canPatch
+        ?window.campaignSystem.syncSharedPatch({mapFog:JSON.parse(JSON.stringify(S.mapFog||{}))},syncReason+String(suffix||''))
+        :window.campaignSystem.syncSharedSilent(syncReason+String(suffix||''));
       if(out&&typeof out.catch==='function')out.catch(function(){});
-    }catch(_err){}
+    }catch(_err){}};
+    dispatchFogState('');
+    mapFogCampaignSyncTimers[scope]=setTimeout(function(){
+      delete mapFogCampaignSyncTimers[scope];
+      dispatchFogState('-confirm');
+    },420);
   },80);
 }
 function escapeMapKnowledgeText(value){

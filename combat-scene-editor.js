@@ -47,6 +47,7 @@
   var campaignCombatVttOpenAnnouncementTimer = null;
   var campaignCombatVttSessionSyncTimer = null;
   var campaignCombatVttSessionFollowupTimer = null;
+  var campaignCombatVttCloseSyncTimer = null;
   var combatDragDebugState = {
     phase: 'idle',
     kind: '',
@@ -2182,6 +2183,7 @@
         combatState.active = true;
       }
       var enteredAt = Date.now();
+      combatState.updatedAt = enteredAt;
       combatState.vttSession = {
         id: 'vtt-' + String(enteredAt) + '-' + Math.floor(Math.random() * 100000),
         enteredAt: enteredAt,
@@ -2221,6 +2223,10 @@
 
   function scheduleCampaignCombatModeOpenAnnouncement(reason) {
     var scene = buildCampaignCombatSceneSyncPayload();
+    if (campaignCombatVttCloseSyncTimer) {
+      clearTimeout(campaignCombatVttCloseSyncTimer);
+      campaignCombatVttCloseSyncTimer = null;
+    }
     if (campaignCombatVttOpenAnnouncementTimer) clearTimeout(campaignCombatVttOpenAnnouncementTimer);
     campaignCombatVttOpenAnnouncementTimer = setTimeout(function () {
       campaignCombatVttOpenAnnouncementTimer = null;
@@ -2261,7 +2267,8 @@
         ? currentCombat.vttSession
         : null;
       var currentSessionAt = Number(currentSession && currentSession.enteredAt || 0);
-      if (!currentSessionAt || currentSessionAt !== sessionAt) return;
+      if (currentSessionAt && currentSessionAt !== sessionAt) return;
+      if (currentSessionAt === sessionAt && String(currentCombat && currentCombat.activeToken || '')) return;
       var scene = buildCampaignCombatSceneSyncPayload();
       var sceneEditor = scene && scene.sceneEditor && typeof scene.sceneEditor === 'object' ? scene.sceneEditor : null;
       var activeSceneId = String(sceneEditor && sceneEditor.activeSceneId || nextSession.activeSceneId || 'campaign-shared-scene');
@@ -2269,7 +2276,7 @@
       var activeScene = activeSceneId
         ? (scenes.find(function (entry) { return entry && String(entry.id || '') === activeSceneId; }) || null)
         : null;
-      var reassertCombat = deepCloneJson(nextCombat) || nextCombat;
+      var reassertCombat = deepCloneJson(currentCombat) || deepCloneJson(nextCombat) || nextCombat;
       reassertCombat.vttSession = Object.assign({}, nextSession, {
         sceneName: String(activeScene && activeScene.name || nextSession.sceneName || 'Campaign Shared Scene'),
         activeSceneId: activeSceneId
@@ -3381,7 +3388,7 @@
     if (!canCurrentUserManipulateToken(token)) return false;
     if (String(cs.role || '') === 'gm') return true;
     var combatState = getCampaignCombatTurnState();
-    if (!combatState) return true;
+    if (!combatState) return false;
     if (String(combatState.phase || 'wayfarer') !== 'wayfarer') return false;
     return String(combatState.activeToken || '') === String(cs.token || '');
   }
@@ -11571,18 +11578,18 @@
         }
         var shouldGroupDrag = selectedIds.indexOf(String(clickedToken.id || '')) >= 0 && selectedIds.length > 1;
         var groupIds = shouldGroupDrag ? selectedIds.slice() : [String(clickedToken.id || '')];
-        if (!canCurrentUserManipulateToken(clickedToken)) {
+        if (!canCurrentUserDriveTokenTurn(clickedToken)) {
           normalizeSelection(clickedToken.id, [String(clickedToken.id || '')]);
           store.setState({ selectedTokenId: clickedToken.id, draggingTokenId: '', draggingGroupIds: [], dragTokenOrigins: {} });
           closeLootPopup();
           updateUiPanels();
           drawBoard();
-          safeNotif(getCombatSceneManipulationDeniedMessage(clickedToken), 'warn');
+          safeNotif(getCampaignCombatTurnDeniedMessage(clickedToken), 'warn');
           return;
         }
         groupIds = groupIds.filter(function (id) {
           var token = byId(id);
-          return !!(token && canCurrentUserManipulateToken(token));
+          return !!(token && canCurrentUserDriveTokenTurn(token));
         });
         if (!groupIds.length) groupIds = [String(clickedToken.id || '')];
         normalizeSelection(clickedToken.id, groupIds);
@@ -15613,6 +15620,7 @@
       : null;
     if (!combatState) return null;
     var enteredAt = Date.now();
+    combatState.updatedAt = enteredAt;
     combatState.vttSession = {
       id: 'vtt-' + String(enteredAt) + '-' + Math.floor(Math.random() * 100000),
       enteredAt: enteredAt,
@@ -15671,6 +15679,10 @@
 
   function applySharedCombatSceneEditorState(snapshot, options) {
     if (!snapshot || typeof snapshot !== 'object') return false;
+    if (campaignSceneSyncTimer) {
+      clearTimeout(campaignSceneSyncTimer);
+      campaignSceneSyncTimer = null;
+    }
     var opts = options && typeof options === 'object' ? options : {};
     var cloned = clone(prepareCampaignCombatSeed(snapshot));
     if (!cloned) return false;
@@ -15711,6 +15723,11 @@
         window.S.combatMap = clone(preservedCombatMap) || preservedCombatMap;
       }
     }
+    try {
+      lastCampaignSceneSyncHash = JSON.stringify(buildCampaignCombatSceneSyncPayload());
+    } catch (_syncHashErr) {
+      lastCampaignSceneSyncHash = '';
+    }
     if (overlayOpen || opts.refreshUi) {
       try { applyCombatUiState(store.getState()); } catch (_err) {}
       try { updateUiPanels(); } catch (_err2) {}
@@ -15737,6 +15754,10 @@
       if (campaignCombatVttSessionFollowupTimer) {
         clearTimeout(campaignCombatVttSessionFollowupTimer);
         campaignCombatVttSessionFollowupTimer = null;
+      }
+      if (campaignCombatVttCloseSyncTimer) {
+        clearTimeout(campaignCombatVttCloseSyncTimer);
+        campaignCombatVttCloseSyncTimer = null;
       }
       if (combatWheelInteractionTimer) {
         clearTimeout(combatWheelInteractionTimer);
@@ -15766,18 +15787,32 @@
       ) {
         try {
           var shared = window.campaignSystem.getSharedState() || {};
-          var campaignCombat = shared.campaignCombat && typeof shared.campaignCombat === 'object'
+          var initialCombat = shared.campaignCombat && typeof shared.campaignCombat === 'object'
             ? (deepCloneJson(shared.campaignCombat) || shared.campaignCombat)
             : null;
-          if (campaignCombat && campaignCombat.vttSession) {
-            campaignCombat.vttSession = null;
-            shared.campaignCombat = deepCloneJson(campaignCombat) || campaignCombat;
+          var closingSessionId = String(initialCombat && initialCombat.vttSession && initialCombat.vttSession.id || '');
+          var broadcastVttClose = function(reasonSuffix) {
+            var liveShared = window.campaignSystem.getSharedState() || {};
+            var liveCombat = liveShared.campaignCombat && typeof liveShared.campaignCombat === 'object'
+              ? (deepCloneJson(liveShared.campaignCombat) || liveShared.campaignCombat)
+              : null;
+            if (!liveCombat) return;
+            var liveSessionId = String(liveCombat.vttSession && liveCombat.vttSession.id || '');
+            if (reasonSuffix && liveSessionId && liveSessionId !== closingSessionId) return;
+            liveCombat.vttSession = null;
+            liveCombat.updatedAt = Date.now();
+            liveShared.campaignCombat = deepCloneJson(liveCombat) || liveCombat;
             var closeOut = window.campaignSystem.syncSharedPatch(
-              { campaignCombat: deepCloneJson(campaignCombat) || campaignCombat },
-              'campaign-combat-mode-close'
+              { campaignCombat: deepCloneJson(liveCombat) || liveCombat },
+              'campaign-combat-mode-close' + String(reasonSuffix || '')
             );
             if (closeOut && typeof closeOut.catch === 'function') closeOut.catch(function () {});
-          }
+          };
+          broadcastVttClose('');
+          campaignCombatVttCloseSyncTimer = setTimeout(function () {
+            campaignCombatVttCloseSyncTimer = null;
+            broadcastVttClose('-confirm');
+          }, 420);
         } catch (_campaignCloseErr) {}
       }
     }

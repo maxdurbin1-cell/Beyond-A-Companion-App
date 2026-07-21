@@ -343,6 +343,192 @@ function mergePlayerCampaignCombat(existingCombat, incomingCombat, requesterToke
   return currentCombat;
 }
 
+function mergeOwnedVttEntries(currentEntries, incomingEntries, ownerToken, applyOwnerChanges) {
+  const token = String(ownerToken || "");
+  const current = Array.isArray(currentEntries) ? currentEntries : [];
+  const incoming = Array.isArray(incomingEntries) ? incomingEntries : [];
+  const incomingById = new Map();
+  incoming.forEach((entry) => {
+    const id = String(entry && entry.id || "");
+    if (id) incomingById.set(id, entry);
+  });
+
+  const merged = current.map((entry) => {
+    const id = String(entry && entry.id || "");
+    const incomingEntry = id ? incomingById.get(id) : null;
+    const owned = !!(token && String(entry && entry.ownerToken || "") === token);
+    if (owned === !!applyOwnerChanges && incomingEntry) {
+      return safeClone(incomingEntry);
+    }
+    if (!owned && !applyOwnerChanges && incomingEntry) {
+      return safeClone(incomingEntry);
+    }
+    return safeClone(entry);
+  });
+
+  incoming.forEach((entry) => {
+    const id = String(entry && entry.id || "");
+    if (!id || current.some((row) => String(row && row.id || "") === id)) return;
+    const owned = !!(token && String(entry && entry.ownerToken || "") === token);
+    if (owned === !!applyOwnerChanges) merged.push(safeClone(entry));
+  });
+  return merged;
+}
+
+function mergePlayerSceneEditor(currentEditor, incomingEditor, ownerToken) {
+  const nextEditor = safeClone(currentEditor) || {};
+  nextEditor.tokens = mergeOwnedVttEntries(
+    currentEditor && currentEditor.tokens,
+    incomingEditor && incomingEditor.tokens,
+    ownerToken,
+    true
+  );
+  const currentScenes = Array.isArray(currentEditor && currentEditor.scenes) ? currentEditor.scenes : [];
+  const incomingScenes = Array.isArray(incomingEditor && incomingEditor.scenes) ? incomingEditor.scenes : [];
+  nextEditor.scenes = currentScenes.map((scene) => {
+    const nextScene = safeClone(scene) || {};
+    const incomingScene = incomingScenes.find((entry) => String(entry && entry.id || "") === String(scene && scene.id || ""));
+    if (incomingScene) {
+      nextScene.tokens = mergeOwnedVttEntries(scene.tokens, incomingScene.tokens, ownerToken, true);
+    }
+    return nextScene;
+  });
+  return nextEditor;
+}
+
+function summarizePlayerCombatSceneMutation(scene, ownerToken) {
+  const source = scene && typeof scene === "object" ? scene : {};
+  const editor = source.sceneEditor && typeof source.sceneEditor === "object" ? source.sceneEditor : {};
+  const summarizeTokens = (entries) => (Array.isArray(entries) ? entries : [])
+    .filter((entry) => String(entry && entry.ownerToken || "") === String(ownerToken || ""))
+    .map((entry) => ({
+      id: String(entry && entry.id || ""),
+      q: Number(entry && entry.q || 0),
+      r: Number(entry && entry.r || 0),
+      offsetX: Number(entry && entry.offsetX || 0),
+      offsetY: Number(entry && entry.offsetY || 0)
+    }));
+  const activeScene = (Array.isArray(editor.scenes) ? editor.scenes : [])
+    .find((entry) => String(entry && entry.id || "") === String(editor.activeSceneId || ""));
+  const combat = safeClone(source.combat || {}) || {};
+  delete combat.sceneEditor;
+  delete combat.sceneSyncMeta;
+  const combatMap = source.combatMap && typeof source.combatMap === "object" ? source.combatMap : {};
+  return JSON.stringify({
+    ownedTokens: summarizeTokens(editor.tokens),
+    savedOwnedTokens: summarizeTokens(activeScene && activeScene.tokens),
+    combat,
+    enemies: source.enemies || [],
+    ownedUnits: summarizeTokens(combatMap.units),
+    combatAugState: source.combatAugState || {}
+  });
+}
+
+function preserveActivePlayerVttPosition(existingScene, incomingScene, activeToken) {
+  const current = existingScene && typeof existingScene === "object" ? existingScene : null;
+  const incoming = incomingScene && typeof incomingScene === "object" ? incomingScene : null;
+  if (!current || !incoming || !activeToken) return incomingScene;
+
+  const nextScene = safeClone(incoming) || {};
+  const currentEditor = current.sceneEditor && typeof current.sceneEditor === "object" ? current.sceneEditor : null;
+  const incomingEditor = nextScene.sceneEditor && typeof nextScene.sceneEditor === "object" ? nextScene.sceneEditor : null;
+  if (currentEditor && incomingEditor) {
+    incomingEditor.tokens = mergeOwnedVttEntries(
+      currentEditor.tokens,
+      incomingEditor.tokens,
+      activeToken,
+      false
+    );
+    const currentScenes = Array.isArray(currentEditor.scenes) ? currentEditor.scenes : [];
+    const incomingScenes = Array.isArray(incomingEditor.scenes) ? incomingEditor.scenes : [];
+    incomingEditor.scenes = incomingScenes.map((scene) => {
+      const nextSceneSnapshot = safeClone(scene) || {};
+      const currentSceneSnapshot = currentScenes.find((entry) => String(entry && entry.id || "") === String(scene && scene.id || ""));
+      if (currentSceneSnapshot) {
+        nextSceneSnapshot.tokens = mergeOwnedVttEntries(
+          currentSceneSnapshot.tokens,
+          scene.tokens,
+          activeToken,
+          false
+        );
+      }
+      return nextSceneSnapshot;
+    });
+  }
+  if (
+    current.combatMap && typeof current.combatMap === "object"
+    && nextScene.combatMap && typeof nextScene.combatMap === "object"
+  ) {
+    nextScene.combatMap.units = mergeOwnedVttEntries(
+      current.combatMap.units,
+      nextScene.combatMap.units,
+      activeToken,
+      false
+    );
+  }
+  return nextScene;
+}
+
+function mergePlayerCombatScene(existingState, incomingScene, requesterToken, requesterName) {
+  const token = String(requesterToken || "");
+  const combat = existingState && existingState.campaignCombat && typeof existingState.campaignCombat === "object"
+    ? existingState.campaignCombat
+    : null;
+  const currentScene = existingState && existingState.combatScene && typeof existingState.combatScene === "object"
+    ? existingState.combatScene
+    : null;
+  const currentEditor = currentScene && currentScene.sceneEditor && typeof currentScene.sceneEditor === "object"
+    ? currentScene.sceneEditor
+    : null;
+  const incoming = incomingScene && typeof incomingScene === "object" ? incomingScene : null;
+  const incomingEditor = incoming && incoming.sceneEditor && typeof incoming.sceneEditor === "object"
+    ? incoming.sceneEditor
+    : null;
+
+  if (!token || !combat || !combat.active || String(combat.phase || "wayfarer") !== "wayfarer") return null;
+  if (String(combat.activeToken || "") !== token) return null;
+  if (!currentScene || !currentEditor || !incoming || !incomingEditor) return null;
+
+  const currentSceneId = String(currentEditor.activeSceneId || "");
+  const incomingSceneId = String(incomingEditor.activeSceneId || "");
+  if (currentSceneId && incomingSceneId && currentSceneId !== incomingSceneId) return null;
+
+  const currentTokens = Array.isArray(currentEditor.tokens) ? currentEditor.tokens : [];
+  const incomingTokens = Array.isArray(incomingEditor.tokens) ? incomingEditor.tokens : [];
+  const ownsCurrentToken = currentTokens.some((entry) => String(entry && entry.ownerToken || "") === token);
+  const ownsIncomingToken = incomingTokens.some((entry) => String(entry && entry.ownerToken || "") === token);
+  if (!ownsCurrentToken || !ownsIncomingToken) return null;
+  if (summarizePlayerCombatSceneMutation(currentScene, token) === summarizePlayerCombatSceneMutation(incoming, token)) {
+    return null;
+  }
+
+  const nextScene = safeClone(currentScene) || {};
+  ["combat", "enemies", "combatMap", "combatAugState"].forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(incoming, key)) {
+      nextScene[key] = safeClone(incoming[key]);
+    }
+  });
+  nextScene.sceneEditor = mergePlayerSceneEditor(currentEditor, incomingEditor, token);
+  if (
+    currentScene.combatMap && typeof currentScene.combatMap === "object"
+    && nextScene.combatMap && typeof nextScene.combatMap === "object"
+  ) {
+    nextScene.combatMap.units = mergeOwnedVttEntries(
+      currentScene.combatMap.units,
+      incoming.combatMap && incoming.combatMap.units,
+      token,
+      true
+    );
+  }
+  nextScene.syncMeta = {
+    by: String(requesterName || "Wayfarer").slice(0, 48),
+    byToken: token,
+    at: Date.now(),
+    source: "active-player-vtt"
+  };
+  return nextScene;
+}
+
 function getSharedMissionMergeKey(mission) {
   if (!mission || typeof mission !== "object") return "";
   const missionId = mission.id;
@@ -539,6 +725,20 @@ function mergeAllowedPlayerState(existingState, incoming, requesterToken, confli
         return;
       }
       merged.campaignCombat = nextCampaignCombat;
+      return;
+    }
+    if (key === "combatScene") {
+      const nextCombatScene = mergePlayerCombatScene(
+        existingState,
+        incomingState.combatScene,
+        requesterToken,
+        requesterName
+      );
+      if (!nextCombatScene) {
+        conflictList.push("combatScene");
+        return;
+      }
+      merged.combatScene = nextCombatScene;
       return;
     }
     if (!PLAYER_PATCH_ALLOWED_KEYS[key]) {
@@ -2969,10 +3169,16 @@ io.on("connection", (socket) => {
     const member = token ? campaign.participants.get(token) : null;
     const gmAuthority = isGm(campaign, token);
     const conflicts = [];
+    let acceptedPlayerCombatScene = false;
     let merged = Object.assign({}, existingState, incoming);
 
     if (!gmAuthority) {
       merged = mergeAllowedPlayerState(existingState, incoming, token, conflicts, member && member.name);
+      acceptedPlayerCombatScene = !!(
+        incoming.combatScene
+        && typeof incoming.combatScene === "object"
+        && conflicts.indexOf("combatScene") < 0
+      );
     } else if (
       incoming.provinceSelections && typeof incoming.provinceSelections === "object" &&
       !Array.isArray(incoming.provinceSelections)
@@ -2983,6 +3189,70 @@ io.on("connection", (socket) => {
       merged.provinceSelections = Object.assign({}, currentSelections, incoming.provinceSelections);
     }
     if (gmAuthority) {
+      const existingTravelAt = Math.max(0, Number(existingState.campaignTravel && existingState.campaignTravel.updatedAt || 0));
+      const incomingTravelAt = Math.max(0, Number(incoming.campaignTravel && incoming.campaignTravel.updatedAt || 0));
+      if (incoming.campaignTravel && existingTravelAt > incomingTravelAt) {
+        merged.campaignTravel = safeClone(existingState.campaignTravel);
+        if (incoming.provinceMap && existingState.provinceMap) {
+          merged.provinceMap = safeClone(existingState.provinceMap);
+        }
+      }
+
+      const existingAreaAt = Math.max(0, Number(existingState.areaSession && existingState.areaSession.updatedAt || 0));
+      const incomingAreaAt = Math.max(0, Number(incoming.areaSession && incoming.areaSession.updatedAt || 0));
+      if (incoming.areaSession && existingAreaAt > incomingAreaAt) {
+        merged.areaSession = safeClone(existingState.areaSession);
+      }
+
+      const existingSettingsAt = Math.max(0, Number(existingState.gmSettings && existingState.gmSettings.updatedAt || 0));
+      const incomingSettingsAt = Math.max(0, Number(incoming.gmSettings && incoming.gmSettings.updatedAt || 0));
+      if (incoming.gmSettings && existingSettingsAt > incomingSettingsAt) {
+        merged.gmSettings = safeClone(existingState.gmSettings);
+      }
+
+      const existingCombatAt = Math.max(0, Number(existingState.campaignCombat && existingState.campaignCombat.updatedAt || 0));
+      const incomingCombatAt = Math.max(0, Number(incoming.campaignCombat && incoming.campaignCombat.updatedAt || 0));
+      if (incoming.campaignCombat && existingCombatAt > incomingCombatAt) {
+        merged.campaignCombat = safeClone(existingState.campaignCombat);
+      }
+
+      if (incoming.mapFog && typeof incoming.mapFog === "object" && !Array.isArray(incoming.mapFog)) {
+        const currentFog = existingState.mapFog && typeof existingState.mapFog === "object"
+          ? existingState.mapFog
+          : {};
+        const nextFog = merged.mapFog && typeof merged.mapFog === "object"
+          ? safeClone(merged.mapFog) || {}
+          : {};
+        Object.keys(currentFog).forEach((region) => {
+          const existingRegion = currentFog[region] && typeof currentFog[region] === "object" ? currentFog[region] : null;
+          const incomingRegion = nextFog[region] && typeof nextFog[region] === "object" ? nextFog[region] : null;
+          if (existingRegion && Number(existingRegion.updatedAt || 0) > Number(incomingRegion && incomingRegion.updatedAt || 0)) {
+            nextFog[region] = safeClone(existingRegion);
+          }
+        });
+        merged.mapFog = nextFog;
+        if (merged.provinceMap && typeof merged.provinceMap === "object" && nextFog.province) {
+          merged.provinceMap = safeClone(merged.provinceMap) || {};
+          merged.provinceMap.fog = safeClone(nextFog.province);
+        }
+      }
+
+      const activeCombat = existingState.campaignCombat && typeof existingState.campaignCombat === "object"
+        ? existingState.campaignCombat
+        : null;
+      const activePlayerToken = activeCombat
+        && activeCombat.active
+        && String(activeCombat.phase || "wayfarer") === "wayfarer"
+        ? String(activeCombat.activeToken || "")
+        : "";
+      if (activePlayerToken && incoming.combatScene && merged.combatScene) {
+        merged.combatScene = preserveActivePlayerVttPosition(
+          existingState.combatScene,
+          merged.combatScene,
+          activePlayerToken
+        );
+      }
+
       if (Array.isArray(incoming.activeMissions)) {
         merged.activeMissions = mergeSharedMissionLists(existingState.activeMissions, incoming.activeMissions);
       }
@@ -3062,7 +3332,20 @@ io.on("connection", (socket) => {
     campaign.updatedAt = Date.now();
     schedulePersist();
 
-    emitCampaignState(campaign.code);
+    const incomingKeys = Object.keys(incoming);
+    const hasImmediateTablePatch = !!(
+      gmAuthority
+      && incomingKeys.length <= 6
+      && (
+        Object.prototype.hasOwnProperty.call(incoming, "campaignTravel")
+        || Object.prototype.hasOwnProperty.call(incoming, "areaSession")
+        || Object.prototype.hasOwnProperty.call(incoming, "campaignCombat")
+        || Object.prototype.hasOwnProperty.call(incoming, "gmSettings")
+        || Object.prototype.hasOwnProperty.call(incoming, "mapFog")
+        || Object.prototype.hasOwnProperty.call(incoming, "provinceMap")
+      )
+    );
+    emitCampaignState(campaign.code, (acceptedPlayerCombatScene || hasImmediateTablePatch) ? { immediate: true } : undefined);
     if (typeof ack === "function") {
       ack({ ok: true, stateVersion: campaign.shared.stateVersion, conflicts, authoritativeAt: campaign.updatedAt });
     }
@@ -3486,13 +3769,28 @@ io.on("connection", (socket) => {
     }
 
     const participant = campaign.participants.get(token);
+    const currentCharacterUpdatedAt = Math.max(0, Number(participant.character && participant.character.updatedAt || 0));
+    const hasBaseRevision = !!(payload && Object.prototype.hasOwnProperty.call(payload, "baseUpdatedAt"));
+    const baseUpdatedAt = Math.max(0, Number(payload && payload.baseUpdatedAt || 0));
+    if (participant.character && hasBaseRevision && baseUpdatedAt < currentCharacterUpdatedAt) {
+      emitCampaignState(campaign.code, { immediate: true });
+      if (typeof ack === "function") {
+        ack({
+          ok: false,
+          stale: true,
+          error: "Character changed on the shared table. Applying the authoritative sheet first.",
+          updatedAt: currentCharacterUpdatedAt
+        });
+      }
+      return;
+    }
     participant.character = normalizeCharacter(payload && payload.character, participant.name);
     participant.lastSeenAt = Date.now();
     campaign.updatedAt = Date.now();
     schedulePersist();
 
     emitCampaignState(campaign.code);
-    if (typeof ack === "function") ack({ ok: true });
+    if (typeof ack === "function") ack({ ok: true, updatedAt: participant.character.updatedAt });
   });
 
   socket.on("campaign:gmApplyCheckOutcome", (payload, ack) => {
@@ -3634,7 +3932,7 @@ io.on("connection", (socket) => {
 
     campaign.updatedAt = Date.now();
     schedulePersist();
-    emitCampaignState(campaign.code);
+    emitCampaignState(campaign.code, { immediate: true });
     if (typeof ack === "function") {
       ack({
         ok: true,

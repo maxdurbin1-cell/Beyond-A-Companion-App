@@ -1845,6 +1845,32 @@
     try { window.setProvinceSelectedKey(String(snapshot.selectedKey || "")); } catch (_err) {}
   }
 
+  function reassertStrictPlayerProvinceFocus() {
+    if (state.role !== "player" || !isStrictGmCameraLockEnabled()) return false;
+    var shared = getCampaignSharedState() || {};
+    var travel = shared.campaignTravel && typeof shared.campaignTravel === "object"
+      ? shared.campaignTravel
+      : null;
+    var key = travel && String(travel.tab || "") === "map"
+      ? String(travel.provinceKey || "")
+      : "";
+    if (!key || typeof window.setProvinceSelectedKey !== "function") return false;
+    var currentKey = typeof window.getProvinceSelectedKey === "function"
+      ? String(window.getProvinceSelectedKey() || "")
+      : "";
+    if (currentKey === key) return true;
+
+    var wasApplyingSharedState = state.applyingSharedState;
+    state.applyingSharedState = true;
+    try {
+      return !!window.setProvinceSelectedKey(key);
+    } catch (_err) {
+      return false;
+    } finally {
+      state.applyingSharedState = wasApplyingSharedState;
+    }
+  }
+
   function resolveProvinceSelectionKeyForSharedState(sharedState, localProvinceState, incomingProvinceMap) {
     var shared = sharedState && typeof sharedState === "object" ? sharedState : null;
     var mergedShared = getCampaignSharedState() || {};
@@ -1983,6 +2009,7 @@
     var preservePlayerCombatTab = state.role === "player"
       && sharedCombat
       && sharedCombat.active
+      && !isStrictGmCameraLockEnabled()
       && activeTab === "combat"
       && tab
       && tab !== "combat"
@@ -2138,6 +2165,7 @@
       window.switchTab = function () {
         var suppressCampaignSync = !!window.__campaignSuppressNavigationSync || isNavigationSyncSuppressed();
         var out = baseSwitchTab.apply(this, arguments);
+        reassertStrictPlayerProvinceFocus();
         if (state.code) renderGlobalQuickAccess();
         if (!!window.__campaignSuppressNavigationSync) window.__campaignSuppressNavigationSync = false;
         if (state.applyingSharedState || suppressCampaignSync) return out;
@@ -2152,6 +2180,7 @@
       window.setContext = function () {
         var suppressCampaignSync = !!window.__campaignSuppressNavigationSync || isNavigationSyncSuppressed();
         var out = baseSetContext.apply(this, arguments);
+        reassertStrictPlayerProvinceFocus();
         if (state.code) renderGlobalQuickAccess();
         if (!!window.__campaignSuppressNavigationSync) window.__campaignSuppressNavigationSync = false;
         if (state.applyingSharedState || suppressCampaignSync) return out;
@@ -2260,6 +2289,63 @@
           && activeCombatToken === String(state.token || "")
         );
         if (!combatScenePatch || !canMutateCombatScene) return;
+        var summarizePlayerSceneMutation = function(scene, ownerToken) {
+          var source = scene && typeof scene === "object" ? scene : {};
+          var editor = source.sceneEditor && typeof source.sceneEditor === "object" ? source.sceneEditor : {};
+          var ownedTokens = (Array.isArray(editor.tokens) ? editor.tokens : []).filter(function(entry) {
+            return String(entry && entry.ownerToken || "") === String(ownerToken || "");
+          }).map(function(entry) {
+            return {
+              id: String(entry && entry.id || ""),
+              q: Number(entry && entry.q || 0),
+              r: Number(entry && entry.r || 0),
+              offsetX: Number(entry && entry.offsetX || 0),
+              offsetY: Number(entry && entry.offsetY || 0)
+            };
+          });
+          var activeScene = (Array.isArray(editor.scenes) ? editor.scenes : []).find(function(entry) {
+            return String(entry && entry.id || "") === String(editor.activeSceneId || "");
+          });
+          var savedOwnedTokens = (Array.isArray(activeScene && activeScene.tokens) ? activeScene.tokens : []).filter(function(entry) {
+            return String(entry && entry.ownerToken || "") === String(ownerToken || "");
+          }).map(function(entry) {
+            return {
+              id: String(entry && entry.id || ""),
+              q: Number(entry && entry.q || 0),
+              r: Number(entry && entry.r || 0),
+              offsetX: Number(entry && entry.offsetX || 0),
+              offsetY: Number(entry && entry.offsetY || 0)
+            };
+          });
+          var combatState = deepCloneJson(source.combat || {}) || {};
+          delete combatState.sceneEditor;
+          delete combatState.sceneSyncMeta;
+          var combatMap = source.combatMap && typeof source.combatMap === "object" ? source.combatMap : {};
+          var ownedUnits = (Array.isArray(combatMap.units) ? combatMap.units : []).filter(function(entry) {
+            return String(entry && entry.ownerToken || "") === String(ownerToken || "");
+          }).map(function(entry) {
+            return {
+              id: String(entry && entry.id || ""),
+              q: Number(entry && entry.q || 0),
+              r: Number(entry && entry.r || 0)
+            };
+          });
+          return safeJsonHash({
+            ownedTokens: ownedTokens,
+            savedOwnedTokens: savedOwnedTokens,
+            combat: combatState,
+            enemies: source.enemies || [],
+            ownedUnits: ownedUnits,
+            combatAugState: source.combatAugState || {}
+          });
+        };
+        var currentCombatScene = sharedForCombatScene && sharedForCombatScene.combatScene && typeof sharedForCombatScene.combatScene === "object"
+          ? sharedForCombatScene.combatScene
+          : null;
+        if (
+          currentCombatScene
+          && summarizePlayerSceneMutation(currentCombatScene, state.token) === summarizePlayerSceneMutation(combatScenePatch, state.token)
+        ) return;
         combatScenePatch.syncMeta = {
           by: String(state.playerName || ensureName() || "Wayfarer"),
           at: Date.now()
@@ -4662,7 +4748,24 @@
         window.S.storyline = deepCloneJson(sharedState.storyline) || {};
       }
       if (sharedState.mapFog && typeof sharedState.mapFog === "object") {
-        window.S.mapFog = deepCloneJson(sharedState.mapFog) || {};
+        var incomingMapFog = deepCloneJson(sharedState.mapFog) || {};
+        if (state.role === "gm") {
+          var localMapFog = window.S.mapFog && typeof window.S.mapFog === "object"
+            ? (deepCloneJson(window.S.mapFog) || {})
+            : {};
+          Object.keys(localMapFog).forEach(function(region) {
+            var localFog = localMapFog[region] && typeof localMapFog[region] === "object" ? localMapFog[region] : null;
+            var incomingFog = incomingMapFog[region] && typeof incomingMapFog[region] === "object" ? incomingMapFog[region] : null;
+            if (localFog && Number(localFog.updatedAt || 0) > Number(incomingFog && incomingFog.updatedAt || 0)) {
+              incomingMapFog[region] = deepCloneJson(localFog) || localFog;
+            }
+          });
+        }
+        window.S.mapFog = incomingMapFog;
+        var currentSharedForFog = getCampaignSharedState();
+        if (currentSharedForFog && typeof currentSharedForFog === "object") {
+          currentSharedForFog.mapFog = deepCloneJson(incomingMapFog) || incomingMapFog;
+        }
       }
       if (sharedState.caravan && typeof sharedState.caravan === "object") {
         window.S.caravan = deepCloneJson(sharedState.caravan) || {};
@@ -4831,10 +4934,15 @@
         Object.assign(
           current.campaignCombat,
           shouldPreferLocalCampaignCombat(previousCombat, incomingCombatState)
-            ? previousCombat
-            : incomingCombatState
+              ? previousCombat
+              : incomingCombatState
         );
         var mergedCombat = ensureCampaignCombatState(current);
+        if (incomingHasVttSession) {
+          mergedCombat.vttSession = incomingCombatState.vttSession
+            ? (deepCloneJson(incomingCombatState.vttSession) || incomingCombatState.vttSession)
+            : null;
+        }
         if (!incomingHasVttSession && mergedCombat.active && !mergedCombat.vttSession && previousVttSession) {
           var hasSharedSceneEditor = !!(current.combatScene && current.combatScene.sceneEditor && typeof current.combatScene.sceneEditor === "object");
           var hasLocalSceneEditor = !!(window.S && window.S.combat && window.S.combat.sceneEditor && typeof window.S.combat.sceneEditor === "object");
@@ -4842,7 +4950,7 @@
             mergedCombat.vttSession = deepCloneJson(previousVttSession) || previousVttSession;
           }
         }
-        if (state.role === "player" && incomingClosedVtt && previousVttSession) {
+        if (state.role === "player" && incomingClosedVtt) {
           clearSharedVttJoinRetry();
           clearSharedVttInviteAssurance();
           state.dismissedCampaignVttPromptKey = "";
@@ -5058,12 +5166,22 @@
         var provincePayload = keepPreviousProvinceMap
           ? (deepCloneJson(previousProvinceMap) || {})
           : incomingProvinceMap;
+        if (sharedState.mapFog && sharedState.mapFog.province && typeof sharedState.mapFog.province === "object") {
+          provincePayload.fog = deepCloneJson(sharedState.mapFog.province) || sharedState.mapFog.province;
+        }
         provincePayload.selectedKey = keepPreviousProvinceMap
           ? resolveProvinceSelectionKeyForSharedState(previousShared, localProvinceState, provincePayload)
           : resolveProvinceSelectionKeyForSharedState(sharedState, localProvinceState, provincePayload);
         current.provinceMap = deepCloneJson(provincePayload) || provincePayload;
         var nextProvinceMapHash = safeJsonHash(provincePayload);
-        if (nextProvinceMapHash !== state.lastProvinceMapHash) {
+        var liveProvinceSelectedKey = typeof window.getProvinceSelectedKey === "function"
+          ? String(window.getProvinceSelectedKey() || "")
+          : "";
+        var provinceFocusDrifted = !!(
+          provincePayload.selectedKey
+          && liveProvinceSelectedKey !== String(provincePayload.selectedKey || "")
+        );
+        if (nextProvinceMapHash !== state.lastProvinceMapHash || provinceFocusDrifted) {
           window.applyProvinceMapState(provincePayload, { skipSync: true });
           state.lastProvinceMapHash = nextProvinceMapHash;
         }
@@ -5969,11 +6087,15 @@
         travelMode: "gm-led", // who can initiate travel
         combatMode: "turn-based", // combat style
         cameraLock: true,
-        soundtrack: createDefaultCampaignSoundtrackSettings()
+        soundtrack: createDefaultCampaignSoundtrackSettings(),
+        updatedAt: 0
       };
     }
     if (typeof sharedState.gmSettings.cameraLock !== "boolean") {
       sharedState.gmSettings.cameraLock = true;
+    }
+    if (!Number.isFinite(Number(sharedState.gmSettings.updatedAt))) {
+      sharedState.gmSettings.updatedAt = 0;
     }
     sharedState.gmSettings.soundtrack = normalizeCampaignSoundtrackSettings(sharedState.gmSettings.soundtrack);
     return sharedState.gmSettings;
@@ -6309,6 +6431,7 @@
       var shared = getMutableCampaignSharedState();
       var settings = ensureGmSettings(shared);
       settings.soundtrack = nextSoundtrack;
+      settings.updatedAt = Date.now();
       setCampaignSoundtrackDraftFromConfig(nextSoundtrack, { dirty: false });
       applyCampaignSoundtrackFromSharedState(shared);
       renderSettingsSection({ bypassSoundtrackDeferral: true });
@@ -7263,12 +7386,18 @@
 
       var settings = ensureGmSettings();
       settings.mode = mode;
+      settings.updatedAt = Date.now();
 
       if (state.code && state.connected) {
-        syncSharedState("set-gm-mode");
+        syncSharedPatch({ gmSettings: deepCloneJson(settings) || settings }, "set-gm-mode").then(function (res) {
+          if (callback) callback(res && res.ok ? { ok: true, mode: mode, stateVersion: res.stateVersion } : (res || { ok: false }));
+        }).catch(function (err) {
+          if (callback) callback({ ok: false, error: String(err) });
+        });
+      } else if (callback) {
+        callback({ ok: true, mode: mode, local: true });
       }
       safeNotif("GM Mode: " + mode.charAt(0).toUpperCase() + mode.slice(1));
-      if (callback) callback({ ok: true, mode: mode });
     } catch (err) {
       if (callback) callback({ ok: false, error: String(err) });
     }
@@ -7283,6 +7412,7 @@
       var shared = getMutableCampaignSharedState();
       var settings = ensureGmSettings(shared);
       settings.cameraLock = !!enabled;
+      settings.updatedAt = Date.now();
       if (state.code && state.connected) {
         syncSharedPatch({ gmSettings: deepCloneJson(settings) || settings }, "set-gm-camera-lock").then(function (res) {
           if (res && res.ok && enabled) {
@@ -7331,6 +7461,9 @@
     if (!Object.keys(safePatch).length) {
       maybeNotifyPlayerPatchGuardrail(reason || "player-patch");
       return { ok: false, error: "No permitted player patch keys." };
+    }
+    if (Object.prototype.hasOwnProperty.call(safePatch, "combatScene")) {
+      opts.bypassQueue = true;
     }
     var gmSettings = ensureGmSettings();
     if (!opts.bypassQueue && String(gmSettings.mode || "passive") === "active") {
@@ -8769,9 +8902,18 @@
     var summary = collectCharacterSummary();
     var hash = JSON.stringify(summary);
     if (!force && hash === state.lastCharacterHash) return;
-    var res = await emitWithAck("campaign:updateCharacter", { character: summary });
+    var res = await emitWithAck("campaign:updateCharacter", {
+      character: summary,
+      baseUpdatedAt: Math.max(0, Number(state.lastAppliedSelfCharacterAt || 0))
+    });
     if (res && res.ok) {
       state.lastCharacterHash = hash;
+      if (res.updatedAt) {
+        state.lastAppliedSelfCharacterAt = Math.max(
+          Number(state.lastAppliedSelfCharacterAt || 0),
+          Number(res.updatedAt || 0)
+        );
+      }
     }
   }
 

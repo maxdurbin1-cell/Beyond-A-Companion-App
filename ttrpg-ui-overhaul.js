@@ -1068,6 +1068,14 @@
     if (!state) return;
 
     Array.prototype.forEach.call(controlsList, function (controls) {
+      var region = resolveMapRegionFromControls(controls);
+      var fogConfig = typeof window.getMapFogConfig === 'function' ? window.getMapFogConfig(region) : null;
+      var fogEnabled = fogConfig ? !!fogConfig.enabled : !!state.mapTools.manualFogMode;
+      var campaignState = window.campaignSystem && typeof window.campaignSystem.getState === 'function'
+        ? window.campaignSystem.getState()
+        : null;
+      var playerView = !!(campaignState && campaignState.code && campaignState.role === 'player');
+      state.mapTools.manualFogMode = fogEnabled;
       var row = controls.querySelector('.map-interaction-controls');
       if (!row) {
         row = document.createElement('span');
@@ -1076,28 +1084,23 @@
       }
 
       row.innerHTML = ''
-        + '<button class="btn btn-sm ' + (state.mapTools.manualFogMode ? 'btn-teal' : '') + ' coFogModeBtn">Fog Manual: ' + (state.mapTools.manualFogMode ? 'On' : 'Off') + '</button>'
+        + '<button class="btn btn-sm ' + (fogEnabled ? 'btn-teal' : '') + ' coFogModeBtn"' + (playerView ? ' disabled title="Fog is controlled by the GM"' : '') + '>' + (playerView ? 'GM Fog' : 'Fog Manual') + ': ' + (fogEnabled ? 'On' : 'Off') + '</button>'
         + '<button class="btn btn-sm coTrailClearBtn">Clear Trail</button>'
         + '<button class="btn btn-sm btn-teal coLongRestBtn">Long Rest</button>';
 
       var modeBtn = row.querySelector('.coFogModeBtn');
       if (modeBtn) {
         modeBtn.onclick = function () {
-          state.mapTools.manualFogMode = !state.mapTools.manualFogMode;
-          var region = resolveMapRegionFromControls(controls);
+          if (playerView) {
+            safeNotif('Fog of war is controlled by the GM.', 'info');
+            return;
+          }
           if (typeof window.getMapFogConfig === 'function' && typeof window.toggleMapFogForRegion === 'function') {
             var cfg = window.getMapFogConfig(region);
-            if (state.mapTools.manualFogMode) {
-              // Turning ON: enable fog if not already enabled
-              if (cfg && !cfg.enabled) {
-                window.toggleMapFogForRegion(region);
-              }
-            } else {
-              // Turning OFF: disable fog if it is enabled
-              if (cfg && cfg.enabled) {
-                window.toggleMapFogForRegion(region);
-              }
-            }
+            state.mapTools.manualFogMode = cfg ? !cfg.enabled : !state.mapTools.manualFogMode;
+            window.toggleMapFogForRegion(region);
+          } else {
+            state.mapTools.manualFogMode = !state.mapTools.manualFogMode;
           }
           modeBtn.textContent = 'Fog Manual: ' + (state.mapTools.manualFogMode ? 'On' : 'Off');
           modeBtn.classList.toggle('btn-teal', state.mapTools.manualFogMode);

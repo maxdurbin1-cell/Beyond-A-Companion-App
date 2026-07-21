@@ -685,6 +685,48 @@ async function runScenario(browser, baseUrl) {
     { timeout: STEP_TIMEOUT_MS }
   );
 
+  const activeGmMode = await gmPage.evaluate(() => new Promise((resolve) => {
+    window.campaignSystem.setGmMode('active', (result) => resolve(result || { ok: false, error: 'No GM mode callback.' }));
+  }));
+  if (!activeGmMode || !activeGmMode.ok) {
+    throw new Error(`Could not enable active GM mode for VTT sync regression: ${JSON.stringify(activeGmMode)}`);
+  }
+  await playerPage.waitForFunction(
+    () => String(window.campaignSystem.getSharedState()?.gmSettings?.mode || '') === 'active',
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+
+  await gmPage.evaluate(() => {
+    const cfg = window.getMapFogConfig('province');
+    if (cfg && cfg.enabled) window.toggleMapFogForRegion('province');
+    window.toggleMapFogForRegion('province');
+  });
+  await playerPage.waitForFunction(
+    () => !!window.getMapFogConfig('province').enabled,
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+  const playerFogUi = await playerPage.evaluate(() => {
+    if (typeof window.renderCompanionOverhaul === 'function') window.renderCompanionOverhaul();
+    const button = document.querySelector('#tab-map .coFogModeBtn');
+    return {
+      enabled: !!window.getMapFogConfig('province').enabled,
+      buttonPresent: !!button,
+      buttonDisabled: !!(button && button.disabled),
+      buttonText: String(button && button.textContent || '')
+    };
+  });
+  if (!playerFogUi.enabled || !playerFogUi.buttonPresent || !playerFogUi.buttonDisabled || !/GM Fog: On/.test(playerFogUi.buttonText)) {
+    throw new Error(`Player fog toolbar did not reflect GM authority: ${JSON.stringify(playerFogUi)}`);
+  }
+  await gmPage.evaluate(() => window.toggleMapFogForRegion('province'));
+  await playerPage.waitForFunction(
+    () => !window.getMapFogConfig('province').enabled,
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+
   await Promise.all([
     gmPage.evaluate(() => {
       if (typeof window.switchTab === "function") window.switchTab("combat");
@@ -794,6 +836,68 @@ async function runScenario(browser, baseUrl) {
   });
   await ensurePlayerJoinedSharedVtt(playerPage, 'Player initial shared VTT state', 2);
 
+  const activePlayerToken = await playerPage.evaluate(() => String(window.campaignSystem.getState().token || ''));
+  const actorPrompt = await gmPage.evaluate((token) => new Promise((resolve) => {
+    window.campaignSystem.setCombatActor(token, (result) => resolve(result || { ok: false, error: 'No actor callback.' }));
+  }), activePlayerToken);
+  if (!actorPrompt || !actorPrompt.ok) {
+    throw new Error(`GM could not grant the player VTT turn: ${JSON.stringify(actorPrompt)}`);
+  }
+  await playerPage.waitForFunction(
+    (token) => String(window.campaignSystem.getSharedState()?.campaignCombat?.activeToken || '') === String(token || ''),
+    activePlayerToken,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+
+  const playerMove = await playerPage.evaluate(async (token) => {
+    const shared = window.campaignSystem.getSharedState();
+    const scene = JSON.parse(JSON.stringify(shared?.combatScene || {}));
+    const editor = scene?.sceneEditor;
+    const owned = Array.isArray(editor?.tokens)
+      ? editor.tokens.find((entry) => String(entry?.ownerToken || '') === String(token || ''))
+      : null;
+    if (!owned) return { ok: false, error: 'Owned Wayfarer token missing from shared VTT.' };
+    const fromQ = Number(owned.q || 0);
+    const nextQ = fromQ + 1;
+    owned.q = nextQ;
+    if (Array.isArray(editor.scenes)) {
+      const active = editor.scenes.find((entry) => String(entry?.id || '') === String(editor.activeSceneId || ''));
+      const snapshotOwned = Array.isArray(active?.tokens)
+        ? active.tokens.find((entry) => String(entry?.ownerToken || '') === String(token || ''))
+        : null;
+      if (snapshotOwned) snapshotOwned.q = nextQ;
+    }
+    const result = await window.campaignSystem.syncSharedPatch({ combatScene: scene }, 'smoke-active-player-vtt-move');
+    return { result, fromQ, nextQ };
+  }, activePlayerToken);
+  if (!playerMove || !playerMove.result || !playerMove.result.ok || (playerMove.result.conflicts || []).includes('combatScene')) {
+    throw new Error(`Active player VTT movement did not sync: ${JSON.stringify(playerMove)}`);
+  }
+  try {
+    await gmPage.waitForFunction(
+      ({ token, q }) => {
+        const tokens = window.campaignSystem.getSharedState()?.combatScene?.sceneEditor?.tokens || [];
+        const owned = tokens.find((entry) => String(entry?.ownerToken || '') === String(token || ''));
+        return !!owned && Number(owned.q || 0) === Number(q);
+      },
+      { token: activePlayerToken, q: playerMove.nextQ },
+      { timeout: STEP_TIMEOUT_MS }
+    );
+  } catch (err) {
+    const [gmMoveState, playerMoveState] = await Promise.all([gmPage, playerPage].map((page) => page.evaluate((token) => {
+      const sharedTokens = window.campaignSystem.getSharedState()?.combatScene?.sceneEditor?.tokens || [];
+      const storeTokens = window.CombatSceneStore?.getState?.().tokens || [];
+      const sharedOwned = sharedTokens.find((entry) => String(entry?.ownerToken || '') === String(token || ''));
+      const storeOwned = storeTokens.find((entry) => String(entry?.ownerToken || '') === String(token || ''));
+      return {
+        activeToken: String(window.campaignSystem.getSharedState()?.campaignCombat?.activeToken || ''),
+        sharedOwned: sharedOwned ? { id: sharedOwned.id, q: sharedOwned.q, r: sharedOwned.r } : null,
+        storeOwned: storeOwned ? { id: storeOwned.id, q: storeOwned.q, r: storeOwned.r } : null
+      };
+    }, activePlayerToken)));
+    throw new Error(`Active player VTT movement was acknowledged but not propagated: result=${JSON.stringify(playerMove)} gm=${JSON.stringify(gmMoveState)} player=${JSON.stringify(playerMoveState)} cause=${String(err && err.message || err)}`);
+  }
+
   await gmPage.evaluate(() => {
     if (typeof window.closeCombatSceneEditor === 'function') window.closeCombatSceneEditor();
   });
@@ -803,6 +907,20 @@ async function runScenario(browser, baseUrl) {
         ? window.campaignSystem.getSharedState()
         : null;
       return !shared?.campaignCombat?.vttSession && !document.querySelector('#combatModeOverlay.open');
+    },
+    null,
+    { timeout: STEP_TIMEOUT_MS }
+  );
+
+  await gmPage.evaluate(() => {
+    const button = document.querySelector('.ctx-btn[data-ctx="holding"]');
+    if (typeof window.setContext === 'function') window.setContext('holding', button || null);
+  });
+  await playerPage.waitForFunction(
+    () => {
+      const activeContext = String(window._activeContext || '');
+      const activeTab = document.querySelector('#mainNavTablist .tab-btn.active[data-tab]');
+      return activeContext === 'holding' && String(activeTab?.getAttribute('data-tab') || '') === 'map';
     },
     null,
     { timeout: STEP_TIMEOUT_MS }
