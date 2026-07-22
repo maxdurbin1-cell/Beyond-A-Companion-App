@@ -863,6 +863,7 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
       <button class="btn btn-sm" onclick="startBlankManualCharacterBuild()">Start Blank Sheet</button>
       <button class="btn btn-sm" onclick="openManualEquipmentPicker('weapon1')">Choose Weapon 1</button>
       <button class="btn btn-sm" onclick="openManualEquipmentPicker('weapon2')">Choose Weapon 2 / Shield</button>
+      <button class="btn btn-sm" onclick="openManualArmorPicker()">Choose Armor</button>
       <button class="btn btn-sm" onclick="openManualBackpackPicker()">Choose Backpack Items</button>
       <button class="btn btn-sm" onclick="openManualFlavorPicker()">Choose Personal Flavor</button>
       <button class="btn btn-sm" onclick="rollFlavor()">⚄ Roll Flavor</button>
@@ -1092,7 +1093,7 @@ header{padding:.48rem .45rem .6rem;gap:.4rem;}
       <div class="form-row"><span class="sub-label">Weapon (Slot 1)</span><div style="display:flex;gap:.3rem;align-items:center;"><span id="eqWeapon1Icon" aria-hidden="true"></span><input type="text" id="eqWeapon1" placeholder="e.g. Sword (+1 Strike)" style="flex:1;" onchange="S.equipment.weapon1=this.value;renderWeaponModsPanel();updateAllStatDisplays()"><button class="btn btn-sm" onclick="openManualEquipmentPicker('weapon1')">Choose</button><button class="bp-info-btn" onclick="showEquippedItem('weapon1')">Info</button><button class="btn btn-sm btn-icon" onclick="unequipItem('weapon1')">Unequip</button></div></div>
       <div class="form-row"><span class="sub-label">Weapon (Slot 2)</span><div style="display:flex;gap:.3rem;align-items:center;"><span id="eqWeapon2Icon" aria-hidden="true"></span><input type="text" id="eqWeapon2" placeholder="Second weapon or shield (optional)" style="flex:1;" onchange="S.equipment.weapon2=this.value;renderWeaponModsPanel();updateAllStatDisplays()"><button class="btn btn-sm" onclick="openManualEquipmentPicker('weapon2')">Choose</button><button class="bp-info-btn" onclick="showEquippedItem('weapon2')">Info</button><button class="btn btn-sm btn-icon" onclick="unequipItem('weapon2')">Unequip</button></div></div>
       <div class="form-row"><span class="sub-label">Armor</span>
-        <div style="display:flex;gap:.3rem;"><input type="text" id="eqArmor" placeholder="e.g. Balanced Armor (Ad6, 2 Actions)" style="flex:1;" onchange="S.equipment.armor=this.value;updateAllStatDisplays()"><button class="btn btn-sm btn-icon" onclick="rollArmor()">⚄</button><button class="bp-info-btn" onclick="showEquippedItem('armor')">Info</button><button class="btn btn-sm btn-icon" onclick="unequipItem('armor')">Unequip</button></div>
+        <div style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center;"><input type="text" id="eqArmor" placeholder="e.g. Balanced Armor (Ad6, 2 Actions)" style="flex:1;min-width:12rem;" onchange="S.equipment.armor=this.value;updateAllStatDisplays()"><button class="btn btn-sm" onclick="openManualArmorPicker()">Choose</button><button class="btn btn-sm btn-icon" onclick="rollArmor()">⚄</button><button class="bp-info-btn" onclick="showEquippedItem('armor')">Info</button><button class="btn btn-sm btn-icon" onclick="unequipItem('armor')">Unequip</button></div>
       </div>
       <div class="form-row"><span class="sub-label">Readied Item</span><div style="display:flex;gap:.3rem;"><input type="text" id="eqReadied" placeholder="Item granting Valor Die bonus" style="flex:1;" onchange="S.equipment.readied=this.value"><button class="bp-info-btn" onclick="showEquippedItem('readied')" aria-label="Show info for Readied Item">?</button><button class="btn btn-sm btn-icon" onclick="unequipItem('readied')" title="Unequip" aria-label="Unequip Readied Item">✕</button></div></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;">
@@ -12042,8 +12043,27 @@ function getCombatEquipmentSlotText(slotName){
   if(!raw)return '';
   var found=typeof findShopItem==='function'?findShopItem(raw):null;
   var stat=found&&found.item?String(found.item.stat||'').trim():'';
-  if(stat&&raw.indexOf(stat)<0)return raw+' ('+stat+')';
+  raw=normalizeEquipmentBaseStatText(raw,stat);
+  var mainStat=stat.split('|')[0].trim();
+  var hasFullStat=stat&&raw.toLowerCase().indexOf(stat.toLowerCase())>=0;
+  var hasMainStat=mainStat&&raw.toLowerCase().indexOf(mainStat.toLowerCase())>=0;
+  if(stat&&!hasFullStat&&!hasMainStat)return raw+' ('+stat+')';
   return raw;
+}
+
+function normalizeEquipmentBaseStatText(rawText,statText){
+  var raw=String(rawText||'').trim();
+  var stat=String(statText||'').trim();
+  var mainStat=stat.split('|')[0].trim();
+  if(!raw||!stat||!mainStat)return raw;
+  var escapedMain=mainStat.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  var mainMatches=raw.match(new RegExp(escapedMain,'ig'))||[];
+  var hasFullStat=raw.toLowerCase().indexOf(stat.toLowerCase())>=0;
+  if(!mainMatches.length||(mainMatches.length===1&&hasFullStat))return raw;
+  var clauseRx=new RegExp('\\s*\\([^)]*'+escapedMain+'[^)]*\\)','ig');
+  var cleaned=raw.replace(clauseRx,'').replace(/\s{2,}/g,' ').trim();
+  if(cleaned===raw)return raw;
+  return cleaned+' ('+stat+')';
 }
 
 function isShieldLikeWeaponText(text){
@@ -12106,6 +12126,9 @@ function parseWeaponBonuses(stat, options) {
   weapons.forEach(function(w) {
     if (!w) return;
     var text = String(w);
+    var flatSeen = {};
+    var advSeen = {};
+    var valorSeen = {};
     var flatRx = /\+(\d+)\s*(?:on|to|for)?\s*([A-Za-z/]+)/g;
     var advRx = /\bAd(\d+)\s*(?:on|to|for)?\s*([A-Za-z/]+)/g;
     var advWordDieRx = /\badv(?:antage)?\s*d(\d+)\s*(?:on|to|for)?\s*([A-Za-z/]+)/ig;
@@ -12113,18 +12136,27 @@ function parseWeaponBonuses(stat, options) {
     var vdRx = /[+]?(?:A\.D\.|V\.D\.)\s*(?:to\s+)?([A-Za-z/]+)/ig;
     var m;
     while ((m = flatRx.exec(text))) {
-      if (statListIncludes(m[2])) flat += parseInt(m[1], 10) || 0;
+      var flatLabels=String(m[2]||'').toLowerCase().split('/').map(function(label){return label.trim();}).filter(Boolean).sort().join('/');
+      var flatKey=String(parseInt(m[1],10)||0)+'|'+flatLabels;
+      if (statListIncludes(m[2])&&!flatSeen[flatKey]) {
+        flatSeen[flatKey]=true;
+        flat += parseInt(m[1], 10) || 0;
+      }
     }
     while ((m = advRx.exec(text))) {
       if (statListIncludes(m[2])) {
         var d = parseInt(m[1], 10) || 0;
-        if (d > advDie) advDie = d;
+        var advKey=String(d)+'|'+String(m[2]||'').toLowerCase();
+        if (!advSeen[advKey]&&d > advDie) advDie = d;
+        advSeen[advKey]=true;
       }
     }
     while ((m = advWordDieRx.exec(text))) {
       if (statListIncludes(m[2])) {
         var ad = parseInt(m[1], 10) || 0;
-        if (ad > advDie) advDie = ad;
+        var wordAdvKey=String(ad)+'|'+String(m[2]||'').toLowerCase();
+        if (!advSeen[wordAdvKey]&&ad > advDie) advDie = ad;
+        advSeen[wordAdvKey]=true;
       }
     }
     while ((m = advWordRx.exec(text))) {
@@ -12134,7 +12166,9 @@ function parseWeaponBonuses(stat, options) {
       }
     }
     while ((m = vdRx.exec(text))) {
-      if (statListIncludes(m[1])) addAdvDie = true;
+      var valorKey=String(m[1]||'').toLowerCase();
+      if (statListIncludes(m[1])&&!valorSeen[valorKey]) addAdvDie = true;
+      valorSeen[valorKey]=true;
     }
   });
   if(opts.includeAffixes!==false){

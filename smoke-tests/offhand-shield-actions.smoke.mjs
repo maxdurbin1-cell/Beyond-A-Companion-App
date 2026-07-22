@@ -84,6 +84,8 @@ try {
       && typeof window.equipBackpackItem === "function"
       && typeof window.parseWeaponBonuses === "function"
       && typeof window.hasDualWieldAttackOption === "function"
+      && typeof window.openManualArmorPicker === "function"
+      && typeof window.applyManualArmorChoice === "function"
       && typeof window.executeWayfarerAction === "function"
     ),
     null,
@@ -92,7 +94,7 @@ try {
 
   const result = await page.evaluate(() => {
     const state = window.S;
-    state.equipment = { weapon1: "Sword (+1 Strike | Engaged)", weapon2: "", armor: "", readied: "" };
+    state.equipment = { weapon1: "Riot Shield (+3 Defend/Strike)", weapon2: "", armor: "", readied: "" };
     state.backpack = ["Vault Door Shield", "Vault Door Shield", "", "", "", ""];
     state.conditions = Object.assign({}, state.conditions || {}, { vulnerable: false });
     state.combat = Object.assign({}, state.combat || {}, {
@@ -103,6 +105,43 @@ try {
       fastAttackUsedEncounter: false
     });
     state.enemies = [{ id: "offhand-smoke-enemy", name: "Training Target", dread: 4, stress: 0, maxStress: 8, conditions: [] }];
+
+    const riotDisplay = window.getCombatEquipmentSlotText("weapon1");
+    const riotModifierCount = (riotDisplay.match(/\+3 Defend\/Strike/g) || []).length;
+    const riotStrike = window.parseWeaponBonuses("strike", { slots: ["weapon1"], includeAffixes: false });
+    const riotDefend = window.parseWeaponBonuses("defend", { slots: ["weapon1"], includeAffixes: false });
+    state.equipment.weapon1 = "Riot Shield (+3 Defend/Strike) (+3 Defend/Strike | Engaged)";
+    const savedDuplicateStrike = window.parseWeaponBonuses("strike", { slots: ["weapon1"], includeAffixes: false });
+    const savedDuplicateDefend = window.parseWeaponBonuses("defend", { slots: ["weapon1"], includeAffixes: false });
+    const weaponAuditFailures = [];
+    ["weapons", "melee_exp", "ranged_exp"].forEach((category) => {
+      (window.SHOP_DATA[category] || []).forEach((entry) => {
+        if (!entry || !entry.name || !entry.stat) return;
+        const fullText = `${entry.name} (${entry.stat})`;
+        const generatedText = `${entry.name} ${window.formatStatForSlot(entry.stat)}`;
+        ["strike", "shoot", "defend"].forEach((stat) => {
+          state.equipment.weapon1 = fullText;
+          const expected = window.parseWeaponBonuses(stat, { slots: ["weapon1"], includeAffixes: false });
+          state.equipment.weapon1 = generatedText;
+          const actual = window.parseWeaponBonuses(stat, { slots: ["weapon1"], includeAffixes: false });
+          if (Number(actual.flat || 0) !== Number(expected.flat || 0)
+            || Number(actual.advDie || 0) !== Number(expected.advDie || 0)
+            || !!actual.addAdvDie !== !!expected.addAdvDie) {
+            weaponAuditFailures.push({ category, name: entry.name, stat, expected, actual, generatedText });
+          }
+        });
+      });
+    });
+    state.equipment.weapon1 = "Sword (+1 Strike | Engaged)";
+
+    window.openManualArmorPicker();
+    const manualArmorChoices = Array.isArray(window._manualArmorChoices) ? window._manualArmorChoices : [];
+    const balancedArmorIndex = manualArmorChoices.findIndex((entry) => String(entry && entry.name || "") === "Balanced Armor");
+    const manualArmorSelect = document.getElementById("manualArmorChoice");
+    if (manualArmorSelect && balancedArmorIndex >= 0) manualArmorSelect.value = String(balancedArmorIndex);
+    if (manualArmorSelect && balancedArmorIndex >= 0) window.applyManualArmorChoice();
+    const manualArmor = String(state.equipment.armor || "");
+    const manualArmorIncludesShield = manualArmorChoices.some((entry) => /shield/i.test(String(entry && entry.name || "") + " " + String(entry && entry.stat || "")));
 
     let vault = {};
     let vaultCategory = "";
@@ -120,6 +159,7 @@ try {
     const shieldDefend = window.parseWeaponBonuses("defend", { slots: ["weapon2"], includeAffixes: false });
     const shieldDualStrike = window.hasDualWieldAttackOption("strike");
 
+    const armorBeforeRejectedShield = String(state.equipment.armor || "");
     window.equipBackpackItem(1, "armor");
     const armorAfterRejectedShield = String(state.equipment.armor || "");
     const rejectedShieldStayedInBackpack = /Vault Door Shield/i.test(String(state.backpack[1] || ""));
@@ -154,11 +194,21 @@ try {
       vaultStat: String(vault.stat || ""),
       vaultDescription: String(vault.desc || ""),
       vaultCategory,
+      riotDisplay,
+      riotModifierCount,
+      riotStrikeFlat: Number(riotStrike.flat || 0),
+      riotDefendFlat: Number(riotDefend.flat || 0),
+      savedDuplicateStrikeFlat: Number(savedDuplicateStrike.flat || 0),
+      savedDuplicateDefendFlat: Number(savedDuplicateDefend.flat || 0),
+      weaponAuditFailures,
+      manualArmor,
+      manualArmorIncludesShield,
       shieldWeapon2,
       weapon2: String(state.equipment.weapon2 || ""),
       shieldPanelText,
       shieldDefendAdvDie: Number(shieldDefend.advDie || 0),
       shieldDualStrike,
+      armorBeforeRejectedShield,
       armorAfterRejectedShield,
       rejectedShieldStayedInBackpack,
       weaponDualStrike,
@@ -175,13 +225,19 @@ try {
   if (result.vaultCategory !== "weapons" || !/Ad6 Defend.*Shield/i.test(result.vaultStat) || !/Weapon Slot 2/i.test(result.vaultDescription) || !/Vault Door Shield/i.test(result.shieldWeapon2)) {
     throw new Error(`Vault Door Shield metadata is not explicit: ${JSON.stringify(result)}`);
   }
+  if (result.riotStrikeFlat !== 3 || result.riotDefendFlat !== 3 || result.savedDuplicateStrikeFlat !== 3 || result.savedDuplicateDefendFlat !== 3 || result.riotModifierCount !== 1 || !/\+3 Defend\/Strike \| Engaged/.test(result.riotDisplay) || result.weaponAuditFailures.length) {
+    throw new Error(`Riot Shield modifiers were duplicated: ${JSON.stringify(result)}`);
+  }
+  if (!/Balanced Armor.*Ad6.*2 Actions/i.test(result.manualArmor) || result.manualArmorIncludesShield) {
+    throw new Error(`Manual armor selection is incorrect: ${JSON.stringify(result)}`);
+  }
   if (result.shieldDefendAdvDie !== 6 || !/Off-Hand Shield/i.test(result.shieldPanelText) || !/Advantage d6 on Defend/i.test(result.shieldPanelText)) {
     throw new Error(`Off-hand shield did not supply its Defend bonus: ${JSON.stringify(result)}`);
   }
   if (result.shieldDualStrike || !result.weaponDualStrike) {
     throw new Error(`Shield/second-weapon Dual Wield gating is incorrect: ${JSON.stringify(result)}`);
   }
-  if (result.armorAfterRejectedShield || !result.rejectedShieldStayedInBackpack) {
+  if (result.armorAfterRejectedShield !== result.armorBeforeRejectedShield || !result.rejectedShieldStayedInBackpack) {
     throw new Error(`Shield was still accepted as body armor: ${JSON.stringify(result)}`);
   }
   if (!/Become Vulnerable/i.test(result.heavyOptionText) || !/Penalty.*become Vulnerable/i.test(result.heavyInfo)) {

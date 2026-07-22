@@ -1728,6 +1728,15 @@ function rollAllTraits() {
 }
 
 function syncCharacterFields() {
+  if (S.equipment && typeof S.equipment === 'object' && typeof window.normalizeEquipmentBaseStatText === 'function' && typeof window.findShopItem === 'function') {
+    ['weapon1', 'weapon2', 'armor'].forEach(function(slot) {
+      var raw = String(S.equipment[slot] || '').trim();
+      if (!raw) return;
+      var found = window.findShopItem(raw);
+      var stat = found && found.item ? String(found.item.stat || '') : '';
+      S.equipment[slot] = window.normalizeEquipmentBaseStatText(raw, stat);
+    });
+  }
   setInputValue("charName", S.name);
   setInputValue("charCareer", S.career);
   setInputValue("charBackground", S.background);
@@ -2277,6 +2286,63 @@ function applyManualEquipmentChoice(slot) {
   if (typeof updateAllStatDisplays === 'function') updateAllStatDisplays();
   if (typeof closeModal === 'function') closeModal();
   if (typeof showNotif === 'function') showNotif(entry.name + ' equipped in ' + (targetSlot === 'weapon2' ? 'Weapon Slot 2.' : 'Weapon Slot 1.'), 'good');
+}
+
+function getManualArmorChoices() {
+  var categories = ['armor', 'armor_exp', 'space_armor'];
+  var seen = {};
+  var choices = [];
+  categories.forEach(function(category) {
+    var entries = (typeof SHOP_DATA === 'object' && SHOP_DATA && Array.isArray(SHOP_DATA[category])) ? SHOP_DATA[category] : [];
+    if (category === 'armor' && typeof getCustomCodexShopItems === 'function') {
+      entries = entries.concat(getCustomCodexShopItems('armor'));
+    }
+    entries.forEach(function(entry) {
+      if (!entry || !entry.name) return;
+      var name = String(entry.name || '');
+      var stat = String(entry.stat || '');
+      if (/shield/i.test(name + ' ' + stat)) return;
+      if (category === 'space_armor' && !/actions?/i.test(stat)) return;
+      var key = name.toLowerCase() + '|' + stat.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      choices.push({ name: name, stat: stat, desc: String(entry.desc || ''), category: category });
+    });
+  });
+  return choices.sort(function(a, b) { return a.name.localeCompare(b.name); });
+}
+
+function openManualArmorPicker() {
+  var choices = getManualArmorChoices();
+  window._manualArmorChoices = choices;
+  var options = '<option value="">Choose armor...</option>' + choices.map(function(entry, index) {
+    return '<option value="' + index + '">' + escapeManualBuilderHtml(entry.name + (entry.stat ? ' - ' + entry.stat : '')) + '</option>';
+  }).join('');
+  var html = ''
+    + '<div style="font-size:.8rem;color:var(--muted2);line-height:1.55;margin-bottom:.4rem;">Choose starting armor from the Merchant tables without purchasing it. Shields remain Weapon Slot 2 equipment.</div>'
+    + '<select id="manualArmorChoice" style="margin-bottom:.45rem;">' + options + '</select>'
+    + '<div style="display:flex;gap:.35rem;justify-content:flex-end;flex-wrap:wrap;">'
+    + '<button class="btn btn-sm" onclick="closeModal()">Cancel</button>'
+    + '<button class="btn btn-sm btn-teal" onclick="applyManualArmorChoice()">Equip Armor</button>'
+    + '</div>';
+  if (typeof openModal === 'function') openModal('Choose Armor', html);
+}
+
+function applyManualArmorChoice() {
+  var select = document.getElementById('manualArmorChoice');
+  var index = select && String(select.value || '').trim() !== '' ? Number(select.value) : -1;
+  var entry = Array.isArray(window._manualArmorChoices) ? window._manualArmorChoices[index] : null;
+  if (!entry) {
+    if (typeof showNotif === 'function') showNotif('Choose armor first.', 'warn');
+    return;
+  }
+  if (!S.equipment || typeof S.equipment !== 'object') S.equipment = { weapon1: '', weapon2: '', armor: '', readied: '' };
+  S.equipment.armor = entry.name + (entry.stat ? ' (' + entry.stat + ')' : '');
+  syncCharacterFields();
+  if (typeof refreshArmorSlotMeta === 'function') refreshArmorSlotMeta();
+  if (typeof updateAllStatDisplays === 'function') updateAllStatDisplays();
+  if (typeof closeModal === 'function') closeModal();
+  if (typeof showNotif === 'function') showNotif(entry.name + ' equipped as armor.', 'good');
 }
 
 function getManualBackpackChoices() {
